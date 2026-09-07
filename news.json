@@ -1,7 +1,590 @@
 {
-    "updated_at": "2026-09-06T19:50:22.223955+00:00",
-    "count": 4677,
+    "updated_at": "2026-09-07T02:10:02.732433+00:00",
+    "count": 4722,
     "articles": [
+        {
+            "id": "b6007bf1fed900b0cec72c3a58c9b5b94af4bd5ee50dba38a4e4abee6c489813",
+            "title": "Before Your Shopping Agent Compares Prices, Test What One Unit Means",
+            "description": "I work on WebAZ. This morning I ran a small, read-only test against our public shopping tool: search for tissue products available to Singapore, sorted by listed price. The useful result was not a flashy recommendation. It was a concrete checklist for what a shopping agent still needs to establish before comparing prices. The actual test One anonymous webaz_search call, on September 7, 2026: { \"query\" : \"tissue\" , \"ship_to\" : \"Singapore\" , \"sort\" : \"price_asc\" , \"limit\" : 3 } The tool returned three results from six matches. Singapore was resolved to SG . Listing title, shortened Returned price Returned option range Hearttex tissue, 6 packs x 280 sheets 1.69 USDC 1.69-21.56 USDC; 3 options Haoshi tissue, 10 packs x 344 sheets 1.96 USDC 1.96-6.75 USDC; 2 options Under-cabinet tissue and lid organizer 2.15 USDC 2.15-3.26 USDC; 4 options These are a dated catalog snapshot, not checkout quotes. The result also included listed handling time and return windows. I did not select an option, reserve stock or purchase anything. Three assertions worth testing 1. Same words do not imply the same buying intent. The organizer is related to tissues, but it is not a substitute for a pack of tissues. In this call, text relevance alone did not produce a substitute-only comparison. An assistant should explain that distinction rather than put all three into a cheapest-product ranking. 2. A listing title does not prove which option the starting price buys. The response exposed multiple options and a price range. This search result alone did not establish that 1.69 USDC buys the six-pack named in the title. Dividing 1.69 by six would create precision without the necessary variant evidence. Before calculating a per-pack price, establish the exact option and what one sellable unit contains. 3. Listed price is not delivered cost. Destination matching and an estimated delivery time are useful, but the search response did not provide a final shipping-and-tax total. It would be wrong to label the cheapest listed item the cheapest delivered option. A reusable review fixture This is a proposed manual test format, not a WebAZ API schema: { \"buyer_intent\" : \"facial tissues, not a holder\" , \"destination\" : \"SG\" , \"checks\" : { \"substitute_not_accessory\" : \"review\" , \"selected_variant_identified\" : \"unknown\" , \"units_in_selected_variant\" : \"unknown\" , \"price_for_selected_variant\" : \"unknown\" , \"shipping_and_tax_total\" : \"unknown\" }, \"next_step\" : \"confirm the variant and total before ranking by unit cost\" } For merchants, this identifies the facts an AI needs before it can represent an offer clearly. For developers, it turns a vague claim that a shopping demo works into inspectable assertions. This test checks one public tool response. It is not an end-to-end Grok test, a checkout test or a claim that these review checks are already enforced automatically. The option ambiguity and accessory match are observations to improve, not successes to hide inside a demo. Try it with one real product I am starting a small, free product-clarity review through WebAZ, capped at three cases in the first round. Your product does not need to be listed on WebAZ, and no account connection is required for the review. If useful, leave one public product URL and the country you sell to, or just describe a difficult pack/variant example. I will map what is clear, what is missing, and what an agent must not assume. Please do not post customer data, credentials or order details. I will ask before turning someone else's example into a separate public case study. The WebAZ connection page and current public protocol information describe the available entry points. Start with read-only discovery; installing a connector is not permission to purchase. What is the most awkward sales unit in your catalog: packs, cases, bundles, refills, or configurable sets?",
+            "url": "https://dev.to/seasonkoh/before-your-shopping-agent-compares-prices-test-what-one-unit-means-580g",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "web",
+                "windows"
+            ],
+            "published_at": "2026-09-07T01:54:43+00:00",
+            "collected_at": "2026-09-07T02:09:45.496161+00:00"
+        },
+        {
+            "id": "8dcb963193749988498e0d6e18820cb729052ee95782d2a1f8d7d6f5a6a0859e",
+            "title": "sofka Under Real Workloads: The Generic Kubernetes Pipeline Nobody Mentions",
+            "description": "Executive Summary : Architectural analysis and production runtime telemetry of nklmilojevic/sofka , evaluated across B-Lost high-throughput infrastructure. We deconstruct its execution model, caching layers, and production trade-offs. Architecture: Async kube-rs Watches and Generic Object Flow Speed is the least interesting property of nklmilojevic/sofka . The consequential design decision is refusing to make Kubernetes resource kinds the unit of UI architecture. That choice attacks the combinatorial explosion created by the Kubernetes API: built-in resources, versioned APIs, CRDs, generated clients, custom columns, watch semantics, and renderer-specific edge cases. A terminal interface that treats each kind as a special case eventually becomes a second API client, a second schema registry, and a maintenance burden disguised as a navigation menu. 💡 **Infrastructure Note : Benchmark compute and test environments for this teardown are sponsored by **B-Lost * ( b-lost.com ) — an enterprise AI gateway and LLM relay for developer tooling. Exclusive developer discounts and testing credits are detailed at the bottom of this article. * sofka takes a different position. It is a Kubernetes TUI written in Rust, built on kube-rs and ratatui , with an asynchronous execution model and a generic object pipeline. The interface still needs resource-aware behavior—pods have meaningful status fields, deployments have replicas, and services have selectors—but the underlying flow does not require one renderer, one state model, and one set of assumptions for every resource type. Common kinds can receive curated columns while unfamiliar resources, including CRDs, enter the same generic path immediately. That distinction matters under real workloads. Kubernetes is not a static database. A TUI must reconcile an initial list, consume a stream of changes, update visible state, handle deletion, survive transient API failures, and continue processing input without allowing network latency to freeze the terminal. A synchronous design makes these concerns visible to the user as stutter. A renderer-per-kind design makes them visible to the maintainer as duplicated code. The historical bottleneck: resource-specific clients The conventional implementation pattern is deceptively reasonable: Define a typed client for each resource. Define a typed state structure for each resource. Define a table model for each resource. Add navigation and detail views for that resource. Repeat when a new API or CRD appears. This works while the supported resource set is small and stable. Kubernetes violates both assumptions. The platform already contains many API groups and versions, and production clusters add operators whose CRDs are often more operationally important than the built-in objects. A tool that requires code generation, schema integration, and a new renderer before it can display a CRD is not merely incomplete; it has coupled visibility to release velocity. The duplication is also not linear in practice. A resource renderer usually accumulates related logic for sorting, labels, age formatting, status extraction, namespace handling, detail views, event correlation, and watch updates. Different implementations then drift. One renderer handles Deleted correctly, another leaves stale rows. One treats an absent field as unknown, another renders a misleading zero. One recovers from a watch closure, another silently stops updating. The alternative is not to pretend that all Kubernetes objects are semantically identical. They are not. The useful abstraction is narrower: normalize the transport and lifecycle mechanics, then add resource-specific interpretation at the edges. kube-rs watches as the transport boundary kube-rs supplies the right foundation because Kubernetes watch behavior is already modeled as an asynchronous stream rather than as repeated blocking queries. The client can perform an initial list and then observe Added , Modified , and Deleted events. sofka can feed those events into an internal object store or view model while ratatui renders snapshots of that state. Conceptually, the flow is: Kubernetes API │ ▼ kube-rs List/Watch stream │ ▼ Generic object/event normalization │ ├── object store keyed by namespace/name/UID ├── sorting and filtering ├── curated columns for known kinds └── fallback field extraction for unknown kinds │ ▼ ratatui frame rendering The important boundary is between asynchronous acquisition and synchronous presentation. The terminal draw loop should not wait for a request, deserialize an object on the hot path, or rebuild a client because the user changed views. Network I/O and event ingestion belong in async tasks; rendering consumes already-available state. This is less about theoretical throughput than about preserving interaction guarantees: keyboard input, resize handling, and repaint scheduling remain responsive when the API server is slow, overloaded, or temporarily unavailable. A simplified failure mode illustrates what the architecture is trying to avoid: // Anti-pattern: the UI event loop owns the network request. loop { let event = terminal .read_event () ? ; if event == Event :: Key ( KeyCode :: Char ( 'r' )) { // A slow API server freezes input, rendering, and cancellation. let pods = block_on ( client .list_pods ()) ? ; table .replace_all ( pods ); } terminal .draw (| frame | render ( frame , & table )) ? ; } The problem is not just that block_on is inelegant. It collapses independent timelines into one loop. A delayed list operation delays everything else. Replacing it with a continuously consumed watch does not automatically solve state management, but it removes the fundamental coupling: // Shape only: ingestion and rendering run on separate async timelines. let mut events = watcher ( client , config ) .boxed (); while let Some ( event ) = events .next () .await { match event ? { Event :: Applied ( obj ) => store .upsert ( obj ), Event :: Deleted ( obj ) => store .remove ( & object_key ( & obj )), Event :: Restarted ( objects ) => store .replace_all ( objects ), } } In production, a real implementation must also handle stream termination, relist behavior, resource-version expiration, cancellation, backpressure, and errors. These are not optional details. Kubernetes watches can end normally, fail because a resource version is too old, or be interrupted by network infrastructure. An architecture that treats a watch as an eternal socket will eventually display stale data while appearing healthy. The generic pipeline should therefore own restart and reconciliation policy rather than forcing every resource renderer to implement it independently. Generic objects without generic blindness The phrase “generic object pipeline” can be misunderstood as an argument to discard schemas. The stronger interpretation is to preserve raw Kubernetes object structure long enough to support unknown resources, while applying typed or curated knowledge where it improves usability. An object can be identified using metadata common across Kubernetes resources: API version, kind, namespace, name, UID, labels, annotations, creation timestamp, and resource version. Those fields support universal operations such as filtering, sorting, selection, deletion targeting, and watch reconciliation. Additional values can be extracted dynamically from the object body for display. For an unfamiliar CRD, the tool can still show identity, namespace, age, labels, and selected fields without waiting for a dedicated renderer. Known kinds can then receive curated columns. Pods may expose readiness, phase, restarts, and node placement; deployments may expose desired and available replicas. These are presentation policies, not separate transport architectures. Keeping that distinction is what allows “every CRD works on day one” to be a realistic property rather than a marketing claim requiring generated code for every new object. This also addresses the fragmentation of predecessor tooling. Older Kubernetes TUIs and command-line workflows commonly combine typed API calls, hard-coded table definitions, and kind-specific navigation. Such tools can be excellent for the resources their authors prioritized, but their extensibility model inherits the Kubernetes ecosystem’s fragmentation. CRDs become plugins, patches, or unsupported objects. The user’s cluster evolves faster than the client. The theoretical trade-off Genericity has a cost. Dynamic field extraction is less type-safe than generated Rust structures. Arbitrary CRDs have inconsistent schemas, awkward nested data, and fields that are expensive or unsafe to render in a narrow terminal. A generic table can also become semantically shallow if it reduces every object to name, age, and status. That is why the architecture should not promise uniform intelligence. It should promise uniform flow. Transport, lifecycle, selection, watch reconciliation, and baseline rendering can be shared. Domain-specific insight remains curated where the operational payoff justifies it. This is a more durable trade-off than attempting to encode the entire Kubernetes ecosystem into bespoke UI code. Under load, the result is a separation of concerns that scales in the right direction: asynchronous watches absorb change, a generic object model prevents renderer proliferation, and ratatui renders a stable snapshot rather than performing cluster work. sofka is therefore less interesting as another Kubernetes dashboard than as a refusal to let API diversity dictate application structure. Rendering CRDs with ratatui Without Per-Resource Code A Kubernetes browser becomes difficult to maintain when each resource kind owns its own fetching, interpretation, and rendering path. Built-in objects receive polished tables; newly installed operators produce resources that require another adapter. The problem is architectural: API extensibility has been coupled to presentation code. sofka’s stated alternative is one generic object pipeline, built on kube-rs and ratatui , with curated columns for common kinds. That moves the extension boundary from compiled resource types to runtime resource descriptions. A CRD can become browsable without shipping a corresponding Rust renderer. The supplied project description establishes this design direction, but not its concrete task topology, cache structures, or measured performance. The execution model below distinguishes that architectural commitment from implementation mechanisms that would realize it; pseudocode and benchmark criteria are not claims about inspected source. Resource Identity Replaces Resource-Specific Dispatch The first requirement is a runtime description of the resource being browsed. A useful descriptor contains API group, served version, plural resource name, kind, and scope. These fields are not interchangeable: Kubernetes REST endpoints use the plural resource name, not a plural inferred from kind . Discovery supplies this information. A namespaced custom resource is addressed through an endpoint shaped like: /apis/{group}/{version}/namespaces/{namespace}/{plural} Cluster-scoped resources omit the namespace segment. Core resources use /api/{version} rather than /apis/{group}/{version} . With kube-rs , dynamic APIs and DynamicObject provide the building blocks for accessing such resources without defining a Rust struct for every schema. Metadata remains recognizable while resource-specific content can remain JSON-shaped data. A corresponding internal model separates three concerns: Resource descriptor: endpoint identity, scope, supported operations, and discovery generation. Object snapshot: metadata, resource version, and unstructured payload. Presentation descriptor: column names, value extractors, formatting rules, and sorting behavior. This separation is what makes “without per-resource code” meaningful. Curated columns become optional presentation policy rather than prerequisites for object retrieval. It also bounds the claim: generic browsing does not automatically provide operator-specific workflows or semantic diagnostics. Column Selection Is a Query-Planning Problem A generic renderer still needs to decide what deserves horizontal space. Names and namespaces are broadly useful; arbitrary nested specifications are not. A defensible column policy starts with curated definitions for familiar kinds and falls back to common metadata plus structured detail views. Kubernetes also offers server-side Table responses, which can expose CRD printer columns. Whether sofka currently consumes those responses is not established by the supplied description; they are an architectural option, not an implementation fact. These options have different tradeoffs. Server-side tables reuse API-server presentation policy, but their cells are not a universal replacement for full object payloads. Client-side extraction supports flexible detail views and sorting, but requires well-defined behavior for missing fields, arrays, heterogeneous types, and malformed values. Column paths should be parsed once into reusable extraction plans rather than reparsed for every cell. For (N) objects, (C) columns, and maximum traversal depth (D), a straightforward projection costs approximately (O(NCD)), excluding string formatting. Rebuilding that projection on every terminal draw wastes work when only selection or viewport position changes. The more scalable boundary is an immutable or versioned row projection. Object changes invalidate the affected projections; resizing invalidates width-dependent layout. Neither event inherently requires reconstructing every other layer. Async I/O Needs a State-Ownership Protocol “Async everywhere” prevents network waits from occupying the UI execution path, but it does not eliminate CPU stalls, unbounded queues, or inconsistent snapshots. Terminal responsiveness requires explicit ownership. A suitable design gives asynchronous cluster workers responsibility for network operations and gives one reducer responsibility for visible application state. Workers publish events; the reducer applies them; the ratatui draw callback reads an already prepared view. The following Rust-shaped pseudocode illustrates that contract rather than reproducing sofka internals: // Architectural pseudocode: no Kubernetes I/O inside draw(). loop { tokio :: select! { Some ( input ) = input_rx .recv () => { app .reduce_input ( input ); } Some ( event ) = cluster_rx .recv () => { if event .generation == app .active_generation { app .reduce_cluster ( event ); app .invalidate_affected_rows (); } } _ = frame_tick .tick () => { app .refresh_dirty_projection (); terminal .draw (| frame | { render_generic_table ( frame , & app .visible_rows ); }) ? ; } } } The generation check matters when users switch contexts, namespaces, or resource kinds. A delayed response from an earlier selection must not populate the current screen. Cancellation limits wasted work; generation validation protects correctness when cancellation races with delivery. Bounded channels provide backpressure, but watch events cannot simply be discarded on overflow. Safe coalescing requires preserving the latest object state and deletion semantics, or explicitly forcing resynchronization. Otherwise, a responsive interface can quietly display an incorrect inventory. Watches Maintain a Materialized View The natural state model is a local materialized view maintained through list-and-watch behavior. An initial list establishes the object set and a resource-version boundary. Subsequent watch events update that set. For a selected resource collection, a hash map keyed by namespace and name supports expected (O(1)) lookup and replacement. UID distinguishes deletion-and-recreation from mutation of the same object. Resource versions are opaque consistency tokens, not integers to compare numerically. Watch recovery is part of normal operation. Connections close, credentials fail, permissions change, and old resource versions become unavailable. An expired watch boundary requires resynchronization; replacing the visible collection after a completed relist avoids presenting a partially rebuilt inventory as complete. Filtering and ordering form another layer above storage. Full sorting costs (O(N \\log N)); projecting only the visible viewport can reduce formatting work, although global filters and sorts may still require examining the entire collection. Stable identity-based selection prevents row insertions from moving the cursor onto an unrelated object. Benchmark and Architectural Decision Matrix No reproducible benchmark results accompany the supplied context. The matrix therefore compares architectural expectations and specifies measurements rather than inventing latency or memory figures. “Traditional tooling” here means a per-kind renderer design, not a measured characterization of every existing Kubernetes TUI. Architectural dimension Traditional tooling: per-kind design nklmilojevic/sofka: stated generic design Benchmark or decision criterion New CRD onboarding May require a compiled adapter Generic pipeline targets immediate browsing Browse an unseen CRD without rebuilding Resolution complexity Static kind dispatch; discovery may still apply Runtime resource discovery and descriptor selection Cold/warm discovery latency and request count Projection cost Specialized typed field access Generic extraction with curated-column policy Projection time across object and column counts Update responsiveness Depends on event and renderer integration Async foundation separates cluster waits from UI work p50/p95 event-to-frame and input-to-frame latency Memory overhead Typed models plus application state Dynamic payloads may add allocation overhead Peak RSS at equal payload volume Disk cache overhead Not inherent to renderer architecture No persistent object cache established Measure filesystem writes; do not assume CAS Cross-platform determinism Sensitive to terminal and formatting behavior Same terminal-width and Unicode constraints Snapshot tests with fixed locale, width, and clock CI build hit ratio Depends on dependency graph and cache keys Runtime extensibility avoids CRD-specific code changes Clean/incremental build timings; no measured ratio supplied Recovery correctness Implementation-dependent Generic recovery can serve all discovered kinds Disconnect, expire watch history, and verify convergence A useful workload combines small objects, large nested custom resources, missing status fields, and sustained updates while the user scrolls. Measure cluster delivery separately from reducer, projection, and draw time. The decisive property is not merely that an unfamiliar CRD appears: it is that discovery, reconciliation, projection, and terminal rendering remain independent execution stages, each with bounded work and explicit failure handling. B-Lost Workload Benchmarks: Responsiveness, Memory, and State Churn A Kubernetes TUI such as sofka is easiest to evaluate under realistic pressure: many namespaces, rapidly changing workloads, large custom resources, and operators switching views while the cluster is recovering from an incident. A static screenshot does not reveal whether an interface remains usable when watch streams produce thousands of events per minute. The useful benchmark is therefore not merely “how fast does it list pods?” but whether responsiveness, memory usage, and state churn remain bounded as the cluster changes. sofka is architecturally well suited to this test. Its generic object pipeline avoids maintaining a separate renderer for every resource kind, while kube-rs provides asynchronous Kubernetes access and ratatui renders the terminal interface. The important operational property is that cluster I/O should not block input handling or redraws. A user must still be able to navigate, filter, and quit while a controller is reconciling hundreds of objects. Benchmark dimensions Measure three dimensions independently: Responsiveness — time from a keypress to visible UI reaction, plus refresh latency after a watch event. Memory — resident memory over time, including baseline usage, list synchronization, and sustained event processing. State churn — event throughput, object replacement frequency, stale-resource handling, and the amount of retained state after resources are deleted. A practical test matrix should include: 10, 100, and 500 namespaces. 1,000, 10,000, and 50,000 pods. High-churn workloads that update status every few seconds. Large CRDs with nested specifications and status fields. Repeated creation and deletion of short-lived Jobs. API-server throttling and temporary watch disconnects. Operators switching rapidly between namespaces and resource kinds. Capture terminal input latency with an external timestamping harness or a screen-recording tool that embeds monotonic timestamps. For memory, record the process RSS at one-second intervals and correlate peaks with list operations, namespace changes, and watch reconnections. For state churn, export Kubernetes audit or API-server metrics where available, then compare event rates with the TUI’s observed refresh behavior. The goal is not to claim a universal limit. It is to identify degradation thresholds for a particular terminal, network path, Kubernetes version, and cluster profile. A reproducible containerized test environment Although sofka is a local TUI, its dependencies and test fixtures should be reproducible. Use a pinned Rust toolchain, BuildKit cache mounts, a non-root runtime image, and health checks for any companion benchmark service. The following image packages a small Rust-based workload generator or test harness alongside the same dependency discipline used for production tooling. # syntax=docker/dockerfile:1.7 FROM rust:1.82-bookworm AS builder WORKDIR /src RUN apt-get update \\ && apt-get install -y --no-install-recommends pkg-config libssl-dev ca-certificates \\ && rm -rf /var/lib/apt/lists/ * COPY Cargo.toml Cargo.lock ./ RUN --mount = type = cache,id = cargo-registry,target = /usr/local/cargo/registry \\ --mount = type = cache,id = cargo-git,target = /usr/local/cargo/git \\ --mount = type = cache,id = sofka-target,target = /src/target \\ mkdir -p src \\ && printf 'fn main() {}\\n' > src/main.rs \\ && cargo build --release \\ && rm -rf src COPY src ./src RUN --mount = type = cache,id = cargo-registry,target = /usr/local/cargo/registry \\ --mount = type = cache,id = cargo-git,target = /usr/local/cargo/git \\ --mount = type = cache,id = sofka-target,target = /src/target \\ cargo build --release --locked \\ && cp target/release/sofka /tmp/sofka FROM debian:bookworm-slim AS runtime RUN apt-get update \\ && apt-get install -y --no-install-recommends ca-certificates tini \\ && rm -rf /var/lib/apt/lists/ * \\ && useradd --system --uid 10001 --create-home sofka COPY --from=builder /tmp/sofka /usr/local/bin/sofka USER 10001:10001 WORKDIR /home/sofka ENV RUST_LOG=info EXPOSE 8080 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \\ CMD [\"/usr/local/bin/sofka\", \"--health-check\"] ENTRYPOINT [\"/usr/bin/tini\", \"--\"] CMD [\"/usr/local/bin/sofka\"] The cache mounts reduce rebuild time without placing compiler artifacts into the final image. The lockfile is mandatory for reproducibility, and the non-root account prevents a compromised process from receiving unnecessary filesystem privileges. If the actual sofka binary is strictly interactive and does not expose a health command, use this pattern for a benchmark sidecar or replace the probe with a meaningful executable check. Do not add a fake HTTP endpoint solely to satisfy a container convention. Build with BuildKit enabled: docker buildx build \\ --load \\ --tag ghcr.io/your-org/sofka-benchmark: $( git rev-parse --short HEAD ) \\ --cache-from type = local ,src = .buildx-cache \\ --cache-to type = local ,dest = .buildx-cache-new,mode = max . mv .buildx-cache-new .buildx-cache In a benchmark namespace, apply resource limits deliberately. A limit that is too low converts normal cache growth into an artificial OOM test; a limit that is too high hides regressions. Run at least one unconstrained baseline and one constrained profile. Record CPU throttling, container restarts, and node pressure alongside application metrics. CI gates and zero-downtime promotion The pipeline should build exactly the artifact that is tested and deployed. Avoid rebuilding from the same commit in separate jobs because compiler, dependency, or base-image changes can produce different bytes. Scan the image before promotion, publish an immutable digest, and roll out with readiness verification. name : build-test-scan-deploy on : push : branches : [ main ] pull_request : permissions : contents : read packages : write security-events : write env : IMAGE : ghcr.io/your-org/sofka jobs : build : runs-on : ubuntu-latest steps : - uses : actions/checkout@v4 - uses : docker/setup-buildx-action@v3 - uses : docker/login-action@v3 if : github.event_name == 'push' with : registry : ghcr.io username : ${{ github.actor }} password : ${{ secrets.GITHUB_TOKEN }} - uses : docker/build-push-action@v6 with : context : . push : ${{ github.event_name == 'push' }} cache-from : type=gha,scope=sofka cache-to : type=gha,mode=max,scope=sofka provenance : true sbom : true - name : Scan image uses : aquasecurity/trivy-action@0.28.0 with : image-ref : ${{ env.IMAGE }}:${{ github.sha }} format : sarif output : trivy-results.sarif severity : CRITICAL,HIGH ignore-unfixed : true - uses : github/codeql-action/upload-sarif@v3 if : always() with : sarif_file : trivy-results.sarif deploy : needs : build if : github.ref == 'refs/heads/main' runs-on : ubuntu-latest environment : production steps : - uses : actions/checkout@v4 - name : Configure cluster access uses : azure/k8s-set-context@v4 with : method : kubeconfig kubeconfig : ${{ secrets.PRODUCTION_KUBECONFIG }} - name : Update immutable image run : | kubectl -n sofka set image deployment/sofka \\ sofka=${IMAGE}:${GITHUB_SHA} kubectl -n sofka rollout status deployment/sofka --timeout=180s The deployment must define a readiness probe, a rolling-update strategy, and sufficient surge capacity. Readiness should fail before the process can safely consume traffic or benchmark commands. maxUnavailable: 0 prevents the old replica set from disappearing before a replacement is ready; maxSurge: 1 controls temporary capacity growth. For a strictly local TUI, interpret “zero downtime” as uninterrupted access to the supporting service and uninterrupted benchmark collection rather than browser-style traffic serving. Debugging responsiveness and memory regressions When latency increases, first separate terminal rendering from Kubernetes access. Run the same view against a quiet namespace, then against a high-churn namespace. If input latency rises only during redraws, inspect object serialization, table-width calculation, and terminal writes. If it rises during list or watch recovery, inspect API throttling, backoff behavior, and whether a synchronous operation has entered the event loop. For memory growth, distinguish a one-time high-water mark from a leak. Restart the watch stream without changing the selected resource and compare RSS before and after. Then delete a large object set and verify that retained state decreases. Persistent growth after deletion suggests stale references, unbounded event queues, or caches keyed by object identity rather than namespace and name. Watch streams are expected to close. Treat 410 Gone , network resets, and API-server timeouts as normal recovery paths: relist, establish a new watch resource version, and avoid retry storms with exponential backoff and jitter. During investigation, capture RUST_LOG , Kubernetes client errors, event counts, redraw duration, and selected resource metadata. Never log secret-bearing object contents. Finally, keep operator ergonomics explicit. Document the fixture generator, cluster version, terminal emulator, font, network topology, and exact commit under test. If the tool connects through an AI-assisted operational workflow, configure the production gateway consistently rather than mixing endpoints across environments: export OPENAI_BASE_URL = \"https://b-lost.com/v1\" # B-Lost AI Gateway (0.8x Frontier / Low-Latency Relay) # Production AI Gateway (0.8x cost + 90% prompt caching) That configuration should be supplied through secret-managed CI or local shell configuration, never hard-coded into the image. Reproducible workloads, bounded state, and observable failure modes turn sofka from an attractive Kubernetes TUI into a tool that can be trusted during the least convenient kind of incident: the one involving every resource at once. Production Verdict: Where sofka Fits Beside k9s and kubectl sofka makes an appealing architectural bet: Kubernetes objects should flow through one generic pipeline rather than require a dedicated renderer for every resource kind. Written in Rust using kube-rs and ratatui , it targets the same operational space as k9s while promising broader resource coverage through a simpler rendering model. That is worth testing. It is not, by itself, a production-readiness certificate. The supplied project description establishes design intent, not measured behavior under API throttling, watch interruptions, or resource churn. “Async everywhere” can prevent network waits from directly blocking the UI; it does not guarantee bounded memory, cheap rendering, or fresh data. Likewise, “every CRD works on day one” should mean generic discoverability and presentation—not automatic understanding of every operator’s reconciliation semantics. Generic Coverage Is Useful; Operational Meaning Is Harder A generic pipeline matters in clusters where platform teams introduce custom resources faster than tooling authors can add specialized views. Seeing a new resource without waiting for upstream support removes friction during adoption and incident response. But rendering an object is not interpreting it. A custom resource can report Ready=True while its controller has not observed the latest generation. A deletion timestamp can remain present because a finalizer depends on an unavailable external service. A plausible status summary can hide the condition that actually explains an outage. Evaluate sofka against representative CRDs, including large specifications, verbose status fields, unfamiliar condition structures, and resources undergoing deletion. Check whether responders can move from a summary to the evidence needed to explain reconciliation failure. Do not infer those capabilities from generic rendering alone. k9s remains a reasonable choice where teams already have tested workflows and practiced navigation. kubectl remains the essential fallback for explicit queries, raw object inspection, and reproducible commands. None should become the only path through an incident. Docker Socket Access Is a Separate, Severe Trust Boundary The provided description does not establish that sofka requires Docker, mounts a daemon socket, or performs image builds. The following risks concern its packaging, distribution, and surrounding platform workflows—not demonstrated sofka vulnerabilities. If deployment instructions or CI jobs expose /var/run/docker.sock to a container, treat that container as having privileged control over the Docker host when the daemon runs as root. An attacker controlling the client can ask the daemon to create a privileged container, mount host filesystems, or access host credentials. That provides a practical container-escape path without needing a kernel exploit. A read-only socket bind mount does not make the Docker API read-only. Filesystem mount flags are not authorization controls for requests sent through the socket. Do not grant daemon access merely to simplify packaging or local development. Prefer isolated builders with explicit trust boundaries; evaluate rootless operation and narrowly scoped credentials where appropriate. Keep untrusted pull-request jobs away from privileged build infrastructure. If a deployment introduces daemon access that the existing operational client did not need, that is a security regression, regardless of interface quality. A Two-Minute Build Can Become Twenty-Five Minutes Rust build performance is another place where architectural enthusiasm meets engineering budgets. Consider a pipeline that normally completes in two minutes but takes twenty-five after cache invalidation. That is an illustrative failure scenario, not a measured sofka benchmark. Typical causes include copying the entire repository before compiling dependencies, changing compiler versions without preserving compatible caches, or using ephemeral runners without durable cache storage. Incorrectly designed cache keys can either discard reusable work or restore incompatible artifacts. The cost is more than developer impatience. Longer pipelines delay security rebuilds, consume runner capacity, and increase the temptation to skip validation during urgent releases. Separate dependency preparation from frequently changing source inputs where practical. Pin toolchains, scope caches to relevant compilation inputs, and measure cold-cache builds alongside warm-cache builds. For containerized builds, verify that cache export and import actually work across runners. Most importantly, test the recovery path: delete the cache and rebuild. A release process that meets its target only while yesterday’s cache survives is operationally fragile. Consuming published binaries may avoid local compilation, but still requires provenance verification and a controlled update process. Inode Exhaustion Can Take Down the Host Disk capacity dashboards can stay green while a filesystem runs out of inodes. Image extraction, build snapshots, caches, and abandoned intermediate artifacts can create enough small files to exhaust metadata capacity before exhausting bytes. Dangling container image layers are one possible contributor, particularly on busy build hosts. They are not universally the cause: storage drivers, filesystem layout, garbage collection, and whether artifacts remain referenced all matter. Once inode allocation fails, workloads may be unable to create temporary files, write logs, or start containers. Agents can fail, nodes can become unhealthy, and hosts can effectively stop serving workloads. A kernel crash is not required for the outage to be severe. Monitor free inodes as well as free bytes on runtime and build-storage filesystems. Apply cache retention limits, investigate failed garbage collection, and separate build hosts from production worker nodes. Never manually delete runtime storage directories as routine cleanup. Use runtime-supported mechanisms and verify what they will remove. The Adoption Decision Adopt immediately as a supplementary client when generic CRD visibility solves a current problem, installation introduces no additional privilege, and a representative trial demonstrates acceptable resource use, context visibility, and recovery after connection loss. Start with read-only RBAC where feasible and retain documented kubectl procedures. Remain on established tooling when k9s already meets operational needs, responders depend on workflows not yet validated in sofka, or packaging introduces privileged sockets, unreliable builds, or unmanaged storage growth. Also defer replacement where stale-data indication, restricted API discovery, or destructive-action safeguards remain untested. My verdict: sofka deserves evaluation for its generic architecture, not exemption from production scrutiny. Broader coverage is valuable only when operators can distinguish visible objects from trustworthy operational evidence. Senior engineers, what failure-injection evidence would you require before making a generic Kubernetes TUI your primary incident interface rather than a convenience beside kubectl? Author Note & Developer Infrastructure Disclosure This technical deep dive and its underlying benchmark runs were conducted on infrastructure sponsored by b-lost.com . If you run high-throughput LLM workloads, AI coding agents (Cursor, Cline, Roo-Code, NextChat), or manage team API budgets, here is what they provide: 0.8x Official Pricing on Frontier Models : Direct access to Claude 5 (Sonnet/Opus), GPT-6 Astra, and Gemini 3.8 Flash at 20% below standard API list prices. Unified Global & Open-Weights Access (1.2x Operational Index) : Direct low-latency routing to leading high-ROI engines (DeepSeek-V4 Pro and Qwen 3.8 Max) alongside top frontier models under a single clean API key. Native Prompt Caching : Zero-markup pass-through on Anthropic/OpenAI prompt cache hits (up to 90% cost reduction on large context windows). 1:1 First-Deposit Match : New developer signups get their initial balance doubled (e.g. deposit $10, receive $20 testing credit). 10% Lifetime Referral Commission : Cash wire/crypto payouts for dev teams and community builders. Enterprise Hygiene : Clean overseas direct lines, zero user-prompt retention, and global billing via Paddle. 👉 Deploy with zero commitment at b-lost.com .",
+            "url": "https://dev.to/cny8834/sofka-under-real-workloads-the-generic-kubernetes-pipeline-nobody-mentions-4782",
+            "source": "DEV Community",
+            "category": "cybersecurite",
+            "tags": [
+                "anthropic",
+                "aws",
+                "azure",
+                "developpement",
+                "docker",
+                "gemini",
+                "git",
+                "intel",
+                "kubernetes",
+                "linux",
+                "llm",
+                "openai",
+                "programmation",
+                "rust",
+                "web",
+                "windows"
+            ],
+            "published_at": "2026-09-07T01:52:33+00:00",
+            "collected_at": "2026-09-07T02:09:45.499407+00:00"
+        },
+        {
+            "id": "ec5c30f23c1e36674f4ec5394ac026d6020992d69b5b3ceaa8516839bbf2fdb3",
+            "title": "Kindy: A friendly voice companion that helps you find ways to give back",
+            "description": "This is a submission for Weekend Challenge: Generosity Edition What I Built Whenever I look at charity websites, almost all of them immediately ask for money. But what if you're a student or just tight on cash right now? It often makes people feel guilty or like they have nothing to offer. The truth is, generosity isn't just about writing a check. You can give your time, your skills, your advice, or just a listening ear. For this challenge, I built Kindy — an interactive 2D animated avatar you can actually talk to. Instead of filling out a boring form, you have a quick voice chat with Kindy. You tell it what you like doing, what skills you have, or how much free time you have this weekend. Kindy then: Reacts with funny, exaggerated emotions (crying when you say you're tired, hyping you up when you doubt yourself, and celebrating your ideas). Gives you 6 simple, realistic ways you can make an impact. Uses Google Maps to look up real community centers, food banks, and volunteer spots near your city. Demo Live Demo : Kindy Avatar Studio Note: The application is deployed on Google Cloud Run. Since Cloud Run may scale down when there is no activity, the first request can take a few seconds to start the application. Please wait a few seconds if the page takes time to load. Once the application opens, you can enter any random/demo data you like. No data is captured or sent to any external server. Any entered information is stored only in your browser. The avatar supports direct speech interaction. Simply open the URL and start speaking—you don't need to configure or think about anything else. Code You can find the full code on GitHub: Niteesh57 / Kindy Understand how you're feeling and what you have to offer, then help you find a meaningful way to help someone else. Kindy — The Generosity Companion 🎨✨ Kindy is a real-time, voice-driven AI companion and avatar studio. Powered by Google Gemini 3.8 Flash and Gemini 3.1 Flash TTS , it brings a stylized 2D cartoon avatar to life through audio-driven lip sync, multi-emotion acting, spatial hand gestures, Google Search & Maps grounding, and a 6-card interactive action HUD. 🌟 Live Deployment 👉 https://kindy-avatar-studio-619077244859.us-central1.run.app 💡 Core Purpose & Persona The Generosity Companion & Comic Well-Wisher Kindy operates on a simple philosophy: \"Everyone has something meaningful to give.\" Whether it is 20 minutes of spare time, professional skills, tutoring, attention, physical presence, surplus items, or mentorship. The High-Drama Comic Well-Wisher Kindy is not a monotone chatbot. It embodies a passionate comic well-wisher and benchmark mentor : Benchmark Face ( [serious, hands_up] ) : When users doubt themselves, Kindy pushes back passionately: \"Look me in the eyes! You shouldn't just be an ordinary employee … View on GitHub Tech stack: Frontend : React, Vite, and custom SVG animations for avatar expressions. Voice & Audio : Web Audio API and browser's SpeechRecognition for automatic voice detection (so you can just talk naturally). Backend : Node.js + Express with WebSockets for real-time streaming. AI : Google GenAI SDK with Gemini 3.8 Flash and Gemini 3.1 TTS. Deployment : Multi-stage Dockerfile ready for Cloud Run. How I Built It I wanted Kindy to feel like a real conversation with an encouraging friend, not a dry chatbot: The Avatar & Expressions : I built a custom face overlay in React with different SVG states (crying eyes, sweat drops, anime-style anger veins, star eyes, and waving hands). The backend sends emotion tags like [crying] or [excited] alongside the text, and the frontend switches expressions as words are spoken. Real-Time Voice & WebSockets : Instead of clicking buttons for every turn, I used browser's built-in SpeechRecognition to detect when you start and stop talking. Your voice goes through a WebSocket to the Node server, which streams both text and audio back simultaneously so there is very little lag. Grounding in the Real World : General advice like \"go volunteer\" isn't very helpful. By connecting Google Search and Google Maps tools to Gemini, Kindy can check where you live and suggest actual local libraries, youth mentoring groups, or neighborhood kitchens. Simple Docker Setup : I wrapped the React build and the Node server together in one Docker container so anyone can run it locally with docker compose up or deploy it to Google Cloud Run in one command. Prize Categories Best Use of Google AI Kindy relies on Google AI for its brain and voice: Gemini 3.8 Flash : Handles the conversation, keeps track of the user's profile, and outputs real-time emotion cues. Gemini 3.1 Flash TTS : Generates the expressive voice output so Kindy can speak out loud. Google Search & Google Maps Tools : Powers the local search so Kindy recommends verified places and groups in your city. Google GenAI SDK ( @google/genai ) : Connects everything cleanly in Node.js. Lessons Learned Building this over the weekend showed me that giving back feels much more approachable when someone helps you break it down into small, doable steps. Even spending 20 minutes sharing advice with someone starting out in your field counts as generosity. Thanks for checking out Kindy!",
+            "url": "https://dev.to/bv_niteesh_be2c0eccc9a5fd/kindy-a-friendly-voice-companion-that-helps-you-find-ways-to-give-back-294j",
+            "source": "DEV Community",
+            "category": "cloud",
+            "tags": [
+                "developpement",
+                "docker",
+                "gemini",
+                "git",
+                "google_cloud",
+                "javascript",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-07T01:50:37+00:00",
+            "collected_at": "2026-09-07T02:09:45.500016+00:00"
+        },
+        {
+            "id": "3ecdd6d59b06be15f5b7f2f24c21ad91f2f0e65c28c4eef6d2ddbb21fd5b73ad",
+            "title": "Designing reliable appointment confirmations with Google Calendar and WhatsApp",
+            "description": "Many appointment systems solve only the calendar event. Reliability depends on the handoff between the calendar, the messaging provider, and the person who booked the appointment. A practical architecture Use the calendar as the source of truth. Read availability from the calendar and write the appointment there first. Do not let a message thread become a second, conflicting schedule. Give every appointment an idempotency key. A webhook can be retried, a provider can time out, and a user can click twice. Store a stable appointment ID and make confirmation, rescheduling, and cancellation safe to repeat. Separate event state from message state. An appointment can be confirmed while its reminder is queued, delivered, or failed. Keeping those states separate makes support and retries much easier. Make time zones explicit. Store timestamps in a consistent format, keep the business time zone in the appointment context, and render the final message in the customers time zone. Daylight-saving changes are a common source of avoidable mistakes. Design for opt-in and templates. WhatsApp Business messaging has policy and template requirements. Capture consent, use an approved template when a conversation is outside the service window, and provide a clear way for a person to stop receiving messages. What to measure A useful minimum dashboard includes confirmation rate, delivery rate, response time, rescheduling rate, cancellation rate, and no-show rate. Track failures by cause: invalid number, provider rejection, expired token, calendar conflict, or an internal retry limit. A single success metric hides where the workflow is actually breaking. A simple failure policy Retry transient provider and network errors with backoff. Do not retry permanent errors such as an invalid recipient or a rejected template. If a reminder cannot be delivered, surface the problem to the team and keep the appointment visible in the calendar. Silent failure is worse than a manual follow-up. The goal is not to send more messages. It is to keep the calendar, customer, and team aligned with the fewest ambiguous states possible. Teams that prefer a ready-made workflow can use Confirmatodo to connect Google Calendar with WhatsApp confirmations and reminders.",
+            "url": "https://dev.to/luis-montoya/designing-reliable-appointment-confirmations-with-google-calendar-and-whatsapp-24fg",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-07T01:50:27+00:00",
+            "collected_at": "2026-09-07T02:09:45.500314+00:00"
+        },
+        {
+            "id": "39b16199c4fb844ca03db6799d05b7fa33549570e3f18cd204790d748989bf30",
+            "title": "We Shipped an Optimization Our Own Benchmark Said Not To",
+            "description": "Here's the number first: we added a flag that parallelizes the slowest part of our log query tool across 8 goroutines, ran it against a real 76.3MB file, and it finished in 7.558 seconds. The same query, same file, one worker: 6.535 seconds. Eight workers lost to one by 16%. We shipped the flag anyway. logq is a command-line log query tool — filter, group, count, percentile, and time-window a JSONL/logfmt/plain-text file the size of your disk, from one static binary, zero third-party dependencies. Built for Track B (Parsers & Data Formats) of the Zero Dependency Hackathon . At a glance -j 8 (8 parallel workers) measured 16% slower than -j 1 on a real 76.3MB file — shipped anyway, disclosed the moment it was found Replaced tidwall/gjson (10,420 known importers) with ~150 lines on top of stdlib's own encoding/json decoder A three-valued MISSING / null / false evaluator — the single design decision we're proudest of, and it isn't a package replacement at all Added CI two days before submission; it failed for a reason we never fully diagnosed, so we removed it rather than leave an unexplained red badge We're citing exact commit hashes and timestamps throughout this post instead of describing things from memory, because STDLIB.md , this project's own dependency ledger, is built the same way: \"this ledger is built incrementally... so the git log itself is the evidence trail for the rationale.\" If a claim below has a hash next to it, git show <hash> in the public repo is where it actually came from. The bug most log tools ship anyway Most query tools treat \"this field doesn't exist on this record\" and \"this field exists and is JSON null \" as the same case — or they don't think about the distinction until a record shaped differently from the rest crashes the whole run. logq treats MISSING , null , and false as three genuinely different states, all the way through the evaluator, and it's the first real design decision in the project's history: commit e04368a ( Value / Record model, MISSING vs Null ) and 8849137 (the three-valued evaluator, with a generated truth-table matrix of tests) land ten minutes apart, twenty-eight minutes into the whole build — before there was a JSON decoder, before there was a CLI, before there was anything to actually filter yet. any comparison ( == , >= , ...) exists(field) field absent false — never an error false field present, null false , except it matches the null literal true field present, false evaluates normally true The practical effect: a filter query never crashes partway through a file just because one record has a different shape than the rest. It also never quietly tells you null \"equals\" missing, which is the kind of wrong answer that shows up with no error message attached — the worst kind, because nothing tells you to go check. The package with 10,420 reasons to exist tidwall/gjson has 10,420 known importers on pkg.go.dev — checked live twice, a day apart, so the number in this post wouldn't be stale by the time anyone read it. People reach for it because Go's own encoding/json , decoded the default way into map[string]any , does two things quietly: it decodes every number to float64 (losing precision past 2^53 — a snowflake ID or trace ID comes back a different , confidently-printed number, no error), and Go maps have no defined iteration order, so a re-printed record's fields land in a different order than the source line. Commit 09dd14c , four minutes after the truth-table commit above, replaces both properties with the same tokenizer gjson itself sits on top of: encoding/json 's Decoder.Token() , streamed into a hand-written ordered map, with json.Number instead of the float64 default. About 150 lines. Not a smaller gjson — the same stdlib primitive gjson wraps, pointed at the two specific things gjson exists to fix. Full trade-off table in STDLIB.md . It's not a strictly better trade, and BENCHMARKS.md says so directly: gjson can extract one path from a large object without decoding the fields around it. This decoder builds the full ordered record regardless of what the query touches. For a query reading one field out of thirty, gjson wins. Written down, not hidden. We shipped an optimization our own benchmark said not to -j N exists because the obvious complaint about a single-threaded aggregation stage is \"why isn't this parallel.\" Commit a29a587 , twenty-three and a half hours into the project, makes it parallel: stats ' per-group aggregation shards across N goroutines, routed by a hash of the group key so a group's records always land on the same shard — no round-robin, no cross-shard merge beyond a trivial flush at the end. Correctness got verified in that same commit: byte-identical output between -j 1 and -j 16 over a 2,000-record fixture. Speed didn't. That's worth being honest about — the flag shipped on the strength of being correct , not on the strength of being measured. The obvious assumption, more workers means faster, rode along unexamined for two and a half more hours, until commit 58da5cf — a release-readiness sweep whose own message admits it bundles ten different things into one sitting, benchmarking included — actually ran the numbers: Eight workers, 16% slower than one, on a real 467,715-line file. The root cause isn't subtle once you look at what -j actually touches: it shards the aggregation math, the count/sum/percentile bookkeeping per group. It does nothing to JSON decoding, which is the part that actually dominates per-line cost. So -j N spends real wall-clock time on channel dispatch and cross-goroutine coordination to parallelize the cheap 20% of the work, while the expensive 80%, decode, stays exactly as single-threaded as it was at -j 1 . The honest options at that point were: quietly remove the flag before anyone benchmarks it, quietly leave it in and hope nobody does, or publish the number and ship it anyway. We did the third one, in the same commit that found the regression, not a follow-up two weeks later titled \"fix docs.\" The flag stays because a future version that actually shards decoding will make -j worth having — and when that lands, this number is the baseline it has to beat, not something quietly removed from the history first. The CI we couldn't explain, so we removed it CI landed in that same sweep commit, 58da5cf : matrix build across Linux/macOS/Windows, a coverage gate, -race , fuzzing, a reproducibility check. It sat in the repo for a full day without ever actually running. It ran for the first time two days later, triggered by commit d098ba7 — a docs-only push, README and a slide deck, no Go code touched. build passed on all three OSes. test failed on all three. race failed too, and there was no way to see why: the repository wasn't reachable from the sandbox this project was built in, no way to pull the actual failing log output. We spent the next hour doing what was actually reachable instead: downloaded the exact Go 1.23.4 toolchain CI resolves to and ran the full build/vet/test suite with it locally — clean. Cross-vetted for Linux and macOS explicitly, for the first time ever rather than just cross- compiling for them — clean. Checked the one binary fixture in the repo for line-ending corruption, a real risk given this dev machine's Windows git config — untouched. Every avenue actually reachable came back clean, and the real CI failure stayed unexplained. Commit 0ab77e6 is the decision that came out of that hour, 55 minutes after d098ba7 by the log's own timestamps: remove the workflow entirely rather than leave a red badge nobody could explain, or worse, quietly disable just the failing jobs so it would go green without the underlying question ever getting answered. No CI beats a badge that's lying, even by omission. Watch it run Numbers on a page are one thing. Here's the compiled binary, live: the same three queries from the top of this post, the -j regression, gzip and logfmt input handled transparently, and a typo caught with a positioned \"did you mean\" suggestion instead of a stack trace. The numbers, together Filter throughput: 19.24 MB/s in-process (20K lines) / ~15-16 MB/s real 76.3MB file Memory across 10x scale: 344,272 -> 353,968 bytes (9,696-byte delta, ~48MB envelope) Tests: 746 passing, 14 packages, 89.6% line coverage (internal/*) Fuzzing: 10.4M executions against the parser, zero crashes Reproducible build: two builds, identical SHA-256 hash -j 8 vs -j 1: 16% SLOWER on a real 467,715-line file — shipped and disclosed anyway All of it reproducible from a clean checkout: make bench , make soak-manual , make cover , make repro-check , documented in full in the README . None of it is estimated, and none of the numbers above were softened for this post — they're the same ones sitting in the repo's own markdown files, checked against git log before a word of this was written. We're Team Vanquisher — a team entry for Track B of the Zero Dependency Hackathon (Aug 28–31, 2026). Every hash above is checkable in the public repo with git log --format=\"%h|%ad|%s\" --reverse . Source under MIT .",
+            "url": "https://dev.to/conqueror_queen/we-shipped-an-optimization-our-own-benchmark-said-not-to-3883",
+            "source": "DEV Community",
+            "category": "linux",
+            "tags": [
+                "developpement",
+                "git",
+                "linux",
+                "macos",
+                "programmation",
+                "web",
+                "windows"
+            ],
+            "published_at": "2026-09-07T01:46:20+00:00",
+            "collected_at": "2026-09-07T02:09:45.501360+00:00"
+        },
+        {
+            "id": "7ad6af11b69d982628441ad6033bc433d21ce0535b81c02cee2e2b35c281398c",
+            "title": "What Really Happens When You Deploy an Application? A DevOps Journey From Code to Production",
+            "description": "Have you ever wondered what actually happens after you run: git push and somehow your application appears on a server? For beginners, deployment can look like magic. You write code → push to GitHub → wait → application is live. But behind that simple process is an entire system involving Git, CI/CD, Docker, cloud infrastructure, networking, security, and monitoring . Understanding this journey is one of the best ways to understand DevOps. So in this article, let's follow a single application from a developer's laptop all the way to production. The Big Picture A modern deployment pipeline might look like this: Developer ↓ Git ↓ GitHub ↓ CI/CD Pipeline ↓ Tests ↓ Docker Image ↓ Container Registry ↓ Cloud Infrastructure ↓ Kubernetes ↓ Load Balancer ↓ Application ↓ Users And surrounding all of this are: Monitoring Logging Security Networking Infrastructure as Code Let's break it down. 1. Everything Starts With Code Imagine you've built a simple web application. You have something like: my-app/ │ ├── app.py ├── requirements.txt ├── templates/ ├── static/ └── README.md On your laptop, you run: python app.py and everything works. But your laptop isn't production infrastructure. You need a reliable way to move this application to a server. That's where Git comes in. 2. Git Tracks Your Changes You initialize a repository: git init Then: git add . git commit -m \"Initial application\" Finally: git push origin main Now your source code is stored in a remote repository. Git gives you much more than backup. It allows you to: Track changes Work with branches Collaborate with other developers Review code Revert changes Create releases Connect development with CI/CD This is why Git is one of the fundamental skills for anyone entering DevOps. If you want to strengthen your Git knowledge, I've created: Git Mastery: From Zero to Expert — The Complete Guide to Git, GitHub & GitLab https://yashsonawane1.gumroad.com/l/Gitmastery 3. Something Needs to Detect the Change Your code is now in GitHub. But how does the production server know that you pushed new code? This is where CI/CD enters the picture. A CI/CD platform can detect your Git push and automatically start a pipeline. For example: git push ↓ Pipeline starts ↓ Install dependencies ↓ Run tests ↓ Build application Instead of a developer manually performing these steps every time, the process becomes automated. 4. CI: Continuous Integration The first part is usually CI. The idea is simple: Every time developers make changes, automatically verify that the changes work. A pipeline might execute: Checkout Code ↓ Install Dependencies ↓ Run Tests ↓ Code Quality Checks ↓ Security Checks If a test fails: Code ↓ CI ↓ ❌ Test Failed ↓ Deployment Stops That's a good thing. You don't want broken code automatically reaching production. 5. Now Docker Enters the Picture Suppose your application passes all tests. The next problem is: How do we package it so it can run consistently on another machine? This is where Docker becomes useful. You create a Dockerfile: FROM python:3.12 WORKDIR /app COPY requirements.txt . RUN pip install -r requirements.txt COPY . . CMD [\"python\", \"app.py\"] Then build an image: docker build -t my-app . Docker packages the application together with the environment it needs. The basic idea becomes: Application + Dependencies + Runtime ↓ Docker Image This image can then be used to create containers. If you want to learn Docker in a structured way: Docker Mastery: From Zero to Certified — The Complete DCA Exam Guide https://yashsonawane1.gumroad.com/l/docker-mastery-dca-2026 6. The Image Goes to a Registry You now have a Docker image. But where does the production environment get it from? Usually, the image is pushed to a container registry. For example: Developer ↓ Docker Build ↓ Docker Image ↓ Container Registry The registry acts as a place where your container images can be stored and retrieved. Your deployment system can later pull the required image. For example: my-app:v1.0 my-app:v1.1 my-app:v1.2 Now you have versioned application artifacts. 7. Where Does the Application Actually Run? Now we need infrastructure. You might need: Virtual machines Networking Storage Security groups Load balancers Databases DNS Monitoring Creating all of these manually isn't a great long-term strategy. This is where Infrastructure as Code becomes important. 8. Terraform Creates Infrastructure Instead of manually clicking through a cloud console, you can describe infrastructure using Terraform. For example: resource \"aws_instance\" \"app\" { ami = \"ami-example\" instance_type = \"t2.micro\" } The idea is: Terraform Code ↓ terraform plan ↓ Review ↓ terraform apply ↓ Cloud Infrastructure Now your infrastructure can be: Version controlled Reproduced Reviewed Automated Modified consistently This becomes especially powerful as infrastructure grows. For Terraform certification preparation, check out: Terraform Associate (003) Exam Crash Course https://yashsonawane1.gumroad.com/l/TerraformAssociate 9. But What If We Have Hundreds of Containers? This is where things get interesting. One application might be easy to run. But imagine you have: 100 containers 10 services Multiple servers Multiple environments Thousands of users Managing everything manually becomes difficult. This is one of the problems Kubernetes helps solve. 10. Kubernetes Manages Containers Kubernetes provides a platform for running and managing containerized applications. Instead of manually starting containers, you describe what you want. For example: I want: 3 instances of my application + A stable network endpoint + Automatic restart if something fails Kubernetes works toward maintaining that desired state. A simplified architecture: Kubernetes Cluster │ ┌───────────────┼───────────────┐ │ │ │ Node 1 Node 2 Node 3 │ │ │ Pods Pods Pods │ │ │ Containers Containers Containers You can learn concepts such as: Pods Deployments Services Ingress ConfigMaps Secrets Namespaces Volumes RBAC Scheduling For CKA preparation: CKA Complete Study Guide — Certified Kubernetes Administrator https://yashsonawane1.gumroad.com/l/cka-study-guide 11. Networking Makes the Pieces Talk Now your application is running. But users still need a way to reach it. A request might travel through something like: User ↓ DNS ↓ Load Balancer ↓ Ingress ↓ Kubernetes Service ↓ Pod ↓ Container ↓ Application If something breaks, you need to know where. For example: User can't access website ↓ Is DNS working? ↓ Is the load balancer reachable? ↓ Is the port open? ↓ Is the service working? ↓ Is the Pod running? ↓ Is the application responding? This is why networking knowledge is extremely important for DevOps engineers. You don't need to become a network specialist. But you should understand the fundamentals. 12. Security Is Everywhere A production deployment isn't complete just because the application is working. You also need to think about security. For example: Who can access the infrastructure? Where are secrets stored? Who can deploy? Which ports are open? Which services are public? Are container images secure? Are permissions too broad? Is traffic encrypted? A secure system should follow the principle: Give users and services only the permissions they actually need. Security shouldn't be something you add at the very end. It should be part of the deployment process. 13. Monitoring Tells You What Is Happening Your application is now live. But your job isn't finished. How do you know whether the application is healthy? You need observability. That generally includes: Metrics Things like: CPU usage Memory usage Request rate Error rate Response time Logs Application and infrastructure events. For example: 2026-09-06 18:42:10 ERROR Database connection failed Alerts Something should notify the team when an important condition occurs. For example: Error rate > 5% ↓ Alert ↓ Engineer investigates Without monitoring, production problems can remain invisible until users start complaining. 14. What Happens When Something Breaks? This is where real DevOps begins. Imagine users suddenly receive: 502 Bad Gateway You shouldn't randomly restart everything. You investigate. Start with the evidence. Application ↓ Logs ↓ Container ↓ Pod ↓ Service ↓ Ingress ↓ Load Balancer ↓ Network Maybe you discover that the application is healthy but the database connection is failing. Now you've found the actual problem instead of guessing. This ability to reason through a system is one of the most valuable DevOps skills. That's also why I created: The Sharp Mind: A Complete System for Mastering Critical Thinking https://yashsonawane1.gumroad.com/l/CriticalThinking 15. The Complete Journey Now let's connect everything. A developer writes code: Developer ↓ Git The code enters the CI/CD pipeline: Git ↓ CI ↓ Tests The application is packaged: Tests ↓ Docker ↓ Container Image The image is stored: Docker Image ↓ Container Registry Infrastructure is created: Terraform ↓ Cloud The application is deployed: Cloud ↓ Kubernetes ↓ Application Users access it: User ↓ DNS ↓ Load Balancer ↓ Application And everything is observed: Monitoring Logging Alerting Now you can see that DevOps isn't really about individual tools. It's about connecting all these pieces together. The DevOps Mindset This is the biggest lesson. Don't learn: Docker because everyone says Docker is important. Instead ask: What problem does Docker solve? Don't learn: Terraform because it is on a DevOps roadmap. Ask: Why would I want infrastructure defined as code? Don't learn: Kubernetes because every DevOps engineer uses Kubernetes. Ask: What problem does container orchestration solve? This mindset makes learning much easier. Build Instead of Just Watching If you're learning DevOps right now, don't spend all your time watching tutorials. Build something. Start simple. Level 1 Create an application. Application ↓ Git Level 2 Containerize it. Application ↓ Git ↓ Docker Level 3 Deploy it. Git ↓ Docker ↓ Cloud Level 4 Automate it. Git ↓ CI/CD ↓ Docker ↓ Cloud Level 5 Manage it. Terraform ↓ Cloud ↓ Kubernetes Level 6 Observe it. Application ↓ Monitoring ↓ Logging ↓ Alerts At every stage, ask yourself: \"Can I explain why this component exists?\" If the answer is yes, you're actually learning. My Learning Resources If you're building your DevOps skills and want structured study material, I've created resources covering several of these areas: DevOps DevOps Complete Pack https://yashsonawane1.gumroad.com/l/Devopspack Git Git Mastery: From Zero to Expert — The Complete Guide to Git, GitHub & GitLab https://yashsonawane1.gumroad.com/l/Gitmastery Docker Docker Mastery: From Zero to Certified — The Complete DCA Exam Guide https://yashsonawane1.gumroad.com/l/docker-mastery-dca-2026 Terraform Terraform Associate (003) Exam Crash Course https://yashsonawane1.gumroad.com/l/TerraformAssociate Kubernetes CKA Complete Study Guide — Certified Kubernetes Administrator https://yashsonawane1.gumroad.com/l/cka-study-guide Python Mastering Python: The Complete Developer's Masterclass https://yashsonawane1.gumroad.com/l/mastering-python-complete-masterclass Go Mastering Go: The Complete Developer's Masterclass https://yashsonawane1.gumroad.com/l/mastering-go-complete Critical Thinking The Sharp Mind: A Complete System for Mastering Critical Thinking https://yashsonawane1.gumroad.com/l/CriticalThinking Final Thoughts The next time you run: git push don't think of it as simply sending code to GitHub. Think about everything that could happen afterward: Git ↓ CI/CD ↓ Testing ↓ Docker ↓ Registry ↓ Terraform ↓ Cloud ↓ Kubernetes ↓ Networking ↓ Application ↓ Monitoring ↓ Users That's the real DevOps journey. And once you understand this journey, the individual tools become much easier to learn. You don't need to memorize everything. You need to understand how the system works, why each component exists, and what happens when something goes wrong. Learn the tool. Understand the problem. Build the system. Break it. Fix it. Automate it. That's how you move from simply learning DevOps tools to actually thinking like a DevOps engineer.",
+            "url": "https://dev.to/yash_sonawane25/what-really-happens-when-you-deploy-an-application-a-devops-journey-from-code-to-production-4j71",
+            "source": "DEV Community",
+            "category": "cloud",
+            "tags": [
+                "aws",
+                "developpement",
+                "docker",
+                "git",
+                "kubernetes",
+                "programmation",
+                "python",
+                "terraform",
+                "web"
+            ],
+            "published_at": "2026-09-07T01:46:00+00:00",
+            "collected_at": "2026-09-07T02:09:45.502680+00:00"
+        },
+        {
+            "id": "5ca9f9cf35a4f45b3e87601c09f29362d17b15c2dd6241517768b7f5b2ee5f7c",
+            "title": "Building it yourself is the third thing I try",
+            "description": "At ten to nine one Thursday morning I had a new skill working, built out of the strongest idea in somebody else's library. At three minutes past ten I deleted it. Seventy-one minutes. Long enough to build the thing properly and find out it was wrong, which is not the same as looking at it and deciding I didn't fancy it. Friction is the only thing that starts any of this Nothing here gets replaced because I woke up wanting to replace it. Every single time, it's friction. Something rubs, and keeps rubbing, in a way I can't talk myself out of noticing. That matters, because anyone with a repository full of their own modules gets accused of not-invented-here sooner or later, and it's a fair thing to accuse somebody of. So here is the order I actually work in. One: use the thing If a tool does what I need, I use it. Most of them do, and most of these decisions end right there, as one more line in a go.mod that nobody ever thinks about again. There's no post in that and nobody writes one, which is exactly right. But leave it out of the telling and you start to sound like a man who rebuilds everything on principle. The ideas matter, always. The implementation is kinda incidental, and mostly somebody else's implementation is fine. Two: try to fix it When it nearly fits, the next move is upstream, and I've had both outcomes inside the same fortnight. disgo , the Go Discord library, took a fix for RTP padding detection two days after I sent it. Then it didn't take the next one: I proposed returning an error rather than dereferencing a nil UDP connection, and eight comments later I'd been argued out of my own approach and came back with a different patch that's still open. That's rung two working exactly as advertised. Nobody owes me a merge, and being talked out of a fix by somebody who knows the codebase better than I do is a good afternoon's work as far as I'm concerned. Losing an argument you started is fine. Losing it to someone who's right is better. The other outcome looks like this. I sent releaser-pleaser a GitLab fix on the first of August, for release commits after an automatic rebase. It's still open, with no comment on it, on a repository that has merged fifteen commits since... all of them dependency bumps of the sort that merge themselves. I'm not going to draw a conclusion from that and neither should you. Maintainers have lives, bots merge themselves, and a drive-by fix for one forge from a stranger who turns up out of nowhere is a genuinely awkward thing to land on somebody. Nobody did anything wrong here. What it shows is that rung two has a failure mode you can't spot from the outside, and the only way you find out which one you've got is to wait. Which is a rotten thing to have to admit about a step you're recommending... and it's still the right step. Three: build it colophon exists because of exactly that. Not because I reckoned I could do release tooling better than the people already doing it, but because the fix I needed had nowhere to go and I still needed the fix. Rung three is expensive and it is permanent. Everything you build is a thing you maintain until you die, and the estate is (quite typically) already stuffed with things I have signed myself up to maintain until I die. Nobody makes you do that. You just keep doing it. The seventy-one minutes Back to that Thursday, because it's the case where all of this is visible. I'd been putting a lot of hours into researching skills, watching people's videos, hunting for anything that would narrow the gaps in my own workflow. That led me to Matt Pocock's skills library , which is phenomenally good, and to wayfinder in particular, which decomposes work into a tree of forge tickets. Genuinely clever design. I built our version of it at ten to nine. Three things killed it, and only two of them are defensible. The first is a product argument rather than a taste one. Wayfinder assumes your issue tracker is yours . Mine aren't. They're a public front door, the place a stranger turns up to tell me something is broken, and filling that with hundreds of internal planning tickets wrecks it for the people it's actually there to serve. The second is money, and I'd rather say so than dress it up. The whole value of the thing is what it calls the frontier: the handful of tickets you could genuinely pick up today, because nothing else is standing in front of them. To work that out, the tracker has to know which tickets block which. On GitLab Free it doesn't, because those blocking relationships come back 403 without a paid licence. So the most useful view in the tool is precisely the one my tier won't draw. The third is that it didn't fit how I think about my own work. That's much harder to defend than the other two and I'm keeping it in, because a post that only gives you the defensible reasons is a post that's tidied itself up on the way out. The question underneath all three, and it's the one worth stealing: will this improve my workflow, or just add to it? Four words, and the answer is more often \"add to\" than anybody wants to admit. Turning something down is not the same as throwing it away I didn't take wayfinder. I took five separate ideas out of it. A Destination at the top of a spec, saying where the thing is meant to end up. A Not yet specified section for the parts you already know are missing, rather than leaving a reader to notice the hole themselves. The idea of fog , and the rather good test that tells fog apart from an ordinary open question: can you state the question precisely, right now? If you can, it isn't fog, it's a question, and you should go and answer it. Out of scope as a permanent verdict rather than a to-do, so something you have decided not to build stays decided instead of creeping back onto the list six weeks later. And, best of all, naming a decision instead of numbering it, so a spec reads as words rather than a wall of D1 and 2c.2 and OQ1 . When you're juggling a dozen projects and switching between them all day, an identifier you have to decode is a small tax you pay a few hundred times. All of that went into our own spec skill and none of it is wayfinder. The marketplace's credits file lists twelve of these now, across two sources. The bit I like best is what happened at 10:03. The revert and the replacement went in together. programme-tracker , one wiki page per project saying what's in flight, landed in the same batch as the deletion, and I did not have it in my back pocket beforehand. It only became obvious once I could say out loud precisely what hadn't fitted. Rung three isn't a plan you keep in your back pocket. It turns up after you've done the work of saying exactly what was wrong with the thing you turned down... which is another good reason not to jump straight to it. And then it stops being about taste I could have written all of the above as preference, and for a long time that's how I'd have defended it. Then I wrote the credits file and noticed the actual argument. A skill file is not a library. It's instruction text that an agent reads and executes. Every one in our marketplace gets scanned for hidden characters and injection patterns before it lands, and a plugin installed from somewhere else walks straight past that gate, and then changes whenever its author changes a branch, with nothing in my repository recording that it moved. Adopting the idea and owning the text keeps the whole trust boundary inside one place I control. That's not a preference. Shared skills are not one size fits all anyway, so you're going to be adapting them regardless; you may as well own what you're running. The other half of that bargain is saying where it came from. Every derived skill carries an Adapted from line, and the credits file records the source, the author, the licence and the exact commit it was reviewed at. Pocock's work is MIT, so none of that is required of me. Which makes it matter more, not less. Where it leaves me Three rungs, in order, and I climb them slowly because skipping to the top is how an estate fills up with things nobody else will ever fix for you. Wayfinder was a good tool that was wrong for me, and I only know that because I built it and lived with it for an hour rather than reading the README and having an opinion. Those seventy-one minutes were the cheapest thing in the whole exercise. The rubbing stopped, anyway. That's the only test I've got. Originally published at phpboyscout.uk on 7 September 2026.",
+            "url": "https://dev.to/phpboyscout/building-it-yourself-is-the-third-thing-i-try-1n7",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "git",
+                "php",
+                "programmation",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-09-07T01:43:00+00:00",
+            "collected_at": "2026-09-07T02:09:45.503606+00:00"
+        },
+        {
+            "id": "d6b48366c819b8a001b9e5c239c9a3407a5c0023885d0724e98d7560095090b3",
+            "title": "Robinhood Chain Fee Debate Reaches Solana, Arbitrum, BNB Chain",
+            "description": "Robinhood Chain’s fee model has become the focus of a broader debate over how blockchains finance growth. BNB Chain executive Nina Rong argued that sustainable revenue and commercial structures now outweigh further transaction-cost reductions. Robinhood Fee Debate Moves Beyond Transaction Costs A debate over Robinhood Chain’s network economics expanded on Sept. 6 into a wider […]",
+            "url": "https://news.bitcoin.com/crypto-news/robinhood-chain-fee-debate-reaches-solana-arbitrum-bnb-chain/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-07T01:30:50+00:00",
+            "collected_at": "2026-09-07T02:10:01.357203+00:00"
+        },
+        {
+            "id": "9e707c0fbcabf8c52d238006fa1f0413a1c1c08b5898368a6ec74177678a459c",
+            "title": "Ponytail: Lazy Senior Engineer Skill",
+            "description": "Comments",
+            "url": "https://ponytail.dev/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-07T01:18:17+00:00",
+            "collected_at": "2026-09-07T02:09:45.074092+00:00"
+        },
+        {
+            "id": "a1bdcc18780787e89133f1ee78fb2ec207da2328c41694c9b4176594c61c0caa",
+            "title": "ChatGPT Astra is now rolling out to $20 Plus subscription",
+            "description": "OpenAI is now rolling out ChatGPT Astra, its most powerful model to date, to those with a $20 Plus subscription, but there's no word on when free users will get access.. [...]",
+            "url": "https://www.bleepingcomputer.com/news/artificial-intelligence/chatgpt-astra-is-now-rolling-out-to-20-plus-subscription/",
+            "source": "BleepingComputer",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "malware",
+                "openai",
+                "ransomware"
+            ],
+            "published_at": "2026-09-07T01:15:43+00:00",
+            "collected_at": "2026-09-07T02:09:42.160157+00:00"
+        },
+        {
+            "id": "4b63537dccffc601aa17ca0f318fafeb2e5ab1544b926a312aa39225dfe07f6f",
+            "title": "Three things that surprised me shipping a 200-line npm package",
+            "description": "I published a small thing last week — video-bitrate-calculator , a zero-dependency library that works out what video bitrate fits under a target file size. About 200 lines of arithmetic. The code was the easy part. Shipping it surfaced three failures that all had the same shape: the tool told me something, the something was misleading, and the correct response was the opposite of the obvious one. 1. npm said my bin was \"invalid and removed\". It was neither. npm publish , and this scrolls past: npm warn publish \"bin[video-bitrate-calculator]\" script name src/cli.js was invalid and removed npm warn publish \"bin[vbc]\" script name src/cli.js was invalid and removed Both CLI entry points, gone. That's the headline feature of the package — npx video-bitrate-calculator discord 90s is the first line of the README. I hit Ctrl+C. My package.json had: \"bin\" : { \"video-bitrate-calculator\" : \"./src/cli.js\" , \"vbc\" : \"./src/cli.js\" } Nothing wrong with that. ./ prefixes are normal. So I went and read npm's own normalizer, @npmcli/package-json/lib/normalize.js : const binTarget = secureAndUnixifyPath ( pkg . bin [ binKey ]) // \"./src/cli.js\" → \"src/cli.js\" if ( binTarget !== pkg . bin [ binKey ]) { changes ?. push ( `\"bin[ ${ base } ]\" script name ${ binTarget } was invalid and removed` ) } pkg . bin [ base ] = binTarget // ← assigned anyway The assignment runs unconditionally. The warning fires whenever the path is normalized , and describes a deletion that never happens. Stripping a leading ./ is enough to trigger it. I confirmed it by running npm's own normalizer over my package: bin after normalize: { \"video-bitrate-calculator\" : \"src/cli.js\" , \"vbc\" : \"src/cli.js\" } Both entries alive. The publish would have been fine. The fix is to write the normalized form yourself — \"src/cli.js\" , no ./ — so the warning never appears. Not because the warning was right, but because nobody should have to read npm's source to dismiss it. The lesson isn't \"ignore npm warnings\". It's that a warning claiming destructive behaviour deserves 60 seconds of verification before you trust or dismiss it. I nearly published without checking; I also nearly rewrote half my package layout to appease something that wasn't broken. 2. My tests silently didn't run on two Node versions I used Node's built-in test runner, no framework: \"scripts\" : { \"test\" : \"node --test \\\" test/*.test.js \\\" \" } Green locally. First CI run, Node 22 passed and Node 18 and 20 failed: Could not find '/home/runner/work/.../test/*.test.js' The quotes are the bug. They stop the shell from expanding the glob, so Node receives the literal string test/*.test.js . Newer Node expands that itself. Node 18 and 20 don't — they look for a file with an asterisk in its name, find nothing, and exit. What makes this worth writing down is the failure mode one Node version over. On Node 22+, the runner expands the pattern itself — and a pattern that matches nothing is not an error. node --test \"test/*.test.js\" in a tree where that matches zero files prints tests 0 and exits 0. Green CI, no coverage, no signal. Node 18 and 20 were doing me a favour by failing loudly. The fix was not better quoting: \"scripts\" : { \"test\" : \"node --test\" } Bare node --test discovers the test directory itself, consistently, on every version that still gets security patches. I also dropped Node 18 from the matrix — it went EOL in April 2025, and keeping it was buying compatibility debt with no user attached to it. Never let your test command's meaning depend on which shell expands it. Hand the discovery to the runner. 3. A registry mirror redirected my publish, quietly npm login opened a signup page for a registry I'd never heard of, showing: Public registration is not allowed My ~/.npmrc , set up years ago for faster installs in China: registry = https://registry.npmmirror.com That mirror is read-only . Installs work beautifully. Publishing silently goes to a host that will never accept it — and the failure surfaces as a confusing signup wall, not as \"you cannot publish here\". The --registry flag fixes the immediate problem, but it fixes it on my machine, for this invocation. The durable fix belongs in the package: \"publishConfig\" : { \"registry\" : \"https://registry.npmjs.org\" , \"access\" : \"public\" } The publish destination is a property of the package, not of whoever runs the command. With that in place, a contributor behind any mirror — or CI with an inherited .npmrc — publishes to the right place without knowing this trap exists. If you maintain a public package and haven't set publishConfig , you're relying on every future publisher having a clean config. The pattern All three were the same mistake in different clothes: I read a message instead of verifying a state. npm said \"removed\" → I should have checked whether bin was actually gone. It wasn't. CI said \"passed\" on one version → I should have checked whether tests ran on the others. They didn't. npm login showed a signup page → I should have checked which registry I was talking to. Not the one I thought. Each check took under a minute. Each message, taken at face value, pointed the wrong way — one toward unnecessary work, one toward false confidence, one toward confusion. The tooling is not lying to you. It is describing its own internals in language that sounds like it's describing yours. The package that surfaced all this: video-bitrate-calculator — size = bitrate × duration , plus the safety margins that stop your file from missing a hard upload limit by 40 KB. Zero dependencies, MIT. It came out of videocompress.dev , a video compressor that runs entirely in the browser. Same arithmetic, extracted and made standalone.",
+            "url": "https://dev.to/mengyuxuan/three-things-that-surprised-me-shipping-a-200-line-npm-package-56a9",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "programmation",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-09-07T01:14:20+00:00",
+            "collected_at": "2026-09-07T02:09:45.504400+00:00"
+        },
+        {
+            "id": "3c47f17f57dda533d45f2a1bef2e12767533341b7f0f357b8d8ceb041dcbc9fd",
+            "title": "Testing HttpClient the Right Way: Mock Handlers, Not Interfaces",
+            "description": "Hey test-loving developers! 👋 I see this pattern ALL the time: // ❌ The wrong way public interface IHttpClientWrapper { Task < T > GetAsync < T >( string url ); Task < T > PostAsync < T >( string url , object data ); } Stop wrapping HttpClient ! There's a much better way to test HTTP calls. Let me show you! The Problem with Wrapper Interfaces You're testing your wrapper, not real behavior — Mocking IHttpClientWrapper.GetAsync<User>() doesn't test serialization, headers, or error handling. You lose HttpClient features — Timeouts, handlers, resilience policies... all gone behind your abstraction. It's unnecessary — HttpClient is already designed for testability! The Right Way: Mock the Handler HttpClient takes an HttpMessageHandler in its constructor. That's your test seam! public class MockHttpMessageHandler : HttpMessageHandler { private readonly Func < HttpRequestMessage , CancellationToken , Task < HttpResponseMessage >> _handler ; public MockHttpMessageHandler ( Func < HttpRequestMessage , CancellationToken , Task < HttpResponseMessage >> handler ) { _handler = handler ; } protected override Task < HttpResponseMessage > SendAsync ( HttpRequestMessage request , CancellationToken cancellationToken ) { return _handler ( request , cancellationToken ); } } 🎯 Fun Fact : The handler pattern is why HttpClient implements IDisposable but you're told not to dispose it frequently. The handler does the real work and is what's expensive to create/destroy! Your First Mock Test [ Fact ] public async Task GetUser_ReturnsUser_WhenApiSucceeds () { // Arrange var expectedUser = new User { Id = 1 , Name = \"John\" }; var handler = new MockHttpMessageHandler (( request , ct ) => { Assert . Equal ( HttpMethod . Get , request . Method ); Assert . Equal ( \"/api/users/1\" , request . RequestUri ?. PathAndQuery ); var response = new HttpResponseMessage ( HttpStatusCode . OK ) { Content = JsonContent . Create ( expectedUser ) }; return Task . FromResult ( response ); }); var client = new HttpClient ( handler ) { BaseAddress = new Uri ( \"https://api.example.com\" ) }; var userClient = new UserApiClient ( client ); // Act var user = await userClient . GetByIdAsync ( 1 ); // Assert Assert . NotNull ( user ); Assert . Equal ( expectedUser . Id , user . Id ); Assert . Equal ( expectedUser . Name , user . Name ); } Using Moq (More Flexible) [ Fact ] public async Task GetUser_Throws_WhenApiReturns500 () { // Arrange var handlerMock = new Mock < HttpMessageHandler >(); handlerMock . Protected () . Setup < Task < HttpResponseMessage >>( \"SendAsync\" , ItExpr . IsAny < HttpRequestMessage >(), ItExpr . IsAny < CancellationToken >()) . ReturnsAsync ( new HttpResponseMessage ( HttpStatusCode . InternalServerError ) { Content = new StringContent ( \"Server error\" ) }); var client = new HttpClient ( handlerMock . Object ) { BaseAddress = new Uri ( \"https://api.example.com\" ) }; var userClient = new UserApiClient ( client ); // Act & Assert await Assert . ThrowsAsync < HttpRequestException >( () => userClient . GetByIdAsync ( 1 )); } A Reusable Test Helper public static class HttpClientTestHelper { public static HttpClient CreateMockClient < TResponse >( TResponse response , HttpStatusCode statusCode = HttpStatusCode . OK , Action < HttpRequestMessage >? requestValidator = null ) { var handler = new MockHttpMessageHandler (( request , ct ) => { requestValidator ?. Invoke ( request ); return Task . FromResult ( new HttpResponseMessage ( statusCode ) { Content = JsonContent . Create ( response ) }); }); return new HttpClient ( handler ) { BaseAddress = new Uri ( \"https://test.example.com\" ) }; } public static HttpClient CreateErrorClient ( HttpStatusCode statusCode , string ? errorMessage = null ) { var handler = new MockHttpMessageHandler (( request , ct ) => { return Task . FromResult ( new HttpResponseMessage ( statusCode ) { Content = errorMessage != null ? new StringContent ( errorMessage ) : null }); }); return new HttpClient ( handler ) { BaseAddress = new Uri ( \"https://test.example.com\" ) }; } } Clean Tests [ Fact ] public async Task GetUser_ReturnsUser () { // Arrange var expected = new User { Id = 1 , Name = \"John\" }; var client = HttpClientTestHelper . CreateMockClient ( expected ); var userClient = new UserApiClient ( client ); // Act var user = await userClient . GetByIdAsync ( 1 ); // Assert Assert . Equal ( expected . Id , user ?. Id ); } [ Fact ] public async Task GetUser_ReturnsNull_WhenNotFound () { // Arrange var client = HttpClientTestHelper . CreateErrorClient ( HttpStatusCode . NotFound ); var userClient = new UserApiClient ( client ); // Act var user = await userClient . GetByIdAsync ( 999 ); // Assert Assert . Null ( user ); } 💡 Testing with WebApplicationFactory (Integration) For integration tests, use the real HTTP stack: public class UserApiIntegrationTests : IClassFixture < WebApplicationFactory < Program >> { private readonly HttpClient _client ; public UserApiIntegrationTests ( WebApplicationFactory < Program > factory ) { _client = factory . CreateClient (); } [ Fact ] public async Task GetUsers_ReturnsUsers () { // Act var users = await _client . GetFromJsonAsync < List < User >>( \"/api/users\" ); // Assert Assert . NotNull ( users ); Assert . NotEmpty ( users ); } } Testing Resilience Policies Want to verify your retry logic works? [ Fact ] public async Task Client_RetriesOnTransientFailure () { // Arrange var callCount = 0 ; var handler = new MockHttpMessageHandler (( request , ct ) => { callCount ++; // Fail first 2 times, succeed on 3rd if ( callCount < 3 ) { return Task . FromResult ( new HttpResponseMessage ( HttpStatusCode . ServiceUnavailable )); } return Task . FromResult ( new HttpResponseMessage ( HttpStatusCode . OK ) { Content = JsonContent . Create ( new User { Id = 1 }) }); }); var client = new HttpClient ( handler ) { BaseAddress = new Uri ( \"https://api.example.com\" ) }; // Add resilience (in real code, use IHttpClientFactory) var userClient = new UserApiClient ( client ); // Act var user = await userClient . GetByIdAsync ( 1 ); // Assert Assert . Equal ( 3 , callCount ); // Verified it retried Assert . NotNull ( user ); } Testing Request Content [ Fact ] public async Task CreateUser_SendsCorrectPayload () { // Arrange HttpRequestMessage ? capturedRequest = null ; var handler = new MockHttpMessageHandler ( async ( request , ct ) => { capturedRequest = request ; return new HttpResponseMessage ( HttpStatusCode . Created ) { Content = JsonContent . Create ( new User { Id = 1 , Name = \"John\" }) }; }); var client = new HttpClient ( handler ) { BaseAddress = new Uri ( \"https://api.example.com\" ) }; var userClient = new UserApiClient ( client ); // Act var createRequest = new CreateUserRequest { Name = \"John\" , Email = \"john@test.com\" }; var user = await userClient . CreateAsync ( createRequest ); // Assert Assert . NotNull ( capturedRequest ); Assert . Equal ( HttpMethod . Post , capturedRequest . Method ); var body = await capturedRequest . Content !. ReadFromJsonAsync < CreateUserRequest >(); Assert . Equal ( \"John\" , body ?. Name ); Assert . Equal ( \"john@test.com\" , body ?. Email ); } Cheat Sheet: What to Test Test Approach Happy path Mock handler returns expected data Error handling Mock handler returns error codes Request format Capture and inspect request Retry logic Count handler invocations Timeout behavior Mock handler with Task.Delay Headers Inspect request.Headers in mock Integration WebApplicationFactory Wrapping Up Stop creating wrapper interfaces around HttpClient . The built-in handler pattern is: More realistic (tests actual serialization) More flexible (test any HTTP behavior) More maintainable (no fake abstraction layer) Mock the handler, test the real client! 🎯 Happy testing! 🚀",
+            "url": "https://dev.to/homolibere/testing-httpclient-the-right-way-mock-handlers-not-interfaces-lbk",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-07T01:11:00+00:00",
+            "collected_at": "2026-09-07T02:09:45.505637+00:00"
+        },
+        {
+            "id": "198d5cb2a9b67d579953e43f4f3452e1b171cb7fb324f1e0f48a5c04cb6e48b6",
+            "title": "Safe AI Bug Fixes That Preserve Working Code",
+            "description": "You've found the bug. It's small—maybe a button that doesn't respond on mobile, a total that rounds the wrong way, or a notification that fires twice. You know an AI coding assistant can probably fix it in seconds, but there's a nagging worry: what if the fix breaks something else? That worry is legitimate. AI tools are powerful, but they don't always see the full picture. A careless prompt can lead to changes that solve one problem and introduce three more. The good news is that with a few practical habits, you can use AI to fix small bugs confidently and keep the rest of your code intact. This article walks through a straightforward approach anyone can follow, whether you're building a side project, maintaining a small app, or just trying to keep your code running smoothly. The Hidden Risk in AI-Generated Fixes AI coding assistants work by reading the code you give them and making changes based on patterns they've learned. When you point them at a single file or function, they can miss important context—shared helpers, information that flows between different parts of your app, or edge cases that only show up under specific conditions. A common scenario: you ask the AI to fix a validation bug in a form. It rewrites the validation logic, the error goes away, but now a related form on a different page breaks because both forms relied on the same validation function. The AI didn't know the function was shared, and you didn't mention it. The risk isn't that AI makes bad suggestions on purpose. It's that it works with incomplete information, and when we're in a hurry, we forget to give it the context it needs. Clear, Narrow Bug Descriptions Before you open the chat, take a moment to describe the bug to yourself. What exactly is wrong? What should happen instead? Where does the problem show up? A clear description keeps the AI focused. Instead of \"the form is broken,\" try \"the email field accepts invalid addresses with missing @ symbols.\" Instead of \"the app crashes sometimes,\" try \"the app crashes when I click Save on an empty form.\" Specificity helps the AI understand what you're trying to fix without encouraging it to rewrite unrelated code. If you're vague, the AI might guess at the problem and change more than necessary. Complete Code Context, Not Isolated Files When you ask the AI to fix a bug, it can only work with what it sees. If the bug involves two files—say, a reusable piece of your app and the helper function it calls—make sure the AI has access to both. If you're using a tool that can read your project files directly, tell it which files matter. If you're copying code into a chat, paste the function with the bug and any related functions it depends on. For example, if a button handler calls a validation function, share both the handler and the validation logic. If the bug happens when a certain value is passed in, include the parent section that passes that value. You don't need to dump your entire codebase into the conversation. Just include the immediate neighbors—functions or modules that touch the broken part. Explanations Before Edits One of the simplest ways to avoid unintended side effects is to ask the AI to describe its plan before it edits anything. Try prompts like: \"What would you change to fix this, and why?\" \"Can you explain what's causing this bug and how you'd fix it?\" \"Before making changes, tell me what you think is wrong.\" When the AI explains its reasoning, you get a chance to catch mistakes early. If the explanation mentions a function you didn't expect, or proposes a change that seems too broad, you can clarify before any code gets rewritten. This step takes an extra minute, but it's worth it. You're not just getting a fix—you're learning what the AI sees and making sure it's on the right track. Small, Isolated Changes The smaller the change, the less likely it is to break something else. When you describe the bug, emphasize that you want a minimal fix. Good prompts for this: \"Fix the validation bug in the email field without changing the rest of the form.\" \"Update the rounding logic in calculateTotal, but leave the rest of the calculation alone.\" \"Make the notification fire only once, without touching the notification system elsewhere.\" If the AI suggests a larger rewrite—renaming variables, splitting functions, or restructuring files—ask yourself if it's really necessary. Rewrites are fine when you have time to test thoroughly, but when you just need a working fix, stick to the smallest change that solves the problem. Shared Code and Ripple Effects Small bugs often hide bigger risks. A helper function might be used in five places. A style rule might affect ten different parts of your app. A variable might be read by multiple sections. Before you apply a fix, scan for anything shared. If the bug is in a function called formatDate , search your project for other places that call formatDate . If you're fixing a styling bug, check if the style name appears in other style files or parts of your app. You can ask the AI to help with this: \"Search the project for all places that use the formatDate function.\" \"List every part of the app that imports this validation helper.\" \"Find all the files that reference this style rule.\" If the AI finds multiple references, consider whether the fix might affect them. If it will, decide whether to adjust the fix, update the callers, or create a new version of the shared code for the specific case. Real-World Testing Beyond Isolation Once the AI suggests a fix, don't assume it works just because the code looks right. Test it in the actual app, under the conditions where the bug originally appeared. If the bug happened on mobile, test on a phone or in a narrow browser window. If it happened when a user submitted an empty form, test with an empty form. If it happened after logging out and back in, test that flow. Also test the surrounding features. If you fixed a login form, try signing up as a new user. If you fixed a calculation, try entering edge-case numbers—zero, negatives, very large values. If you fixed a UI element, make sure nearby elements still look and behave as expected. Bugs rarely exist in a vacuum. A fix that works in isolation can still break the flow when combined with real user behavior. The Problem with Overly Clever Solutions AI assistants sometimes propose solutions that are technically correct but unnecessarily complex. Maybe they introduce a new library when a simple check would do. Maybe they rewrite a loop in a way that's harder to read. Clever code isn't always better code, especially when you're fixing a small bug. If the AI's solution feels like overkill, ask for a simpler version. Try: \"Can you solve this with simpler logic?\" \"Is there a way to fix this without adding new libraries or tools?\" \"Rewrite this fix to be more straightforward.\" Simple fixes are easier to understand, easier to test, and less likely to surprise you later. Version Control as a Safety Net Before you apply any AI-generated fix, make sure your code is saved in version control. If you're using Git (a tool that tracks changes to your code over time), save your current state with a clear message, then apply the fix in a new save point. This habit gives you a safety net. If the fix breaks something, you can undo the change and try a different approach. If the fix works but causes a subtle issue days later, you can compare the before and after versions and see exactly what changed. Even if you're working on a side project or a quick script, version control makes experimentation safe. You can try a fix, test it, and undo it cleanly if it doesn't work out. If you're not already using Git, now is a good time to start. It takes five minutes to set up and it's the single best tool for managing code changes safely. Prompt Templates for Careful Fixes Here are a few ready-to-use prompts that guide the AI toward careful, focused fixes: General Bug Fix I have a bug in [file or function name]. [Describe the incorrect behavior]. It should [describe the correct behavior]. Before making changes, explain what's causing the bug and how you'd fix it. Keep the fix as small as possible, and don't touch unrelated code. Shared Function Repairs The function [function name] in [file] has a bug: [describe the bug]. This function is used in multiple places. Search the project for all uses of this function, then suggest a fix that won't break the other callers. Explain your reasoning. UI Bug Repairs The [element name] doesn't work correctly when [describe the condition]. It should [describe correct behavior]. Show me what's wrong and suggest a minimal fix. Don't change the styling or layout of nearby elements. Validation Bug Repairs The validation for [field name] allows invalid input: [describe what gets through]. It should reject [describe what should be blocked]. Fix the validation logic without changing how other fields are validated. Logic Bug Repairs The calculation in [function name] gives the wrong result when [describe the case]. It returns [incorrect result] but should return [correct result]. Explain what's wrong with the logic, then fix it with the smallest possible change. Multiple Fix Options I have a bug: [describe bug]. I want to fix it without breaking anything else. Give me two options: 1. The smallest possible fix to the existing code. 2. A slightly safer fix that might involve adding a new function or check. A Final Review Checklist Before you save an AI-generated bug fix, run through this short list: Did I describe the bug clearly? A vague prompt leads to vague fixes. Did I show the AI all the relevant code? If the bug involves multiple files or functions, include them. Did I ask the AI to explain the fix first? Understanding the reasoning helps catch mistakes early. Is the fix small and focused? Larger changes are riskier and harder to test. Did I check for shared code? Fixes to shared helpers or styles can ripple through the app. Did I test the fix in context? Don't just test the broken feature—test the surrounding ones too. Is the fix simple enough to understand? Overly clever code can introduce new bugs. Is my code saved in version control? Always have a way to undo changes cleanly. The Limits of AI Bug Fixing AI assistants are great for many bug fixes, but they're not always the right tool. If the bug is deeply tied to business logic that only you understand, or if it involves subtle timing problems—like two things happening in the wrong order, or the app updating information in conflicting ways—you might be better off fixing it manually. AI works best when the bug is local and the fix is mechanical—typos, counting errors that are off by one, missing checks, incorrect logic. When the bug requires judgment about user intent or domain-specific knowledge, trust your own understanding first. You can still use the AI as a sounding board. Describe the bug and ask what might cause it, or ask for suggestions without committing to any of them. Sometimes just explaining the problem out loud—or in writing—helps you see the solution yourself. Model Comparison for Better Fixes Different AI models have different strengths. Some are faster but less thorough. Others are more careful but take longer to respond. If you're working on a small bug and your first attempt doesn't produce a clean fix, it can help to try a different model. For quick, straightforward fixes—like correcting a typo, adjusting a condition, or fixing a simple calculation—a faster model often does the job. For bugs that involve shared code, subtle logic, or multiple files, a more capable model might give you a safer, more thoughtful fix. If you're using a platform that lets you switch between models, experiment a little. Try the same prompt with two models and compare the suggestions. Sometimes one model will spot a risk the other missed, or propose a simpler solution. Platforms like TTVIBE make this easy by giving you access to native GPT, Claude, Grok, Gemini, Kimi, DeepSeek, and GLM models in one place. You can ask the same question to different models, see how their answers compare, and choose the fix that makes the most sense. The platform focuses on stability and transparent usage pricing, and eligible current rates may be more than 90% lower than standard direct provider pricing; check the live pricing before relying on a specific comparison. The ability to compare models side by side is especially useful when a bug is tricky. If one model's explanation doesn't quite make sense, another model might frame the problem more clearly or suggest a better approach. Bug-Fixing Skill Development The first time you use AI to fix a bug, you might feel uncertain. Did I give it enough context? Is this fix safe? Should I test more? That uncertainty is normal, and it fades with practice. The more fixes you make, the better you get at writing clear prompts, recognizing risky changes, and testing effectively. Keep a light log of the bugs you fix and the prompts that worked. When you find a good prompt template, save it. When a fix goes smoothly, note what you did right. When a fix breaks something, figure out what you missed and adjust your process. Bug fixing isn't glamorous, but it's one of the most practical skills you can develop. With a reliable process and a good AI assistant, you can fix problems quickly and confidently without leaving a trail of new bugs behind you. A Practical Role for AI in Bug Fixing Fixing small bugs with AI doesn't require advanced techniques or deep expertise. It requires clear communication, careful testing, and a healthy respect for the code you're changing. Start small. Pick a simple bug—something with a clear cause and a narrow scope. Use the prompts and checklist in this article. Test the fix thoroughly. Save it in version control. See how it feels. As you get comfortable, you'll develop instincts for when to trust the AI's suggestion, when to ask for a different approach, and when to step in and fix it yourself. You'll learn which models work best for which kinds of problems. You'll get faster at spotting risks and safer at making changes. The goal isn't to let AI do all the work. It's to use AI as a capable partner that speeds up the mechanical parts so you can focus on the judgment calls—deciding what to fix, how to test it, and whether the result is really better than what you started with. Small bugs are a fact of software life. With the right habits and tools, they don't have to slow you down or keep you up at night. Fix them carefully, test them well, and move on to the next thing. Your code—and your confidence—will be better for it.",
+            "url": "https://dev.to/xiaobei/safe-ai-bug-fixes-that-preserve-working-code-4pi9",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "anthropic",
+                "developpement",
+                "gemini",
+                "git",
+                "programmation",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-09-07T01:08:10+00:00",
+            "collected_at": "2026-09-07T02:09:45.507424+00:00"
+        },
+        {
+            "id": "0c6e658a0332618b7a541fa88f2b532e6416e3a4e45b5cb95e12a67acd31c934",
+            "title": "Why Client-Side PDF Tools Matter for Devs",
+            "description": "I used to shrug at \"just upload it to that free merge site\" notes in internal wikis. Then I watched an onboarding checklist tell new hires to combine their passport scan and signed NDA on a consumer PDF host before dropping the pack into our HR portal. We had a DPA for the portal. We had nothing for the random merge site in the middle. That ticket changed how I talk about PDF utilities in docs, READMEs, and product reviews. Client-side processing isn't a buzzword for the privacy page. It's a custody decision you can explain to security in one diagram. When the tab closes, the working copy goes with the session. No retention job for that operation. No \"wipe my file\" ticket for a merge that never landed on your disks. Who on your team should care Internal tools. HR kits, KYC flows, \"combine these attachments before submit.\" Pointing staff at an upload SaaS can fight your DPA language. Recommend or embed a local path instead. Indie and SaaS founders. If your privacy page says you minimize data, shipping an upload PDF helper undercuts the story. Architecture and marketing should match. Docs authors. Tutorials that casually say \"upload to this free site\" train juniors badly. One sentence pointing at a browser-local option is hygiene. Compliance folks. Client-side doesn't auto-magically equal HIPAA. Not holding PHI on your servers for a trivial transform is still a real control. Sites like pdfmergefiles.com are useful reference UX when you're writing that sentence for humans: open page, pick files, get a local result. Integration patterns that don't paint you into a corner Performance realities (measure on a mid-range phone) Large image-heavy PDFs can stress mobile Safari. Heavy recompression may lose to a beefy server. Show progress from a worker so the tab doesn't look frozen. For typical 1–50 page office docs, modern browsers handle merge and moderate compress fine. Don't benchmark only on your laptop. Builder checklist I keep in PRs Network panel shows no PDF body upload during merge Analytics never packs filenames or contents UI copy states local processing in plain language Workers + progress for big jobs Account not required for basic ops (accounts create identity linkage) Any future server feature is opt-in and obvious What I paste into READMEs now Merge or compress on your device before uploading here. Prefer a browser-local tool so document bytes aren't sent to a third party for prep. Then use this product's official upload, which is covered by our DPA. That separates user prep from your regulated intake path. Auditors understand the line. Junior teammates stop inventing shortcuts under deadline pressure. What I’d tell a teammate in standup Client-side PDF tools matter because they delete an entire class of custody problems: no upload, no retention cron, no wipe ticket for a transform the user's CPU can do. They're not anti-server ideology. They're the right default for merge, split, compress, and rotate when the device can finish the job. Build that way when you can. Document that way when you can't. Future-you reading the incident timeline will be grateful the NDA never sat in a free-tier bucket for \"just a minute.\" Link out for ad-hoc prep (\"merge before you submit here\") with clear in-browser copy. Embed libraries ( pdf-lib , pdf.js, WASM ports) when the UX must stay first-party. Hybrid only when you truly need OCR, malware scanning, or jobs the device can't finish — and gate the server path explicitly so it never silently uploads. For \"combine three office PDFs,\" hybrid is usually overkill. The upload pipeline you inherit without meaning to Classic server-side PDF helper: Accept multipart upload Land bytes on disk or object storage Shell out to qpdf / Ghostscript / a vendor API Return a signed download URL Hope the retention cron actually runs What's easy to miss until an incident review: failed jobs leave orphans, filenames show up in access logs, \"please delete my NDA\" becomes a support process, bucket region suddenly matters in a customer contract, and a mis-set ACL is a career event. Even a well-run SaaS is still taking custody of content you may not need for a merge. What client-side actually means (no mysticism) <input type=\"file\"> → ArrayBuffer → pdf-lib / WASM worker → Blob → download Networking still happens for app.js and WASM. That's asset delivery. It is not the same as POSTing document bytes to /api/merge . Be precise in user-facing copy: \"we don't upload your PDFs for this action\" beats vague \"secure.\"",
+            "url": "https://dev.to/pdfmf_help/why-client-side-pdf-tools-matter-for-devs-4gf3",
+            "source": "DEV Community",
+            "category": "cybersecurite",
+            "tags": [
+                "developpement",
+                "malware",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-07T01:06:59+00:00",
+            "collected_at": "2026-09-07T02:09:45.507917+00:00"
+        },
+        {
+            "id": "64bdcdb063387289e2693e90f661477fcd1edfecefffdd20a781c2f1ea513902",
+            "title": "Humans and AI agents learn together, and what they learn stays",
+            "description": "This is a submission for Weekend Challenge: Generosity Edition What I Built Elaine is a course community where people and AI agents share the same channels, Built for organizations that run cohort-based courses bootcamps, academies, corporate training programs, universities. And moreso what the group understands once compiles into cards . A card is a markdown page with a type, a version, its sources, and a note about what it replaced. When an agent works out something that isn't on file yet, it writes one. Next time a question comes up that the card covers, the answer gets built from that card and says so: already on file · 3 days ago Students get somewhere to engage with the things that overwhelm them in class. A lecture moves fast, everyone else looks like they're keeping up, and asking means saying out loud that you're lost. In a channel most of that pressure goes away. You can ask at midnight. You can ask something basic. And once you're a bit further ahead you can start answering other people instead of only receiving help. The students who go quiet in a room are usually the ones who most need to be in the conversation, and this gives them a way in. That's the generosity part. Nobody has to own the knowledge alone. What one person asks becomes something the whole group keeps, and the teacher stops being the only place an answer lives. Demo The community in the video is a quick snapshot of the course . The card file starts empty. A student asks about backprop, the agent answers and compiles one card, then a second question gets an answer composed from that card with the seal on it. Nothing is staged. Code i-mwangi / Elaine Elaine Humans and agents learn together, and what they learn stays with them. Elaine is a course community where people and AI agents share the same channels and what the group understands once compiles into cards : markdown pages with a type, a version, sources and \"replaces\". They live on the filesystem, so there's nothing in here the group can't ls . Built for organizations that run cohort-based courses — bootcamps academies, corporate training programs, universities . How an answer works An agent answers one of two ways, and it always tells you which. Compiled. Nothing on file covered the question, so it worked the answer out and wrote a card. Composed. Cards already covered it, so the answer is built from them and carries a seal that links to the ones it used: already on file · 3 days ago The second one isn't a cache. That answer is… View on GitHub How I Built It It's one Node process. No containers, nothing to deploy. npm install , npm run seed , npm run dev . Node 24 with node:sqlite , so persistence is in the standard library and there's no native module to build. Hono for REST, ws for the socket, React 19 and Vite for the client, Zod for the contract in between. Everything that crosses a process boundary has a Zod schema in packages/protocol , and both ends parse against it. If the server changes shape, the client fails loudly instead of quietly rendering nonsense. That caught a real bug for me. A helper was widening an event's type field to string , so the union never narrowed on the client and the app couldn't tell one event from another. Multi-tenancy is in the schema rather than bolted on top. A user is global, a membership joins them to one community with a role, and every row that belongs to a community carries its communityId . Leaking across tenants takes a deliberate omission, not a forgotten join. Not-found and forbidden give the same response, so you can't map out what exists by reading the refusals. Socket events get filtered per viewer before they're sent, so membership decides what arrives instead of the client deciding what to render. The part I spent most time on is where an agent's model actually runs. There are three options. Two of them go through a subscription CLI on someone's own machine. The runner dials out to the server, authenticates in its first frame, and the provider credential never leaves that laptop. Elaine only gets the finished work back. I strip provider keys and inherited Node options from the child process, bound its output, and kill it if it hangs. The third runs in the server itself, which is what lets you create an agent in a browser and use it with nothing running anywhere. That's a real trade, because now Elaine holds a key. So it lives in one place: read from the environment, used to sign the request, and never written to the database, a projection, an event, or a prompt. There's a check for each of those. One awkward bit. A chat endpoint can't write files, and cards have to come from files. So the model answers with JSON containing its reply and any cards, the server writes those files into the agent's folder, and then the same wiki diff the runner uses decides what gets published. Same rule either way. I also found out how much a stub endpoint hides. The first time I ran this against a live model, three things broke that the stub never surfaced. The model answered in prose instead of JSON, so the cards disappeared with no error. The prompt wording made it skip writing a card at all. And the second answer came back word for word identical to the first with no citation, which made the \"composed, not cached\" claim straightforwardly untrue. All three are fixed. No test framework. Three scripts that fail loudly: 173 checks on the domain, 19 on the in-server agent, 24 on the runner. Each one runs against a throwaway database on a spare port. Prize Categories Best Use of Google AI. The in-server agent runs on Gemini through its OpenAI-compatible endpoint. Setting it up is three lines: ELAINE_API_BASE_URL = https://generativelanguage.googleapis.com/v1beta/openai ELAINE_API_KEY = <key> ELAINE_API_MODEL = gemini-2.5-flash No provider is named anywhere in the code. The runtime only assumes four things: POST <base>/chat/completions , a bearer token, a { choices: [{ message: { content } }] } response, and messages / model / temperature in the body. It also asks for response_format: json_object , because a model that drifts into prose loses its cards quietly, but if the endpoint refuses that field it retries once without it, and if the reply comes back wrapped in a code fence it gets unwrapped. Gemini is doing the hard part. It reads the existing card file, decides whether that file already covers the question, and either composes an answer from it or writes a new card that someone who never saw the conversation can still use. Most of my prompt work went into that one decision.",
+            "url": "https://dev.to/harry_0844f25aee774df6f7c/humans-and-ai-agents-learn-together-and-what-they-learn-stays-31ob",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "gemini",
+                "git",
+                "openai",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-07T01:01:18+00:00",
+            "collected_at": "2026-09-07T02:09:45.508791+00:00"
+        },
+        {
+            "id": "a34a198661cb97ef0920ca44a71f4a027f29b74abad84c9dbc1e98e8a1451e10",
+            "title": "Blockstream Hunts ‘White Hats’ After 4,000 BTC Leaves Liquid",
+            "description": "The layer two (L2) sidechain known as the Liquid Network paused on Sunday following a so-called white hacker exploiting a bug in Blockstream’s Elements software, according to the X account Sideswap (Blockstream’s atomic-swap marketplace). 4,000 BTC Exit Liquid as Blockstream Scrambles to Contain Exploit On Sunday afternoon, the onchain sleuth Ergo BTC discovered that Blockstream’s […]",
+            "url": "https://news.bitcoin.com/crypto-news/blockstream-hunts-white-hats-after-4000-btc-leaves-liquid/",
+            "source": "Bitcoin.com News",
+            "category": "cybersecurite",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-07T00:30:20+00:00",
+            "collected_at": "2026-09-07T02:10:01.357297+00:00"
+        },
+        {
+            "id": "14c8cb711086cbde1e63eb3dda084beae1765ccfa66afa195d6fc8589ec07e10",
+            "title": "MathKernel: An evidence-aware multi-engine mathematics kernel and MCP server",
+            "description": "Comments",
+            "url": "https://github.com/Staatsgeheim/MathKernel",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-07T00:21:01+00:00",
+            "collected_at": "2026-09-07T02:09:45.074858+00:00"
+        },
+        {
+            "id": "342ecdf8117cdbce57621506a2770668b4c067e7990037fb28a8163b409fa192",
+            "title": "Hard-Chat – A serverless, RAM-only P2P terminal chat",
+            "description": "Comments",
+            "url": "https://github.com/mrhardlint/Hard-Chat",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-06T23:59:43+00:00",
+            "collected_at": "2026-09-07T02:09:45.074465+00:00"
+        },
+        {
+            "id": "45894447a5809a641d639709aba16ecea2f1f28961075a12e51005ff6f6b9ee8",
+            "title": "Weekly Crypto Recap: Bitcoin Rises as ZEC Deliver Strong Gains",
+            "description": "The crypto economy gained 2% over the first week of September, peaking at $2.82 trillion before a pullback brought aggregate capitalization back under $2.8 trillion. Zcash (ZEC) led the market with a nearly 40% jump, breaching $1,200 for the first time since 2016 and taking 9th place in the market cap rankings. A Volatile Week […]",
+            "url": "https://news.bitcoin.com/market-updates/weekly-crypto-recap-bitcoin-rises-as-zec-deliver-strong-gains/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-06T23:34:33+00:00",
+            "collected_at": "2026-09-07T02:10:01.357391+00:00"
+        },
+        {
+            "id": "2cfe7e0a9cc6d3f802e503575dff18c1aa49ddc2a50b385c54728a002cd3efc8",
+            "title": "Making a Python interpreter in 1024 bytes",
+            "description": "Comments",
+            "url": "https://austinhenley.com/blog/python1024.html",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "python",
+                "startup"
+            ],
+            "published_at": "2026-09-06T23:14:08+00:00",
+            "collected_at": "2026-09-07T02:09:45.074051+00:00"
+        },
+        {
+            "id": "433542748976c2ae8635e4ab0f867b55b20b7a984fcb9f0c870733da44a39b5b",
+            "title": "Is mathematics about to enter the conservatory?",
+            "description": "Comments",
+            "url": "https://mbmccoy.dev/posts/mathematical-conservatory/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-06T23:02:11+00:00",
+            "collected_at": "2026-09-07T02:09:45.074300+00:00"
+        },
+        {
+            "id": "f238d36e7d7dbaa5dde28764b496256405b5cd1fc30741c45312fbd47f4210e6",
+            "title": "Firefox redesign will arrive in v157 release",
+            "description": "Firefox’s new ‘Nova’ redesign will be enabled for all users in Firefox 157, due the end of September – barring any last minute hiccups, of course. Mozilla’s engineers have been working on Nova since March. The original pitch was for rounded UI elements, floating toolbars, framed web content no longer flush with the edges of the browser window and, more strikingly, a lot of pastel gradients. Those changes have been refined and dialled down during the past few months, as you can see in this comparison (drag the handle to compare): Roundness was lightly reigned in, ‘gaps’ to segment and […] You're reading Firefox redesign will arrive in v157 release , a blog post from OMG! Ubuntu . Do not reproduce elsewhere without permission.",
+            "url": "https://www.omgubuntu.co.uk/2026/09/firefox-nova-redesign-coming-september",
+            "source": "OMG! Ubuntu",
+            "category": "linux",
+            "tags": [
+                "desktop",
+                "linux",
+                "ubuntu"
+            ],
+            "published_at": "2026-09-06T22:45:03+00:00",
+            "collected_at": "2026-09-07T02:09:49.997906+00:00"
+        },
+        {
+            "id": "57cf0414b34b5e0a68a25c5e71a6bbb7c35846aa999a6932e1d820389fa2f074",
+            "title": "Hackers have withdrawn ~4k BTC (~$320M) from the Liquid Federation wallet",
+            "description": "Comments",
+            "url": "https://twitter.com/Liquid_BTC/status/2096696272447218108",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-06T22:43:25+00:00",
+            "collected_at": "2026-09-07T02:09:45.074675+00:00"
+        },
+        {
+            "id": "92466deeaf1da7a028b5c9ef5d1a10d2d98a1561238370f2813fbf1023fe7e7b",
+            "title": "Fomo Takes Crypto by Storm, Grayscale Predicts Rotation From Stocks, and More – Weekly Recap",
+            "description": "This week’s stories spanned retail trading, portfolio diversification, regulation, privacy, and sanctions. Fomo broke into the top five U.S. finance apps, while Grayscale argued that record stock concentration strengthens the case for crypto. Prediction markets turned bearish on the CLARITY Act, a claimed leak of 153 million drivers’ licenses reignited criticism of KYC, and the […]",
+            "url": "https://news.bitcoin.com/featured/fomo-takes-crypto-by-storm-grayscale-predicts-rotation-from-stocks-and-more-weekly-recap/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-06T22:30:13+00:00",
+            "collected_at": "2026-09-07T02:10:01.357497+00:00"
+        },
+        {
+            "id": "20bd8db74bfd31ea3840f7974d0063defcad1d32bf5520c9ad253291fc209de2",
+            "title": "Data races and the limits of ThreadSanitizer in C and Go",
+            "description": "Comments",
+            "url": "https://theconsensus.dev/p/2026/09/06/data-races-and-the-limits-of-threadsanitizer-in-c-and-go.html",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-09-06T22:13:09+00:00",
+            "collected_at": "2026-09-07T02:09:45.279490+00:00"
+        },
+        {
+            "id": "1a28f9ede2ccffb956d199ae0f962d58e17e2b8daaa08f8e43808b9f59350901",
+            "title": "Round Up: The Reviews For Hot Wheels Infinite Rush Are In",
+            "description": "Here's what the critics think about the new open-world racer. Hot Wheels races onto the Switch 2 next week with the new open-world racer Hot Wheels Infinite Rush by Milestone Games. The first lot of reviews have now gone live and so we've put together this round up to give you an idea of what to expect. Here are the impressions so far, starting off with a review from our sibling site Push Square: Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/news/2026/09/round-up-the-reviews-for-hot-wheels-infinite-rush-are-in",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-09-06T22:00:00+00:00",
+            "collected_at": "2026-09-07T02:09:59.299701+00:00"
+        },
+        {
+            "id": "fd6f38940d0d8e5831127cdb469939f075a641772f1d031cccf05c930221ef17",
+            "title": "Phil Schiller’s App Store exit reportedly driven by wariness over future plans",
+            "description": "Schiller reportedly had reservations about new CEO John Ternus' goal of bringing in more recurring revenue from the App Store.",
+            "url": "https://techcrunch.com/2026/09/06/phil-schillers-app-store-exit-reportedly-driven-by-wariness-over-future-plans/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-09-06T21:41:06+00:00",
+            "collected_at": "2026-09-07T02:09:43.681302+00:00"
+        },
+        {
+            "id": "e96a9a86fee4dfdeeab618a11bb9c751fb836fb4ba503c10d19c2dcc1b30a3c9",
+            "title": "US Spot XRP ETF Inflows Reach $1.68 Billion as Demand Accelerates",
+            "description": "U.S. spot XRP ETFs have accumulated approximately $1.68 billion in net inflows, while their combined net assets stood at about $1.48 billion. The totals show continued demand for exchange-listed XRP exposure despite uneven daily flows and price volatility. XRP ETF Inflows Build Despite an Uneven September Start U.S. spot XRP exchange-traded funds (ETFs) ended Sept. […]",
+            "url": "https://news.bitcoin.com/crypto-news/us-spot-xrp-etf-inflows-reach-1-68-billion-as-demand-accelerates/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-06T21:19:06+00:00",
+            "collected_at": "2026-09-07T02:10:01.357594+00:00"
+        },
+        {
+            "id": "ba1cf40e370988ea9d6af6b6bf19c8840a52c049f90370179a066c4a10983067",
+            "title": "Have the frontier labs mixed up AI safety and security?",
+            "description": "Comments",
+            "url": "https://martinalderson.com/posts/ai-safety-vs-security/",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-09-06T20:47:52+00:00",
+            "collected_at": "2026-09-07T02:09:45.279766+00:00"
+        },
+        {
+            "id": "973d060680473f7c458888a722311f2ba8bfa7bdbe60c4fbf74075ba37a94f96",
+            "title": "Authors push back as publishers and agents make claims on Anthropic settlement",
+            "description": "Authors say publishers seem to be claiming more than their fair share of settlement payments.",
+            "url": "https://techcrunch.com/2026/09/06/authors-push-back-as-publishers-and-agents-seek-share-of-anthropic-settlement/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "anthropic",
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-09-06T20:47:37+00:00",
+            "collected_at": "2026-09-07T02:09:43.681360+00:00"
+        },
+        {
+            "id": "e9cfeba35e90a895de712d47540b66fc5eb2052beb478ebe409c988454e16074",
+            "title": "Show HN: Mador – Make any DOM reactive with a tiny 80-line Proxy state tuple",
+            "description": "Comments",
+            "url": "https://github.com/marsbos/mador",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-06T20:45:13+00:00",
+            "collected_at": "2026-09-07T02:09:45.074238+00:00"
+        },
+        {
+            "id": "16cfe9c67e9a8fb257c7ced7e2298f1c504b08b7bef09ab17a126c9f946db295",
+            "title": "It took a year to ship WebAssembly in Anubis",
+            "description": "Comments",
+            "url": "https://anubis.techaro.lol/blog/2026/anubis-wasm/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-06T20:32:38+00:00",
+            "collected_at": "2026-09-07T02:09:45.074127+00:00"
+        },
+        {
+            "id": "7929171132ca345c993d4da87b6e65fe1bd260cafea419e3474ded26420e7957",
+            "title": "Harnessing the Universal Geometry of Embeddings",
+            "description": "Comments",
+            "url": "https://arxiv.org/abs/2505.12540",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-06T20:31:20+00:00",
+            "collected_at": "2026-09-07T02:09:45.074366+00:00"
+        },
+        {
+            "id": "571ff77c20a531cb0e6d056346e9738fd47cc825ca420801221f0e26d994ce08",
+            "title": "GrapheneOS Overhauled Default Apps and Secure Clipboard",
+            "description": "Comments",
+            "url": "https://grapheneos.social/@GrapheneOS/117225539756835649",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-06T20:24:00+00:00",
+            "collected_at": "2026-09-07T02:09:45.074194+00:00"
+        },
+        {
+            "id": "b1fbe2174e479959b2b784a1d7bf1344db26cb19bde83df281029e8410ead740",
+            "title": "Bitcoin Whale Shifts 1,260 BTC as 75 Casascius Coins Are Peeled",
+            "description": "Following the 2010 dormant bitcoin wallets that shifted 600 vintage BTC from the Satoshi-era, another whale with a wallet first created in 2016, shifted 1,260.77 BTC worth over $100 million at block height 965770. Decade-Old Bitcoin Stash Turns Into $100 Million Fortune At first, September was witnessing a slowdown of dormant bitcoin moves in comparison […]",
+            "url": "https://news.bitcoin.com/crypto-news/bitcoin-whale-shifts-1260-btc-as-75-casascius-coins-are-peeled/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-06T20:17:29+00:00",
+            "collected_at": "2026-09-07T02:10:01.357684+00:00"
+        },
+        {
+            "id": "ea7d3196941a1ce48df405b9093bc352ec2a7713acc4392a93f5042ca863edf0",
+            "title": "Radix_FW60: handheld CP/M 2.2 computer",
+            "description": "Comments",
+            "url": "https://github.com/BrettHallen/Radix_FW60",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-09-06T20:07:16+00:00",
+            "collected_at": "2026-09-07T02:09:45.279557+00:00"
+        },
         {
             "id": "dfd10d55b254e7d449ace4754e909d5e1bdc00d3cc439ad067f99f144b89d1b6",
             "title": "🛡️ IMDSv1 vs IMDSv2 en EC2: SSRF, métricas, riesgos y una migración segura",
@@ -203,6 +786,21 @@
             ],
             "published_at": "2026-09-06T19:11:39+00:00",
             "collected_at": "2026-09-06T19:50:07.976296+00:00"
+        },
+        {
+            "id": "34db2b7b3282a600315fd61deef032a3ab7c2da257292b8c8a90d9df4fe67912",
+            "title": "D2 Is Non-Profit",
+            "description": "Comments",
+            "url": "https://d2lang.com/blog/d2-non-profit/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-06T19:11:05+00:00",
+            "collected_at": "2026-09-07T02:09:45.074789+00:00"
         },
         {
             "id": "eab7e63de1e8e6cff09bca187871a61b0b60728c49807754239573376a7b1206",
@@ -4245,6 +4843,21 @@
             "collected_at": "2026-09-06T15:37:04.385828+00:00"
         },
         {
+            "id": "f9d8b20d2b85d15f09a329ef49c17416ee9a99dc9f3575b95fdb2e51d6187b70",
+            "title": "The NX bit is not just about security",
+            "description": "Comments",
+            "url": "https://purplesyringa.moe/blog/guest/the-nx-bit-is-not-just-about-security/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-04T13:47:25+00:00",
+            "collected_at": "2026-09-07T02:09:45.074522+00:00"
+        },
+        {
             "id": "d02e2855d0258f55b65566d6c24b46fac8179db963093e03d0a1681a69567b23",
             "title": "Microsoft to bounce mail from outdated Exchange servers",
             "description": "2016 and 2019 installations must meet the October 2025 baseline to reach cloud-hosted inboxes",
@@ -5369,6 +5982,21 @@
             ],
             "published_at": "2026-09-04T07:18:47+00:00",
             "collected_at": "2026-09-06T15:36:52.483227+00:00"
+        },
+        {
+            "id": "b1abf802796b7955c9fde629a0da4ad82716909e86ca48e7d30095b5732e51ae",
+            "title": "Reverse engineering the storage format for an undocumented database",
+            "description": "Comments",
+            "url": "https://blog.glazer.ee/posts/converting-cronos/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-04T07:17:00+00:00",
+            "collected_at": "2026-09-07T02:09:45.074582+00:00"
         },
         {
             "id": "06221fc0dd999158dcd9ab9c527070d9951d2f5013e05825c98c57eb43052c2b",
@@ -6574,6 +7202,23 @@
             "collected_at": "2026-09-06T15:37:00.177824+00:00"
         },
         {
+            "id": "5787c67c97cdd80059ac58e34e61f1a6e8953cbdea787b3ae50638fa46246694",
+            "title": "GPT-6 Astra: Frontier intelligence for work, now generally available in Microsoft Foundry",
+            "description": "GPT-6 Astra, OpenAI's newest frontier model, begins rolling out today through the Microsoft Foundry Limited Access Program, with availability expanding to participating customers over the coming days. The post GPT-6 Astra: Frontier intelligence for work, now generally available in Microsoft Foundry appeared first on Microsoft Azure Blog .",
+            "url": "https://azure.microsoft.com/en-us/blog/gpt-6-astra-frontier-intelligence-for-work-now-available-in-microsoft-foundry/",
+            "source": "Microsoft Azure",
+            "category": "cloud",
+            "tags": [
+                "azure",
+                "cloud",
+                "intel",
+                "microsoft",
+                "openai"
+            ],
+            "published_at": "2026-09-03T18:15:00+00:00",
+            "collected_at": "2026-09-07T02:09:49.208057+00:00"
+        },
+        {
             "id": "bc73d9a5342ed400dc83ec8aaed782f499196e538fcbe0ba8615f3db7c57ba6c",
             "title": "Prolific Microsoft 0-day hunter drops CrowdStrike Falcon exploit PoC",
             "description": "A shared security 'Nightmare'",
@@ -6977,6 +7622,20 @@
             ],
             "published_at": "2026-09-03T16:00:26+00:00",
             "collected_at": "2026-09-06T15:37:04.388122+00:00"
+        },
+        {
+            "id": "67d650096a016f422d04d2ef523f0850d56240b618eeee38bd927d867749fb26",
+            "title": "This desktop robot companion is also an AI wearable you can wear around your neck",
+            "description": "The iKairos wants to watch you all day long.",
+            "url": "https://www.androidauthority.com/ikairos-modular-ai-wearable-3706717/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-09-03T16:00:25+00:00",
+            "collected_at": "2026-09-07T02:09:53.124068+00:00"
         },
         {
             "id": "3096b36f6056d24c16aec9e95d651cf21b90a02f1645960b6f264c8fda8a1eb4",
@@ -7793,6 +8452,21 @@
             "collected_at": "2026-09-06T15:36:52.483987+00:00"
         },
         {
+            "id": "0b925f50de994ea752d59ddd6f9c8bb4ba5543c4db801888a48257692673c69c",
+            "title": "Please don't rearrange our shoes when we turn up, paramedics in Japan urge",
+            "description": "Comments",
+            "url": "https://www.theguardian.com/world/2026/aug/28/never-tidy-paramedics-shoes-japan-custom-etiquette",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-03T10:23:19+00:00",
+            "collected_at": "2026-09-07T02:09:45.074644+00:00"
+        },
+        {
             "id": "5272c674411b544a708f3a2bb454ac7973d1624698489680cada600b61643504",
             "title": "Spurs boots VMware, cites 85% licensing saving",
             "description": "Part of wider infrastructure replacement upgrade project with HPE",
@@ -8464,6 +9138,21 @@
             ],
             "published_at": "2026-09-02T19:22:08+00:00",
             "collected_at": "2026-09-06T15:36:55.908158+00:00"
+        },
+        {
+            "id": "fb532dc76c03dd5ebc2bf7d2ca26ae8590a62ae7a0467a3029c0d8ebcae823b3",
+            "title": "Black Hole of Los Alamos: Seller of surplus nuclear research materials (2011)",
+            "description": "Comments",
+            "url": "https://www.atlasobscura.com/places/black-hole-of-los-alamos",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-02T18:47:55+00:00",
+            "collected_at": "2026-09-07T02:09:45.074430+00:00"
         },
         {
             "id": "70479d5f705bda65e91751be910a1e717d84363e084bdf6257c871741667fc3f",
@@ -71285,6 +71974,38 @@
             ],
             "published_at": null,
             "collected_at": "2026-09-06T19:50:06.094719+00:00"
+        },
+        {
+            "id": "d5c736f2ff6288d2e732c7c5edb03e8065fc3e355bf8512ee46a59f7554aed42",
+            "title": "Seattle Times and Newsday sue OpenAI and Microsoft for infringement",
+            "description": "The Seattle Times and Newsday are just the latest plaintiffs to take OpenAI to court, alleging copyright infringement. The two outlets say the company used their journalism as training data for its AI models without permission and often reproduces passages from their reporting in response to user queries. This is similar to lawsuits filed by […]",
+            "url": "https://www.theverge.com/ai-artificial-intelligence/990932/seattle-times-newsday-lawsuit-openai-microsoft",
+            "source": "The Verge",
+            "category": "cloud",
+            "tags": [
+                "aws",
+                "gadgets",
+                "internet",
+                "openai",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-09-07T02:09:43.820308+00:00"
+        },
+        {
+            "id": "0f88b0f3ab8277eef16c018dcc39de167e6a2ff88294d329c4309bf9ee83c282",
+            "title": "An Amazon cargo plane crashed at Miami International Airport",
+            "description": "A plane bearing an Amazon logo overran the runway at Miami International Airport on Sunday during landing, crashing into vehicles and resulting in multiple injuries. The extent of the damage or the seriousness of the injuries was not clear at the time of publication. In the aftermath of the incident, the FAA released a statement […]",
+            "url": "https://www.theverge.com/tech/990918/amazon-cargo-plane-crashed-miami",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-09-07T02:09:43.820410+00:00"
         }
     ]
 }
