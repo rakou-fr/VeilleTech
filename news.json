@@ -1,7 +1,1240 @@
 {
-    "updated_at": "2026-09-08T02:21:54.412085+00:00",
-    "count": 4996,
+    "updated_at": "2026-09-08T10:22:33.012037+00:00",
+    "count": 5102,
     "articles": [
+        {
+            "id": "06166edddfac1d9742fd63e7933337b3cad12205ee7892b6503219422bde822c",
+            "title": "C++ isn't losing to Rust. The infra it runs is the moat.",
+            "description": "Rust wins in any online debate. However, C++ is the one that wins in reality and gets shipped. When I saw ThePrimeagen arguing about Rust versus C++ for GPU and systems dominancy, I realized what's actually happening: It's not a safety language fight, it's a language lockdown fight. The vote and the paycheck are different things For the 9th consecutive year, Rust was voted the most \"admired\" programming language in the 2025 Stack Overflow survey. The survey gave it a 72% approval rating. As much as we would like to believe that love conquers all, the reality is that we need money to survive. As of July 2026, the TIOBE Index ranks C++ as the third most popular language globally, with a market share of 8.03%. An industry analysis from September 2025 cited that enterprise C++ usage was at 90% while Rust was at 60%. Rust may have won the popularity contest, but when it comes to earning, C++ takes the crown. 💰 The GPU stack doesn't care about your feelings Here's something people are usually hesitant to admit. The infrastructure for every model you've constructed is implemented using C and C++. NVIDIA's CUDA, cuDNN, cuBLAS, and TensorRT are the libraries used to perform the actual tasks on GPUs, and they are based on C/C++. Do you mean to discuss on-device AI? llama.cpp and ggml were actually the gravitational center for inference. Not llama.rs. It's right in the name, it has \"cpp\" in it. That wasn't a coincidence. It's about which language you can't rip out. An entire industry poured concrete decades ago, and you can't move a foundation with a survey result. Ecosystem gravity beats safety marketing The best part of it all is a February 2026 engineering report, where over five years, a team spent hundreds of man-years \"trying to fold Rust into a C++ environment.\" They failed. But not for the reason you'd guess. Performance-wise, Rust was doing fine. The real problem was what we'd later come to call the \"ecosystem gravity\" at the FFI boundary: → ownership semantics that don't translate cleanly across the wall → error handling that needs constant re-plumbing → build system integration friction that never stops nagging This is the entire story summarized in one report. It wasn't that C++ was slow; it was the expense of stepping outside the room that C++ had everything in. C++ isn't sitting still either According to the cope theory, C++ is a dying language that's being propped up by its past successes and the unwillingness of other languages to take on its role as the systems-programming language. Profiles introduced the concept of tiered support into the C++ language itself. This is a systematic approach to opting the programmer into certain kinds of breakage in return for compile-time and/or run-time checking. C++ creator Bjarne Stroustrup also cautioned that the language was in danger of \"a painful decline\" if nothing was done. That's the creator looking the safety argument straight in the face and responding to it in his own way. Having backward compatibility is like an escape hatch. You adopt new safety without giving up the 40 years of code that's holding up the entire internet. Rust asks you to rewrite it. C++ asks you to opt into it. The AI wildcard nobody planned for And to top it off, there was a plot twist, GitHub Copilot had reached 20 million users in 2025. And the interesting part is that AI models can generate and debug C++ better than Rust. The reason is that C++ has a much much larger public code corpus to train on. The greater the dependency we have on AI to program, the more support the ancient behemoth receives. The models grew up with C++. They look after it better. Safety marketing had assumed that the future would be a clean rewrite, when in fact, the future turned out to be an autocomplete tool trained on a mountain of legacy C++. The takeaway Rust is indeed an amazing language, and I don't want to criticize it. However, being the \"most admired\" and being the \"most deployed\" are two separate things. The barrier is not the language itself. It's the toolchains, the GPU stack, the FFI expense, the compiler that you can't afford to replace, and now the AI based on years of experience with it. That's an interesting point. Do you think any new systems language stands a chance with ecosystem gravity being so strong? Or is everyone simply going to keep building costly wrappers around C++ for eternity? What are your thoughts?",
+            "url": "https://dev.to/adioof/c-isnt-losing-to-rust-the-infra-it-runs-is-the-moat-2383",
+            "source": "DEV Community",
+            "category": "hardware",
+            "tags": [
+                "cpp",
+                "developpement",
+                "git",
+                "nvidia",
+                "programmation",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-09-08T10:19:28+00:00",
+            "collected_at": "2026-09-08T10:22:21.170201+00:00"
+        },
+        {
+            "id": "5c1d9d791a7e62ba9445350f0550f8360f141c48e0f720d8d95fd347d0c78d91",
+            "title": "macOS Made a File That Reports Zero Bytes and Occupies Sixty Kilobytes",
+            "description": "I was writing a storage analyser, which means walking every file on the disk and adding up what it costs. Somewhere around the 140,000th file the progress line printed a path that does not exist: /Users/me/Applications/Chrome Apps.localized/localized There is no localized in that folder. There is a .localized , and there is one other thing, and that other thing turned out to be two separate problems wearing one filename. The file $ ls -b ~/Applications/Chrome \\ Apps.localized/ Icon \\r Not Icon followed by something. The name is the four characters I , c , o , n , and then byte 0x0D — a carriage return. Python is blunt about it: >>> os . listdir ( d ) [ ' Icon \\r ' , ' .localized ' ] macOS wrote that. Every folder with a custom icon gets one: Finder → Get Info → paste an image, and this appears. The trailing CR is a fossil from classic Mac OS, where it was the line terminator, and it is there to keep the file out of the way of anything that lists a directory naively. It has outlived the reason. Problem one: it eats your log line A filename on a POSIX system may contain any byte except / and NUL. That includes carriage return, newline, escape, and backspace. Almost nothing you write treats a path as anything other than text you can print, and this is where that assumption gets paid. Here is what a progress line actually emits: $ find box -type f -print0 | while IFS = read -r -d '' f ; do printf 'scanning %s 42,318 files\\n' \"$ f \" done | hexdump -C 00000000 73 63 61 6e 6e 69 6e 67 20 62 6f 78 2f 49 63 6f |scanning box/Ico| 00000010 6e 0d 20 20 34 32 2c 33 31 38 20 66 69 6c 65 73 |n. 42,318 files| Look at offset 0x11 : 6e 0d — the n of Icon , then 0d , the carriage return. The terminal receives it and does what a terminal has always done with a CR: it moves the cursor back to column zero. The rest of the line then overwrites what you just printed. You do not see a corrupted path. You see a line that is missing its front half, spliced onto whatever came next — which is precisely as confusing as it sounds when the count in front of it is also changing. The same byte does the same damage to a single-line label in a GUI, a CI log, and anything that later parses its own output. And the CR is the polite one: a filename containing \\n will break find | while read line outright, because that loop's entire contract is that filenames do not contain newlines. Hence -print0 and read -d '' , which exist for this reason and not for style. If you render paths anywhere a human will look, strip the control range first: final safe = path . replaceAll ( RegExp ( r'[\\x00-\\x1f\\x7f]' ), '?' ); Problem two: it is zero bytes, and it is sixty kilobytes This is the one that actually mattered for a disk tool. stat -f %z (st_size) 0 bytes ls -l 0 os.path.getsize() 0 ------------------------------------------------ st_blocks × 512 61,440 bytes du -k 60 KB The data fork is genuinely empty. The icon — 61,010 bytes of it — lives in an extended attribute: $ xattr ~/Applications/Chrome \\ Apps.localized/Icon^M com.apple.FinderInfo com.apple.ResourceFork com.apple.provenance com.apple.quarantine com.apple.ResourceFork is the resource fork, the other half of a classic Mac file, kept alive on APFS as an xattr and reachable through a magic path: $ stat -f %z ~/Applications/.../Icon^M/..namedfork/rsrc 61010 st_size describes the data fork. It always has. So a scanner that sums st_size — which is the obvious thing to sum, and what os.path.getsize hands you — reports this file as free. Sixty kilobytes, invisible, once per folder with a custom icon. Sixty kilobytes is nothing. The habit is not nothing. st_size is a statement about content; st_blocks is a statement about the disk , and a disk usage tool is answering the second question. They come apart in three directions and resource forks are only one of them: Sparse files report a large st_size and occupy almost no blocks. Compressed files — macOS transparently compresses much of /System and many app bundles — report the uncompressed size and occupy less. Resource forks and xattrs report nothing and occupy real space. Sum st_size across a volume and your total will not match About This Mac, in either direction, and the user will believe Apple. Correctly. du has always used st_blocks ; that is the whole reason du and ls -l disagree, and I had read that fact several times without it meaning anything until a zero-byte file turned up holding an icon. The catch, if you write Dart Knowing to use st_blocks and being able to are different problems. Dart's FileStat exposes size , mode , type and three timestamps. There is no blocks . File.length() is st_size as well. The number you want is in the stat struct the VM already called and did not surface, so reaching it means going around the standard library: // dart:ffi against stat(2), or a platform channel to // URLResourceKey.totalFileAllocatedSizeKey on the Swift side. Which is the actual reason so many size-summing tools get this wrong. It is not that st_size is chosen over st_blocks ; it is that in most high-level languages st_size is the only one handed to you, and the difference between \"how big is this file\" and \"what does this file cost me\" never comes up until something reports zero and takes sixty kilobytes. Two rules I would now write down before starting a tool like this: Sum st_blocks , not st_size , and if the language will not give you st_blocks , that is a dependency you take on day one rather than a refactor you do after the totals disagree with About This Mac. Strip [\\x00-\\x1f] from any path before rendering it. Paths are bytes, not strings, and one of them on your Mac right now ends in a carriage return. The file is still there. It is on your Mac too — find ~ -name 'Icon?' -type f will tell you, and the ? is the only way to match it that does not require you to type a carriage return into your shell. Originally published at devshakib.jumyn.com . I write about Flutter, Dart and the parts of shipping that are genuinely awkward — and publish the packages that came out of them at pub.dev/publishers/jumyn.com .",
+            "url": "https://dev.to/devshakib/macos-made-a-file-that-reports-zero-bytes-and-occupies-sixty-kilobytes-3c4a",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "macos",
+                "programmation",
+                "python",
+                "web"
+            ],
+            "published_at": "2026-09-08T10:16:30+00:00",
+            "collected_at": "2026-09-08T10:22:21.170997+00:00"
+        },
+        {
+            "id": "79d28ba38c068b705eafcdb3dcf31171448f9c5a09251dbe17e59842eceb6fe5",
+            "title": "One-slot, low-profile Nvidia RTX 3060 12 GB with two monitor outputs breaks cover at Newegg for $496 — bus-powered model looking for a use case in local LLM work",
+            "description": "Small-form-factor, low-profile Nvidia RTX 3060 12 GB with two monitor outputs breaks cover at Newegg for $496 — bus-powered model looking for a use case in local LLM work",
+            "url": "https://www.tomshardware.com/pc-components/gpus/one-slot-low-profile-nvidia-rtx-3060-12-gb-with-two-monitor-outputs-breaks-cover-at-newegg-for-usd496-bus-powered-model-looking-for-a-use-case-in-local-llm-work",
+            "source": "Tom's Hardware",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "llm",
+                "nvidia",
+                "pc"
+            ],
+            "published_at": "2026-09-08T10:15:00+00:00",
+            "collected_at": "2026-09-08T10:22:22.614995+00:00"
+        },
+        {
+            "id": "cb60faf73aa7d94d90c3c159fe6b69a3c38aaa9f68bba205aac8c3b2900f45bc",
+            "title": "Two times an external API overruled my own repository",
+            "description": "Most automated verification tools assume the repository is the source of truth. If the code says X, X is true. If the commit history documents Y, Y happened. It's a reasonable default — until it isn't. Two failures I hit this year had the same structure: an automated pass reasoned confidently from the repo, produced a well-formed answer, and was wrong because the actual state lived somewhere the tool couldn't see. Case 1: the newsletter that didn't exist While correcting a published article, an automated pass flagged a line claiming there was an active manual newsletter workflow — the article described sending posts by hand to a specific email platform. The checker read the article, searched the repo for workflow evidence, found nothing committed, and marked the claim unverifiable. That was the right call for the wrong reason. The repo had nothing because the newsletter platform had nothing. One API call settled it: get the publication, list its posts. The response came back with zero posts and zero drafts . Not \"posts I couldn't find in the repo\" — zero posts on the platform itself. An active manual workflow is impossible when there is nothing to send. The article was wrong about the mechanism; the API told me the mechanism had never been used at all. The repo couldn't have told me that. The repo can document what was committed; it cannot document the absence of activity on an external platform. Those are different things, and treating them the same is how the automated pass stayed confidently wrong for a while. Case 2: the rejection count that kept changing A different article mentioned four AdSense rejections. The number came from the repo's documented history: four entries, each timestamped. An automated fact-check pass later changed the article to seven rejections, sourced from the author's own records kept outside the repo. A second automated pass changed it back to four, re-reading the repository. The actual count is seven. Rejections five, six, and seven arrived as verbal notifications — emails read but never committed. The repo's four was accurate for what was committed; it understated the real count by three. Two automated passes disagreed with each other not because of a bug but because they each read different sources, both internally consistent, with no signal indicating which was authoritative. The repo said four and was internally consistent. The external records said seven and were internally consistent. The only way to resolve the conflict was to check which source had the more complete view — and the answer was \"neither alone.\" The fix was mechanical: commit the three missing entries. The harder question is the design one underneath it: when is a repository entry complete, and when is it a documented subset of a larger set? For this project, the honest answer is that commit history is the subset. Things happen that don't generate commits — API calls that fail silently and get noticed weeks later, verbal information that comes in during a meeting, external systems that change state without notifying the repo. A tool that only reads the repo will confidently \"correct\" true statements into false ones whenever the truth lives somewhere the repo cannot see. The same pattern on a Raspberry Pi The shelf scanner I run on a Raspberry Pi runs a scan every hour and writes the result to a JSON log on the Pi's local filesystem. That log then syncs to cloud storage. Whether the scan actually ran is not in the GitHub repository. CI has a record of each firmware deploy — that's the repo's version of events. But a green deploy commit is evidence the software was updated, not that the scan executed. The freshness of the scan history lives in the Pi's own output, not in git. When I built a check for stale scan history — \"has the scanner produced a result in the last two hours?\" — I had to read the Pi's actual output file rather than querying git log. The repo couldn't answer that question. The scan log could. This is the same structure as the newsletter and rejection cases: the authoritative source for a fact depends on what the fact is , not on where the code that produces it lives. What changed in practice For the newsletter: the article was corrected to remove the manual-workflow claim. One API call, one correction, done. For the rejections: three entries were committed to the repo. The article now reflects seven. The automated checker no longer contradicts itself across passes. The broader fix was a distinction in the pipeline between two different failure modes: \"Claim not found in repo\" — this means: look externally before marking it false. The repo doesn't hold everything. \"Claim contradicted by repo\" — this is a real flag. If the repo's own evidence contradicts a claim, that needs investigation. Treating these identically was the actual bug. Output inspection — reading what the pipeline actually produced — is different from process inspection , and this is a case where the output lives outside the repo entirely. The repo is a very good source of truth for code and deliberate commits. It's a poor source of truth for anything that was never committed. Part of an ongoing 6-month experiment running three AI-curated directory sites. The technical claims here are real; this article was AI-assisted.",
+            "url": "https://dev.to/morinaga/two-times-an-external-api-overruled-my-own-repository-5dg6",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "git",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-08T10:13:20+00:00",
+            "collected_at": "2026-09-08T10:22:21.171645+00:00"
+        },
+        {
+            "id": "f1407cb719f3747af4af24431fc8cfd2b022538358e832af28283747be10beba",
+            "title": "Samsung says Galaxy Z Fold 8’s screen corner flex is a feature, not a defect",
+            "description": "The company has clarified that the inner display flex is an intentional cushion against sand and everyday impact.",
+            "url": "https://www.androidauthority.com/samsung-galaxy-z-fold-8-screen-flex-response-3708709/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-09-08T10:11:38+00:00",
+            "collected_at": "2026-09-08T10:22:26.874732+00:00"
+        },
+        {
+            "id": "a809f2fc82a85f1b84183bc7db04e0ec837d138ba0dab86f2ef50678e1a1777f",
+            "title": "You Don't Need Kubernetes to Become a DevOps Engineer: The Learning Path I Wish I Had",
+            "description": "There is a specific kind of imposter syndrome that shows up early in a DevOps career. It usually sounds like a quiet, nagging voice: \"I am not a real DevOps engineer yet because I haven't touched Kubernetes.\" I believed that for longer than I should have. I chased complex orchestrator tutorials before I had solidified the underlying systems knowledge that would have made those tutorials actually make sense. The inevitable result was a local repository full of copied YAML files, a melting CPU, and very little actual system understanding. I was building a skyscraper on top of a swamp. If I were starting my DevOps learning path all over again, I would reverse the order entirely. Here is the foundational path I would follow, exactly why each step sits where it does, and how modern AI fits into the equation without ruining your learning process. 1. Linux Fundamentals (The Bedrock) Almost every modern infrastructure abstraction eventually terminates at the underlying operating system. Containers are not magical micro-VMs; they are just isolated Linux processes. What to focus on: Process Management: Understand signals (SIGTERM vs SIGKILL), jobs, background processes, and how the kernel handles resource allocation. File Permissions and Ownership: Master the numeric and symbolic representations of read, write, and execute permissions. The Filesystem Hierarchy: Know where logs live ( /var/log ), where configurations sit ( /etc ), and where transient data goes ( /tmp ). 💡 The Real-World Test: When a third-party application container refuses to execute a binary with a silent exit code, you do not want to be guessing. A solid understanding of Linux permissions allows you to immediately identify an invalid execution mask rather than spending three hours editing random configuration files. 2. Networking Basics (The Connective Tissue) A massive share of mystery production issues are just basic networking problems wearing a sophisticated disguise. If your network layers are broken, nothing else matters. What to focus on: The Request Lifecycle: How a packet travels from a browser, hits a DNS server, routes through a load balancer, passes a firewall, and reaches an application socket. Core Protocols: Master TCP/IP, UDP, DNS resolution mechanics, and HTTP/S handshakes. Troubleshooting Tools: Learn how to comfortably use curl , dig , netstat , and ping to isolate connectivity issues. 💡 The Real-World Test: When a microservice suddenly cannot talk to a database after a minor deployment, an untrained engineer blames the application code. A systems-first engineer checks the network boundaries, testing whether a port is firewalled, a subnet is misconfigured, or a DNS record failed to update. 3. Git, Done Properly (The Source of Truth) Version control is the structural backbone of every automated infrastructure deployment pipeline you will ever build. Git is not just a personal backup tool; it is a collaboration engine. What to focus on: Branching Strategies: Understand the functional differences, trade-offs, and lifecycles of GitFlow, GitHub Flow, and Trunk-Based Development. State Management: Learn how to handle merge conflicts safely, how to use git rebase versus git merge , and what git cherry-pick actually does to the commit graph. Security: Learn how to avoid committing sensitive keys and how to use .gitignore effectively before code hits a remote origin. 💡 The Real-World Test: When a production system breaks because two engineers merged conflicting infrastructure updates simultaneously, the ability to clean up the commit history and safely roll back the state depends entirely on your grasp of advanced Git mechanics. 4. Docker and Structural Containerization Once you understand Linux processes and isolation, Docker stops looking like alien technology. It reveals itself as a brilliant user interface packaged around native Linux kernel features. What to focus on: Kernel Primitives: Learn how Linux namespaces isolate what a process can see, and how cgroups restrict what a process can consume. Image Layering: Understand how the Union File System works, why each line in a Dockerfile creates a new layer, and how to cache layers effectively to speed up build times. The Ephemeral Writable Layer: Master the difference between storage inside a container and persistent data stored via volumes or bind mounts. 💡 The Real-World Test: If you do not understand image layering, you will build 2GB container images that take ten minutes to deploy. If you understand layers, you will leverage multi-stage builds to ship slim, secure 50MB images that deploy in seconds. 5. Automation and CI/CD (The Machine) With your application neatly packaged into a predictable container, you are finally ready to automate its delivery lifecycle. This is where DevOps transitions from a set of separate tasks into a unified, continuous discipline. What to focus on: Pipeline Structure: The mechanics of setting up automated steps to pull code, run test suites, check security vulnerabilities, build images, and push artifacts to a registry. State and Environment Isolation: How to cleanly inject environment variables and manage distinct configurations across staging, testing, and production environments. Failure Handling: Building pipelines that stop immediately when a test fails, ensuring broken code never leaks into the wild. 6. Cloud Infrastructure Core Before committing to any single vendor's web dashboard or memorizing proprietary names, focus entirely on the architectural paradigms of cloud computing. What to focus on: Compute and Elasticity: How virtual machines are provisioned, scaled, and managed dynamically. Object vs Block Storage: Knowing when to store stateful data on a persistent volume versus an object store bucket. Virtual Networks: Understanding how public and private subnets isolate infrastructure components securely from the open internet. 💡 The Real-World Test: If you learn the core concepts first, moving from AWS to Google Cloud or Microsoft Azure becomes trivial. You are simply mapping familiar architectural paradigms to new product names rather than attempting to learn a whole ecosystem from scratch. 7. Kubernetes (Deliberately Last) By the time you reach Kubernetes with this specific foundational sequence, it ceases to be an intimidating, frustrating wall of confusing configuration files. Instead, it reveals itself as a highly logical, elegant solution to scaling problems you already intimately understand. What to focus on: The Control Plane: How the API server, scheduler, and controller manager coordinate state. Core Abstractions: Pods, Services, Ingress, Deployments, and ConfigMaps. The Why: Focus on how Kubernetes automates health checks, self-healing, rolling updates, and service discovery across multiple nodes. Learning Kubernetes first forces you to memorize syntax rules without knowing the problems they exist to solve. Learning it last means you finally understand exactly why the system was engineered the way it was. 🤖 Where Does AI Fit Into This Roadmap? We cannot talk about learning DevOps in the current tech landscape without addressing Large Language Models (LLMs). Tools like ChatGPT, Claude, and GitHub Copilot are incredibly powerful, but for a beginner, they are a double-edged sword. If you use AI to generate arbitrary YAML configurations or complex bash scripts that you do not understand, you are simply shifting from \"Tutorial Hell\" into \"AI Dependency Hell.\" The moment the AI gives you a hallucinated command or an outdated configuration that breaks silently, you will be completely trapped because you lack the foundational knowledge to debug it. The Right Way to Use AI as a DevOps Learner: Use it as a Socratic Teacher: Instead of asking \"Give me a script to fix this network error,\" ask \"Explain why this specific network error happens on a Linux system and what tools I should use to investigate it.\" Code Reviewer, Not Code Writer: Write your own Dockerfiles, pipeline files, and scripts first. Then, feed them to the AI and ask \"What security vulnerabilities or performance inefficiencies exist in this configuration?\" Scenario Simulator: Ask the AI to simulate an outage scenario. Tell it: \"Act as a broken system. Give me a realistic terminal error message from a failing application, and let me troubleshoot it step-by-step by asking you for outputs.\" Use AI to accelerate your understanding , not to bypass your education . The Actual Point Real learning is rarely a straight line, and you can absolutely explore these topics out of order. But if you are currently feeling left behind because you have not touched a Kubernetes cluster yet, your discipline might not be the problem. It might just be a sequencing error. Ground your foundation first. Learn how the engine works before you try to fly the spaceship. The advanced orchestration tools will be waiting for you whenever you are ready. 💬 Let's Discuss! To the veterans: Looking back at your career, what was the specific foundational skill or ordinary mistake (like an expired certificate or a bad DNS route) that caused your most memorable production outage? To the beginners: Which of these seven pillars do you suspect you might have skipped over a little too quickly in the rush to learn the hype? How are you using AI to study right now? Let's talk about it in the comments below!",
+            "url": "https://dev.to/arbythecoder/you-dont-need-kubernetes-to-become-a-devops-engineer-the-learning-path-i-wish-i-had-3gh7",
+            "source": "DEV Community",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "anthropic",
+                "aws",
+                "azure",
+                "developpement",
+                "docker",
+                "git",
+                "google_cloud",
+                "kubernetes",
+                "linux",
+                "llm",
+                "openai",
+                "programmation",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-09-08T10:09:47+00:00",
+            "collected_at": "2026-09-08T10:22:21.172511+00:00"
+        },
+        {
+            "id": "f96a7b8e29518d111d898ea7ea86fc4cad4125092cd3946fb4eaa8154daa5f1e",
+            "title": "AI Coding Is Getting Expensive: How Developers Can Stop Burning Tokens",
+            "description": "AI coding tools are getting ridiculously good. You can open a project, describe a feature, and let an agent inspect files, modify code, run tests, debug failures, and sometimes work for a long time without you touching the keyboard. That feels amazing. Until you look at your usage. Suddenly one small feature has consumed a huge amount of tokens. And the strange part is that you may have only written a few sentences. So where did all those tokens go? The answer is simple: Your prompt is only a tiny part of what an AI coding agent actually processes. The problem: AI agents read much more than your message Imagine you type: Fix the authentication bug. That looks like five tokens worth of work. But the agent may then: inspect 20 files read your project instructions read previous conversation history search the repository inspect logs run tests read test failures modify files run the tests again inspect the new output Every one of those steps may add more context. OpenAI's own documentation says that larger codebases, longer-running tasks, and sessions that require more context consume substantially more usage than simple scripts or functions. So the real equation is closer to: Your prompt + repository context + conversation history + tool output + generated code + test logs + repeated agent iterations = token usage And that can become very large very quickly. 1. Stop giving the AI your entire codebase One of the easiest ways to waste tokens is giving the agent too much context. Instead of: Review my project and fix the checkout issue. Try: The bug is in the checkout flow. Start with: src/features/checkout/ src/api/payments.ts Do not inspect unrelated folders unless necessary. You are giving the agent a boundary. This is especially important in large monorepos. If your project contains: frontend/ backend/ mobile/ infrastructure/ docs/ scripts/ legacy/ the agent usually doesn't need everything just to fix one button. More context does not automatically mean a better answer. Relevant context is what matters. 2. Start a fresh session when the task changes Developers often keep one AI conversation alive for hours. For example: Build login ↓ Fix dashboard ↓ Create payments ↓ Debug deployment ↓ Optimize database The problem is that the agent may keep carrying information from earlier work. Your deployment problem probably doesn't need all the context from the login implementation. A better workflow is: Session 1 → Authentication Session 2 → Payments Session 3 → Deployment Treat AI conversations like branches. When the problem changes significantly, create a clean context. 3. Don't paste giant logs This is one of the biggest token traps. Developers regularly paste thousands of lines like: npm run build [5000 lines of output] But somewhere near the bottom the useful information is simply: TypeError: Cannot read properties of undefined src/auth/session.ts:82 Give the AI the useful part first. For example: Build fails with: TypeError: Cannot read properties of undefined src/auth/session.ts:82 Here is the surrounding function: ... If the agent actually needs the full log, it can ask for it or inspect it through tools. Don't make thousands of irrelevant lines part of the context by default. 4. Use smaller models for smaller jobs Not every coding task needs your most powerful model. You probably don't need maximum reasoning to: rename variables generate simple types write basic tests explain an error message convert JSON create boilerplate format code Reserve expensive models for tasks such as: architecture decisions complex debugging security reviews difficult migrations large refactors multi-step agent work A useful mental model is: Simple task → fast/cheap model Complex task → stronger model Using the biggest model for every tiny task is like hiring a senior architect to rename CSS classes. 5. Give the agent a clear definition of done Bad prompt: Improve this API. What does \"improve\" mean? The agent may explore architecture, performance, naming, security, validation, documentation and testing. That means more exploration. More exploration means more tokens. Instead: Optimize this endpoint only for database query count. Goal: Reduce the current 8 queries to 3 or fewer. Do not change the API response format. Run the existing tests when finished. Now the search space is much smaller. The AI knows exactly when it should stop. 6. Keep your project instructions short Files such as: AGENTS.md CLAUDE.md .cursor/rules/ can be extremely useful. But developers sometimes turn them into huge documentation dumps. Remember that persistent instructions can become part of your agent's context repeatedly. Cursor, for example, explains that applicable rules are included in model context to give the agent persistent guidance. Instead of writing 5,000 lines of instructions, keep the important rules concise. For example: Stack: Next.js + TypeScript + PostgreSQL Rules: - Use server components by default - Use Zod for validation - Never access DB directly from UI components - Run npm test before completion - Do not modify migrations without approval That's usually far more useful than an enormous internal handbook. 7. Avoid endless agent loops This pattern can get expensive: Agent writes code ↓ Test fails ↓ Agent changes code ↓ Test fails ↓ Agent changes code ↓ Test fails ↓ ... After a few failures, stop the loop. Ask: Stop editing. Explain why the last three attempts failed. Identify the root cause before making another change. This forces the agent back into diagnosis instead of continuing random trial-and-error. 8. Ask before editing when you're still exploring Sometimes you only want to understand a problem. Don't immediately tell the AI: Fix it. Try: Do not modify anything yet. Inspect the relevant files and explain: 1. the likely cause 2. which files need changes 3. the smallest possible fix Then approve the implementation. OpenAI actually recommends beginning some Codex workflows in an \"Ask\" style before moving into implementation, particularly when understanding the codebase or problem first is useful. This can prevent the agent from performing an expensive exploration-and-edit loop you never needed. 9. Structure prompts so caching can work There is another optimization most developers never think about: prompt caching . OpenAI explains that caching works best when repeated, static instructions remain at the beginning of a prompt while changing information is placed later. Conceptually, prefer: Project rules Architecture rules Coding conventions Task-specific request Current error Current file rather than constantly rewriting your core instructions. Reusable, stable context is easier for systems to optimize than completely different giant prompts every time. The workflow I now prefer Instead of: Build the feature. I try to give AI something closer to: Task: Add password reset. Scope: src/features/auth/ src/api/auth/ Requirements: - Email reset link - Token expires after 30 minutes - Existing login behavior must not change First: Inspect the relevant files and propose the smallest implementation. Then: Implement it. Finally: Run the related tests. Do not inspect unrelated folders unless required. This doesn't just save tokens. It usually produces better engineering work. AI coding isn't becoming useless. It is becoming infrastructure. This is the important part. The goal shouldn't be: Use as few tokens as possible. If an AI agent consumes $5 of compute but saves you three hours of engineering work, that may be an excellent trade. The real goal is: Don't spend tokens on context and work that doesn't improve the result. Agentic coding is moving toward longer, more autonomous tasks. OpenAI reported in 2026 that more than 70% of sampled Codex users had asked it to perform at least one task estimated to exceed an hour of human work, and some heavy users were running many agent tasks in parallel. That means token efficiency is slowly becoming another engineering skill. Just like we learned to think about: CPU Memory Database queries Cloud costs API requests developers now also need to think about: Context Tokens Agent loops Model choice Tool calls The best AI developer won't necessarily be the person who uses AI the most. It may be the developer who knows exactly how much AI is actually needed to solve the problem. How are you managing token usage in Cursor, Claude Code, Codex, or other coding agents? I'd be interested to hear what has worked for you.",
+            "url": "https://dev.to/robertadam987_/ai-coding-is-getting-expensive-how-developers-can-stop-burning-tokens-491g",
+            "source": "DEV Community",
+            "category": "hardware",
+            "tags": [
+                "ai_act",
+                "anthropic",
+                "developpement",
+                "openai",
+                "programmation",
+                "typescript",
+                "web"
+            ],
+            "published_at": "2026-09-08T10:07:27+00:00",
+            "collected_at": "2026-09-08T10:22:21.173429+00:00"
+        },
+        {
+            "id": "067f07cc5f76e24530b44c0c7bf3bc368bc07814ce34d25a6e7c4bfccbd8c2aa",
+            "title": "Accept USDC payments in Laravel without requiring buyers to hold ETH",
+            "description": "Accept USDC payments in Laravel without requiring buyers to hold ETH Accepting USDC sounds simple until the customer has enough USDC to pay you, but no ETH in the wallet for the network fee. Then a payment flow starts looking like this: Customer has USDC → customer clicks Pay → wallet requires ETH for gas → customer first has to acquire ETH → then come back and try again For someone who just wants to make a payment, that is a lot of blockchain knowledge. In this tutorial, we'll use P2Flux for Laravel to create a USDC payment on Base where the buyer can also pay the network cost in USDC. The Laravel application will still verify the transaction server-side before marking an order as paid. P2Flux is non-custodial: the merchant payment settles directly to the merchant wallet rather than sitting in a P2Flux balance waiting to be withdrawn. Install the Laravel package P2Flux has an official integration for Laravel 12 and 13. composer require p2flux/laravel Laravel discovers the package automatically, so there is no service provider to register manually. You also don't need a P2Flux API key. If you want to publish the configuration file: php artisan vendor:publish --tag = p2flux-config The default configuration points to the production P2Flux API: return [ 'api_url' => env ( 'P2FLUX_API_URL' , 'https://api.p2flux.com' ), 'timeout' => ( int ) env ( 'P2FLUX_TIMEOUT' , 60 ), ]; The package intentionally stays small. Installing it does not add: payment tables migrations routes controllers scheduled jobs queue workers Your Laravel application remains responsible for its own orders, subscriptions and business logic. Inject P2Flux into your controller The recommended approach is normal Laravel dependency injection. <?php namespace App\\Http\\Controllers ; use P2Flux\\P2FluxClient ; final class PaymentController { public function __construct ( private readonly P2FluxClient $p2flux , ) { } } The Laravel package registers P2FluxClient as a singleton. There is also an optional facade: use P2Flux\\Laravel\\Facades\\P2Flux ; $capabilities = P2Flux :: capabilities (); I prefer constructor injection because it makes the dependency explicit and is easier to replace in tests. Check whether sponsored payments are supported Before relying on payment-token sponsorship, check the capabilities exposed by P2Flux. $capabilities = $this -> p2flux -> capabilities (); On Base, P2Flux can support a payment mode where the network cost is paid using USDC instead of requiring the buyer to separately hold ETH. Conceptually: Normal USDC payment buyer pays USDC + buyer needs ETH for network gas With payment-token sponsorship: buyer pays USDC + network cost is paid in USDC + P2Flux relayer supplies the required Base ETH This is not a gas-free transaction . The blockchain still has a network cost. The difference is that the buyer does not need to acquire and hold another asset just to pay it. Create the payment from your Laravel backend Payment creation should happen on your backend, next to the order the payment belongs to. A typical application flow is: POST /checkout → create merchant order → create P2Flux payment → store the P2Flux reference against the order → return/open hosted checkout For the sponsored flow, the payment uses: gas_payment_mode = payment_token The official Laravel package contains a complete controller for this: examples/Http/Controllers/CreateSponsoredPaymentController.php The important Laravel pattern is: <?php namespace App\\Http\\Controllers ; use P2Flux\\P2FluxClient ; final class CreateSponsoredPaymentController { public function __construct ( private readonly P2FluxClient $p2flux , ) { } public function __invoke () { $capabilities = $this -> p2flux -> capabilities (); // 1. Check that payment-token sponsorship is available // for the network/token you intend to use. // 2. Create the P2Flux payment for your order // using payment_token sponsorship. // 3. Store the P2Flux intent/reference // against your own Order model. // 4. Return the hosted checkout URL to the browser. } } I recommend copying the current working controller from the official repository rather than copying payment-field definitions from an article. The repository examples are tested together with the package and stay aligned with the PHP SDK. What happens in the browser? The buyer opens the P2Flux hosted checkout and completes the wallet interaction there. When checkout appears to finish, the browser receives a completion message. The flow looks roughly like this: Laravel backend → P2Flux hosted checkout → buyer signs/pays → checkout reports completion → browser sends that claim back to Laravel But there is an important rule: Do not mark an order as paid because the browser said the checkout completed. The browser message is only a claim. Do not do this: if ( event . data . type === ' p2flux.payment.completed ' ) { markOrderAsPaid (); } Instead: browser reports completion → Laravel receives transaction/payment information → Laravel verifies it with P2Flux → Laravel marks the order paid only after verification Verify the payment on the server Your Laravel backend should be the authority that changes the order state. A simplified controller looks like this: <?php namespace App\\Http\\Controllers ; use App\\Models\\Order ; use Illuminate\\Http\\Request ; use Illuminate\\Support\\Facades\\DB ; use P2Flux\\P2FluxClient ; final class VerifyPaymentController { public function __construct ( private readonly P2FluxClient $p2flux , ) { } public function __invoke ( Request $request , Order $order ) { return DB :: transaction ( function () use ( $request , $order ) { $order = Order :: query () -> whereKey ( $order -> getKey ()) -> lockForUpdate () -> firstOrFail (); if ( $order -> paid_at !== null ) { return response () -> json ([ 'paid' => true , ]); } /* * Call P2Flux verification here using the * payment data/reference stored for this order. * * Only after P2Flux returns an authoritative * valid result should the order become paid. */ return response () -> json ([ 'paid' => $order -> paid_at !== null , ]); }); } } The official package includes the full implementation: examples/Http/Controllers/VerifyPaymentController.php That example also covers recovery and repeat-safe order updates. The important principle is: Browser result = claim. Server verification = truth. Make payment fulfilment idempotent Verification may happen more than once. For example: buyer completes checkout → browser sends result → browser retries → customer refreshes → background recovery sees the same payment later Your application should safely reach the same final state every time. That is why the example uses a database transaction and row lock. Conceptually: if ( $order -> paid_at !== null ) { return ; } // Verify through P2Flux. $order -> paid_at = now (); $order -> save (); For a real application, you will probably also persist things such as: your order reference P2Flux payment reference transaction hash settlement information payment timestamp according to your own accounting requirements. P2Flux does not try to replace your application's order database. What if the request times out? Payments have another interesting backend problem. Imagine: Laravel sends an operation → blockchain transaction is submitted → HTTP connection disappears → Laravel never receives the response The dangerous response would be: \"Didn't get a response. Just send it again.\" For a money-moving operation, that can create duplicate behavior. P2Flux therefore has recovery operations. The Laravel examples include patterns around: recoverPayment () and: recoverCharge () The safer pattern is: request result is ambiguous → recover the existing operation → determine what already happened → only then decide whether another action is required This becomes especially important for recurring payments. What does the buyer need? For a sponsored USDC payment on Base: Buyer needs: USDC They do not need to separately hold: ETH just for the network fee And they do not need: a P2Flux account P2Flux's relayer supplies the ETH required for the sponsored transaction. The corresponding network cost is paid in USDC. The merchant payment itself remains direct wallet-to-wallet settlement. Recurring USDC payments P2Flux also supports recurring payments. The Laravel package deliberately does not install its own scheduler. Your Laravel application decides when a subscription should be charged. For example: Laravel scheduler → find subscriptions due for collection → call P2Flux charge() → record the result → recover ambiguous results when necessary The package includes an application-level Artisan command showing this pattern: examples/Console/ChargeDueSubscriptions.php There is also a recovery command for pending payments. This keeps responsibilities clear: Laravel application: billing schedule customer/order state business rules P2Flux: payment execution verification recovery Cancellation and allowance restoration The Laravel repository also contains examples for subscription lifecycle operations. These include: CancelSubscriptionController RestoreAllowanceController Again, these are application examples. Installing p2flux/laravel does not automatically register controllers or routes in your project. You copy/adapt only the pieces your application needs. Refunds Refund handling is another place where repeat safety matters. The package contains a RefundController example that demonstrates the application-side pattern while protecting against duplicate or stranded refund operations. The Laravel integration itself does not create a refund database or change your application models. Your application remains responsible for recording the relationship between: order original payment refund state refund transaction Test your integration without spending crypto You should not need a real wallet or Mainnet transaction to test application logic. The underlying P2Flux PHP SDK supports an injectable transport. That means your Laravel tests can replace the normal client with a client using a fake transport and simulate responses such as: payment valid payment confirming payment rejected network failure rate limit recovery success recovery unavailable recurring collection already charged The general Laravel pattern is: $this -> app -> instance ( P2FluxClient :: class , $fakeClient ); Then test what your application does with each payment result. No USDC or ETH needs to move. The official Laravel package itself uses this approach extensively in its automated test suite. Laravel production configuration The package supports Laravel's normal production optimization flow. For example: php artisan config:cache php artisan optimize P2Flux configuration continues to resolve correctly after config caching. You can also see the active package configuration using: php artisan about The P2Flux section reports non-secret operational information such as the API URL, timeout and installed PHP SDK version. Install it To add P2Flux to a Laravel 12 or Laravel 13 application: composer require p2flux/laravel The official PHP SDK is installed automatically as a dependency. P2Flux is live on Base Mainnet and currently supports workflows including: one-time USDC payments recurring payments hosted checkout server-side verification payment recovery refunds subscription cancellation allowance restoration network fees paid in USDC The Laravel package is intentionally only the Laravel integration layer. The underlying payment behavior stays in the official P2Flux PHP SDK. Links Laravel package on Packagist https://packagist.org/packages/p2flux/laravel Laravel package source, documentation and examples https://github.com/P2Flux/laravel Official PHP SDK https://github.com/P2Flux/sdk-php P2Flux documentation https://p2flux.com/docs/ P2Flux https://p2flux.com The Laravel integration is new, so feedback from developers working on real Laravel payment flows is very welcome.",
+            "url": "https://dev.to/p2flux/accept-usdc-payments-in-laravel-without-requiring-buyers-to-hold-eth-15l3",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "blockchain",
+                "developpement",
+                "git",
+                "php",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-08T10:06:34+00:00",
+            "collected_at": "2026-09-08T10:22:21.174901+00:00"
+        },
+        {
+            "id": "4977a4c6370e681c527866ed55f5a6fa643e02bae96257598f51b22995fd6bd4",
+            "title": "AI writes the code. Do you still understand the system?",
+            "description": "AI coding agents have changed how we build software. Things that used to take hours can now take minutes. Features can be generated almost instantly. Entire parts of an application can be implemented by an agent while you work on something else. That's incredible. But I've noticed something else happening. The faster the code gets generated, the harder it can become to maintain a mental model of the system. That's why I decided to create a tool to solve this problem. Heimdall I used to know my code Not long ago, I wrote most of the code myself. When I opened a codebase, I usually had a rough mental model of what was happening. I knew where things lived. I knew which modules were important. I knew roughly how different parts of the system were connected. Even when I didn't know a particular file, I could navigate the code and gradually build an understanding of the architecture. With AI coding agents, that relationship changes. I can ask an agent to implement a feature, refactor a module, add an integration, or create an entire component. And it can do it incredibly quickly. But when I come back to the code, I sometimes have the feeling that I'm looking at a system I didn't actually build. The code works. But my mental model is incomplete. The problem isn't reading code When you inherit a large codebase, the obvious thing to do is start reading files. Open a file. Follow an import. Open another file. Follow another dependency. Repeat. That works for small projects. It becomes much harder when the system contains hundreds or thousands of files. The problem isn't that the information isn't there. It's that the information is there but you never wrote it, it was AI. Source code tells you what the system does. But before diving into the details, I often want to know: What are the main components? Which modules depend on each other? Where are the important boundaries? What is the entry point? Which parts of the system are tightly coupled? Where does a particular feature fit? What did that AI agent actually build? I wanted to see the system before reading every line of code. You need to understand the system you create, or it will collapse That's why I built Heimdall . Heimdall turns a codebase into an interactive architecture map. Instead of starting with thousands of files, you can start with the big picture or map the system from any specific file or type in your codebase. You can explore: Files and modules Dependencies Relationships between components Architectural structure Connections across the codebase The goal isn't to replace your code editor. It's to give you a better starting point for understanding the code. No LLM. No coding agent. Zero tokens. This part was important to me. Heimdall does not use an LLM or a coding agent to analyze your code. There are: No AI models or coding agents No tokens No cloud analysis No source code uploaded to a server No external AI service required The analysis runs locally on your machine. 100% offline. 100% private. Your source code stays where it belongs: with you. I deliberately wanted the architecture analysis itself to be deterministic and local. You shouldn't need to send your entire codebase to an AI service just to understand its structure. Built for the AI coding era I don't think AI coding is going away. Quite the opposite! AI will probably continue to write more and more of our code. And I think that's the point where Heimdall helps... When machines write more of the implementation, humans need better ways to understand what was built. The bottleneck may shift from: \"How do I write this code?\" to: \"How do I understand this system?\" That's the problem I'm interested in. 16 languages and a CLI Heimdall currently supports 16 languages and frameworks , including: Rust · Java · Python · Kotlin · TypeScript · Swift · C# · JavaScript · Go · C · C++ · PHP · Ruby · Scala · React · Jetpack Compose It's available as a desktop application, and there's also a CLI for headless analysis and integrations. That means you can use it not only when exploring a project manually, but also as part of development workflows and AI-assisted workflows. I built Heimdall because I wanted to understand my own code again This is ultimately a developer experience problem. AI made writing software dramatically faster. But speed isn't the same thing as understanding. I don't want AI to stop writing code for me. I want better tools for understanding the code it writes. That's what I'm trying to build with Heimdall. If you're also finding it harder to maintain a mental model of your codebase as AI writes more of it, I'd love to hear how you're dealing with it. You can check out Heimdall here: https://heimdallmap.com/ There is a free trial for you available already and a 40%-off promotion to celebrate the first public beta release! I hope you find it useful. Heimdall - Map the system, master the code.",
+            "url": "https://dev.to/pedro_vicentegmezsnch/ai-writes-the-code-do-you-still-understand-the-system-11i3",
+            "source": "DEV Community",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "cpp",
+                "csharp",
+                "developpement",
+                "java",
+                "javascript",
+                "llm",
+                "php",
+                "programmation",
+                "python",
+                "rust",
+                "typescript",
+                "web"
+            ],
+            "published_at": "2026-09-08T10:04:44+00:00",
+            "collected_at": "2026-09-08T10:22:21.175371+00:00"
+        },
+        {
+            "id": "7ce20dd6b83b4347c2cd77075435b93e901c3b7e615a1fe8a77faaeb9172cfe5",
+            "title": "I built a study operating system so AI would stop doing my learning for me",
+            "description": "AI disclosure: This article is based on my real study logs and workflow. I used AI to help research DEV's publishing format, organize the draft, and revise the English. The cover image was also AI-generated under my direction. I reviewed every technical claim and made the final editorial decisions. AI made me faster at producing code. It did not automatically make me better at engineering. That distinction became obvious when I looked at my GitHub: many repositories, several promising starts, and too few projects I could explain from database constraint to error response without reopening a chat. So I stopped treating AI as a shortcut generator and designed a small study operating system around one rule: An output only counts as learning if I can explain, reproduce, and verify the reasoning behind it. This post describes the workflow as a system you can copy, modify, and run. The architecture My daily learning pipeline has four stages: fundamentals -> academic theory -> market context -> real implementation In practice: math -> software engineering degree -> certification -> hiring challenge Each stage has a specific responsibility. Stage Responsibility Example Fundamentals Build the mental model Sets, relations, Boolean logic, statistics Academic theory Name and structure the concept Normalization, CPU architecture, distributed processing Certification Connect theory to industry vocabulary SQL, cloud, project management, lakehouse Hiring challenge Produce evidence under constraints API, tests, database schema, deployment The important part is not the list. It is the dependency between stages. On a database day, for example, I can move from mathematical relations to functional dependencies, from functional dependencies to normalization, and from normalization to constraints in PostgreSQL. One concept crosses four contexts instead of becoming four disconnected study sessions. The scheduler: minimum, standard, and deep modes Most study plans assume a constant amount of energy. Humans do not have one. I use three execution modes: type StudyMode = { duration : string ; goal : string ; evidence : string ; }; const modes : Record < \" minimum \" | \" standard \" | \" deep \" , StudyMode > = { minimum : { duration : \" 10-15 minutes \" , goal : \" keep continuity \" , evidence : \" one recalled concept or answered question \" , }, standard : { duration : \" 50-60 minutes \" , goal : \" learn, close the source, and retrieve \" , evidence : \" an explanation in my own words \" , }, deep : { duration : \" 90 minutes \" , goal : \" implement and integrate \" , evidence : \" working code, tests, or deployment \" , }, }; The minimum mode is not a fake version of studying. It is fault tolerance. If a bad day forces the system from standard to minimum , the process degrades gracefully instead of crashing to zero. Deep work remains important, but continuity protects the next session from the cost of a complete restart. Tool boundaries: NotebookLM is memory, ChatGPT is dialogue Using two AI tools without boundaries creates duplicated noise. I assign them different roles. NotebookLM: source-grounded memory I use it to organize: college material; course notes; daily study sources; summaries of where I stopped; questions that still need review. Its job is context recovery. When I return to a subject, I should not spend the first 20 minutes reconstructing the previous session. ChatGPT: tutor and reviewer I use ChatGPT to: challenge my explanation; generate a small exercise from a specific gap; compare two architectural choices; review code I already attempted; help split an oversized problem; identify claims that need documentation or tests. Its job is interaction, not authority. The AI protocol The most useful file in each project may not be part of the application at all: docs/ai-log.md This is the template I use: # AI Learning Log ## Problem What behavior am I trying to implement or understand? ## My hypothesis before asking What do I think the solution is? Where am I uncertain? ## AI suggestion Summarize the proposed approach. Do not paste an entire conversation. ## What was wrong or incomplete? Missing edge cases, invalid assumptions, outdated APIs, weak architecture, etc. ## Verification - Documentation consulted: - Test written: - Manual experiment: - Result: ## Retrieval check Can I explain the solution without reopening the chat? This changes the interaction. Before asking, I must state a hypothesis. After receiving an answer, I must find a way to falsify it. The log also creates interview material. Instead of saying “I used AI to build this,” I can explain a concrete decision, a failed suggestion, the evidence that changed my mind, and the final trade-off. A better prompt lifecycle My old workflow looked like this: task -> prompt -> generated code -> commit The new workflow is: task -> inspect the existing system -> write my hypothesis -> ask a bounded question -> compare the answer with docs -> write or adapt the code -> test the behavior -> explain it from memory -> commit The extra steps feel slower locally. They are faster globally because they reduce copied mistakes, architectural drift, and the need to relearn the same concept. Weekly routing I route each weekday to a concept family: Day Core theme Implementation target Monday Web and dynamic logic DOM, events, async APIs Tuesday Databases modeling, constraints, SQL Wednesday Computer architecture memory, processing, I/O Thursday Data and distributed systems batch, streaming, fault tolerance Friday Project engineering scope, risk, estimates, Definition of Done Saturday Integration 90-minute build/test/deploy block Sunday Recovery rest plus light weekly planning The schedule is a routing table, not a prison. If one topic needs another week, it keeps its slot. I do not add a new active project to manufacture the feeling of progress. One active challenge, explicit Definition of Done My biggest operational change was freezing secondary projects. I now work through real hiring challenges in sequence. Each challenge has a concept target and a Definition of Done. For a menu and promotions API, for example, “done” does not mean that POST /products returned 201 once. It means: business rules are explicit; invalid input produces intentional errors; database constraints protect invariants; critical paths have tests; setup is reproducible; the README explains architecture and limitations; I can defend the choices without the AI transcript. This is where a study project begins to resemble engineering evidence. Metrics that are harder to fake Hours are easy to count and weak as a measure of learning. I track: days the system stayed online; concepts retrieved without the source; bugs explained before they were fixed; business rules protected by tests; completed and deployable projects; decisions recorded in the AI log. Commits still matter, but a commit is an event. Understanding is a capability. What I am testing next This system is still an experiment. My current challenge sequence increases complexity deliberately: schema-driven forms and DOM fundamentals; TypeScript API, PostgreSQL, Docker, time-based promotion rules, and handwritten SQL; React/Next.js filtering with URL synchronization; architecture evolved through junior, mid-level, and senior releases; transactions, concurrency, idempotency, and unstable external services. The hypothesis is simple: if each project reuses old fundamentals while adding one hard constraint, the portfolio becomes evidence of progression instead of a gallery of unrelated demos. The part AI cannot automate AI can produce a plausible answer before I have formed a useful question. That is exactly why the workflow needs friction. The goal is not to avoid AI. The goal is to make its contribution observable, bounded, and testable. My current rule is: AI may accelerate the feedback loop. It may not silently own the reasoning. If you are also learning with AI, try adding only one thing this week: write your hypothesis before your next prompt. The quality of the question changes, and so does the ownership of the answer. Suggested discussion prompt: What evidence do you use to distinguish “I shipped it” from “I learned it” when AI helped write the code?",
+            "url": "https://dev.to/luisbotelho/i-built-a-study-operating-system-so-ai-would-stop-doing-my-learning-for-me-mf5",
+            "source": "DEV Community",
+            "category": "hardware",
+            "tags": [
+                "developpement",
+                "docker",
+                "git",
+                "openai",
+                "programmation",
+                "typescript",
+                "web"
+            ],
+            "published_at": "2026-09-08T10:04:33+00:00",
+            "collected_at": "2026-09-08T10:22:21.176290+00:00"
+        },
+        {
+            "id": "b4a22778186fdb17704c6f6bfeea84bed487e201616c26f183fcef35ccb9211d",
+            "title": "Your CLAUDE.md has zero tests. Here's what happened when I broke mine on purpose.",
+            "description": "Claude Code shipped roughly 25 releases last month. My setup, 400 lines of CLAUDE.md , four skills and a guard hook, had exactly zero tests against any of them. That bothered me, because this configuration has behavior, and behavior breaks. A new model version ships and suddenly a skill stops triggering. Nothing errors. Nothing goes red. The agent just quietly stops doing the thing you taught it, and you notice three weeks later when the code review comes back weird. So I built CI for it: config-drift-checker turns your CLAUDE.md , skills and hooks into eval cases and re-runs them on every Claude Code release and every PR that touches the setup. But a tester you've never seen fail is worthless. So I sabotaged my own setup to test the tester. Attempt one: the sabotage that did nothing I deleted the skills entry from my plugin manifest, expecting everything to break. Nothing broke. Claude Code auto-discovers the skills directory, so the manifest key does nothing. My first sabotage was a no-op, which is exactly the kind of thing you only learn by trying to break your own system. Attempt two: the realistic break This time I rewrote one skill's trigger description the way a careless PR would. The skill still existed, still had all its content, but its description now talked about Terraform instead of Spring services. Before After sabotage Suite score 1.00 0.36 Tripwire case (did the skill fire?) 1.00 0.00 Content cases 1.00 0.33 to 0.60 The content cases dropped because the agent no longer followed conventions it used to follow. And one case went to exactly zero: the tripwire. The tripwire A tripwire case has a single grader: Was the skill actually invoked? Not \"did the output look right\". Just \"did the trigger fire\". When a trigger breaks, that case reads 0 out of 3 runs, every run, every day, and no amount of model randomness produces that pattern. The hard part is noise, not scoring One failed run doesn't mean your rule broke. Models are stochastic; sometimes they just ignore an instruction once. Telling \"rule stopped firing\" apart from \"model ignored it run\" turned out to be the real engineering problem. Three things made the signal trustworthy: 1. Three runs per case. A genuine flake usually recovers within the same three runs. A broken trigger never does. Noise bands learned from history. Each case's expected spread comes from its own past runs. One of my cases naturally swings by 0.75, so a fixed threshold would either alarm daily or catch nothing. A drop inside the band gets an amber \"noisy\" flag, never a red check. Guards so real breaks can't hide in the band. If no current run reaches the baseline, or the case has been below the bar for consecutive runs, it escalates to red anyway. Five failures in a row is not noise. Likely refusals (zero tool calls, one turn, short reply) get labeled separately, so they don't masquerade as broken rules. See the failure yourself The whole broken run is published, unedited: The red report from the sabotage run It runs as a GitHub Action on your runner with your key: - uses : jameskomo/config-drift-checker/action@v0 with : plugin-dir : . Costs $0 on a Claude Pro or Max plan via a subscription token. Repo: https://github.com/jameskomo/config-drift-checker If you've built your own version of this in-house (I keep meeting people who have), I'd genuinely like to compare notes, especially on how you separate \"rule stopped firing\" from \"model ignored it this run\".",
+            "url": "https://dev.to/smartword_world_0b5b38003/your-claudemd-has-zero-tests-heres-what-happened-when-i-broke-mine-on-purpose-58mp",
+            "source": "DEV Community",
+            "category": "devops",
+            "tags": [
+                "anthropic",
+                "developpement",
+                "git",
+                "programmation",
+                "rust",
+                "terraform",
+                "web"
+            ],
+            "published_at": "2026-09-08T10:03:18+00:00",
+            "collected_at": "2026-09-08T10:22:21.176638+00:00"
+        },
+        {
+            "id": "284ddda87ec7650f6a2b0ad6d0ff9a4a919eb448fe049c5d0066213abe74af09",
+            "title": "Your test environment is where the governance stops",
+            "description": "Every estate has a boundary where the controls get serious. Production sits inside it. Access is brokered, changes are reviewed, reads are logged, and somebody owns the log. Test environments sit outside it. Not by decision — by accretion. Someone needed a realistic dataset for a migration in 2019, took a snapshot, and the snapshot became the fixture. It got copied into a second environment for load testing, then into a third so a contractor could reproduce a bug. Nobody signed anything, because nobody was doing anything that felt like it needed signing. That is how the least-governed part of an estate ends up holding the most production-shaped data in it. Why the data has to be production-shaped The obvious answer is \"then don't use real data\", and it is worth being honest about why teams do it anyway. Test data has to be representative or the tests are theatre. The interesting defects live in distributional properties: the customer with 4,000 orders, the account whose name contains an apostrophe, the address with no postcode, the record migrated from the system before the system before this one. Synthetic generators produce data that satisfies the schema. Schemas are not where the defects are. So teams reach for a subset of production, and the honest ones anonymise it. Anonymisation is real work and it helps, but it is a spectrum rather than a state — a dataset that keeps the distribution keeps a lot of what makes a record identifiable, and a dataset that does not keep the distribution has stopped being useful for the thing you wanted it for. The practical position most teams land on is: this data is not production, but it is close enough that we would not want it in a public bucket. Then a testing tool is pointed at it. What that makes a testing tool A testing tool is an unusual thing to introduce into an estate. Consider what it needs in order to work at all: Credentials for an application, usually more than one set, usually including a privileged one because half the interesting paths are behind an admin role. Network reach into the environment where that application runs. The ability to drive the application as a user, which means it can read whatever a user can read. Somewhere to keep results — screenshots, request and response payloads, database state before and after. That last one is the part people miss when they think about test tooling as a build-time concern. The artefacts a test run produces are a copy of the data the run touched. A failing API assertion is stored with the payload that failed it. A failing UI step is stored with a screenshot of the screen it failed on, and that screen had a customer's name on it. So a testing tool is not just a consumer of test data. It is a second store of it, in a place whose retention policy nobody wrote down. None of this is an argument against test automation. It is an argument that the access model of a testing tool is not a datasheet appendix. It is the thing that decides whether the tool can be adopted at all in an estate that takes its boundary seriously — and it is why these tools get rejected at review by people who were never against the tool. The four questions, and what a real answer looks like Reviewers are not asking for reassurance. They are asking for artefacts. Four categories cover most of it. Identity. Does the tool authenticate against the directory you already run, or does it keep its own user list? A second user list is not a preference difference — it is a population of accounts that does not get deprovisioned when someone leaves, because your leaver process does not know it exists. The answer a reviewer wants is a protocol, not a promise: SAML or OIDC against the existing identity provider, so joiners and leavers are handled by the process that already handles them. Authorisation. Once someone is in, what can they do? The failure mode here is a tool with one effective permission level, where access control is really URL obscurity — anyone who can reach the run can see the run. Roles need to be coarse enough that people actually use them and fine enough that \"can trigger a run against the payments service\" and \"can read the payloads that run captured\" are separable, because those are genuinely different privileges. Tenancy. If the tool is multi-tenant, what enforces separation, and at what layer? \"Separate databases\" and \"a tenant_id column and a WHERE clause\" are both answers to that question, and they are not the same answer. If the tool runs inside your own boundary, the question changes shape rather than disappearing: separation is now your own controls' problem, which is usually what a reviewer prefers, because they can already audit those. Evidence. And this is the one worth being precise about. \"A run happened\" is not the same artefact as \"here is what it could see\" Most tools can produce a list of runs. Who triggered it, when, against which environment, pass or fail. That is an activity log, and it answers a question about the tool. The question a reviewer is actually asking is about the data. Which endpoints did that run call? Which records came back? Which of those artefacts are still stored, and for how long? If a screenshot captured a customer record, is that screenshot inside the retention window that applies to the record, or the one that applies to build artefacts? Those are different logs. The first is cheap and every tool has it. The second requires the tool to have been built with the assumption that its own outputs are sensitive — which mostly means decisions made early: artefacts stored with the same classification as their source, retention configurable per artefact class rather than globally, and redaction available at capture rather than as a cleanup job. You can test for this in about five minutes. Ask to see the audit view for a run that touched customer data, and ask which of the artefacts from that run still exist. A tool that has thought about it will show you. A tool that has not will show you the activity log again. A short checklist Portable, and not about any particular product: Does it authenticate against our identity provider, or keep its own user list? Can \"trigger a run\" and \"read what the run captured\" be granted separately? What enforces tenant separation, and at which layer? For a run that touched customer data: which artefacts still exist, and under whose retention policy? Where are those artefacts processed, and does that answer change under load? The fourth one is the one that finds things. It is also the one most likely to be answered with a screenshot of a dashboard rather than a policy, which is itself the answer. Disclosure 2SD Technologies builds TAI, a testing platform, so this is not a disinterested essay about governance. It runs inside the customer's own environment, which means most of question three becomes a question about controls the customer already audits — and the checklist above is one we are happy to be held to, including question four. If you want the four answers against your own estate rather than a demo: info@2sdtechnologies.com",
+            "url": "https://dev.to/2sdtechnologiesdotcom/your-test-environment-is-where-the-governance-stops-4978",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-08T10:02:53+00:00",
+            "collected_at": "2026-09-08T10:22:21.177504+00:00"
+        },
+        {
+            "id": "8c30c35b984943480260ef82e21f58c762610779507870e7eda16c0a30e6170f",
+            "title": "Competitor pricing data is only useful if you model its failure modes",
+            "description": "You build a quick scraper to watch competitor prices. It works for a week. Then a retailer changes its HTML, another starts showing member-only discounts, and your dashboard confidently says a $49 product is now $0. Bad pricing data is worse than missing pricing data because people trust the chart. Competitive pricing analysis sounds like a business topic, but the hard part is usually engineering: collecting comparable observations from messy websites, detecting when extraction breaks, and avoiding comparisons that look precise but are wrong. Store observations, not just current prices A common mistake is keeping one row per competitor SKU and overwriting the price every time a scraper runs. That throws away the context you need when something looks wrong. Use an append-only model instead: CREATE TABLE price_observation ( id BIGSERIAL PRIMARY KEY , competitor TEXT NOT NULL , sku TEXT NOT NULL , url TEXT NOT NULL , observed_at TIMESTAMPTZ NOT NULL DEFAULT now (), price_cents INTEGER , currency CHAR ( 3 ), availability TEXT , shipping_cents INTEGER , unit_quantity NUMERIC , extraction_status TEXT NOT NULL , error TEXT , raw_hash TEXT ); CREATE INDEX ON price_observation ( competitor , sku , observed_at DESC ); That extraction_status field matters. A missing price is not the same thing as a free product. Store failed_selector , blocked , out_of_stock , or currency_unknown rather than forcing everything into price_cents . For this part of the stack, Wire is an extraction layer for competitor pricing data, so your application can consume structured price observations instead of page-specific HTML. Fail loudly when a page changes Here is a deliberately small scraper. The important part is not BeautifulSoup. The important part is that it validates what it extracted before writing a successful observation. from decimal import Decimal import hashlib import re import httpx from bs4 import BeautifulSoup PRICE_RE = re . compile ( r ' (\\d+[\\d,]*\\.\\d{2}) ' ) def parse_price ( text : str ) -> int : match = PRICE_RE . search ( text . replace ( ' , ' , '' )) if not match : raise ValueError ( f ' no price found in: { text [ : 80 ] } ' ) amount = Decimal ( match . group ( 1 )) if amount <= 0 : raise ValueError ( f ' invalid price: { amount } ' ) return int ( amount * 100 ) def fetch_price ( url : str ) -> dict : try : response = httpx . get ( url , timeout = 10 , headers = { ' User-Agent ' : ' pricing-monitor/1.0 ' } ) response . raise_for_status () html = response . text soup = BeautifulSoup ( html , ' html.parser ' ) node = soup . select_one ( ' [data-testid= \" product-price \" ] ' ) if node is None : return { ' extraction_status ' : ' failed_selector ' , ' error ' : ' missing [data-testid= \" product-price \" ] ' , ' raw_hash ' : hashlib . sha256 ( html . encode ()). hexdigest () } return { ' price_cents ' : parse_price ( node . get_text ( ' ' , strip = True )), ' currency ' : ' USD ' , ' extraction_status ' : ' ok ' , ' raw_hash ' : hashlib . sha256 ( html . encode ()). hexdigest () } except httpx . HTTPStatusError as e : return { ' extraction_status ' : ' blocked ' if e . response . status_code in ( 403 , 429 ) else ' http_error ' , ' error ' : f ' { e . response . status_code } { url } ' } except Exception as e : return { ' extraction_status ' : ' parse_error ' , ' error ' : str ( e ) } Without these states, a broken selector often turns into one of three bad symptoms: nulls silently disappear from aggregates, zeroes pull averages down, or yesterday's price gets reused and nobody notices the data is stale. Normalize before comparing The number on the page is not always the number you should compare. A $40 two-pack is not cheaper than a $25 single item. A $99 product with $18 shipping is not equal to a $99 product with free shipping. A monthly subscription and annual subscription need different handling. At minimum, calculate an effective unit price: SELECT competitor , sku , observed_at , ( price_cents + COALESCE ( shipping_cents , 0 )) / NULLIF ( unit_quantity , 0 ) AS unit_price_cents FROM price_observation WHERE extraction_status = 'ok' AND currency = 'USD' ; This is where many pricing dashboards start giving useful signals. You can spot products where you look overpriced but actually include shipping, or products where you look competitive only because you sell a smaller quantity. Look for patterns, not single differences One competitor undercutting you once is noise. A competitor discounting the same SKU every Friday for six weeks is a pattern. For example, this query looks for competitors whose price changes unusually often: WITH daily AS ( SELECT competitor , sku , date_trunc ( 'day' , observed_at ) AS day , min ( price_cents ) AS price_cents FROM price_observation WHERE extraction_status = 'ok' GROUP BY competitor , sku , day ), changes AS ( SELECT competitor , sku , day , price_cents , lag ( price_cents ) OVER ( PARTITION BY competitor , sku ORDER BY day ) AS previous_price_cents FROM daily ) SELECT competitor , sku , count ( * ) AS price_change_days FROM changes WHERE previous_price_cents IS NOT NULL AND price_cents <> previous_price_cents GROUP BY competitor , sku HAVING count ( * ) >= 5 ORDER BY price_change_days DESC ; That output can tell you more than \"they are cheaper.\" Frequent discounts might mean inventory pressure, weak retention, or automated repricing. It might also mean your scraper is alternating between a logged-out price and a promo price, so check the raw observations before drawing conclusions. Wire fits this kind of workflow when the useful output is not a screenshot or one-off scrape, but repeated price observations you can diff over time. The hard part is product matching Most pricing mistakes come from comparing the wrong products. Names are not enough. Retailers add bundles, change pack sizes, include accessories, or sell regional variants. If you match on title similarity alone, \"USB-C charger 30W\" and \"USB-C charger 30W 2-pack\" may look close enough while being commercially different. Use a match table with confidence and review status: CREATE TABLE competitor_sku_match ( internal_sku TEXT NOT NULL , competitor TEXT NOT NULL , competitor_sku TEXT NOT NULL , match_confidence NUMERIC NOT NULL , reviewed BOOLEAN NOT NULL DEFAULT false , PRIMARY KEY ( internal_sku , competitor , competitor_sku ) ); Let automation propose matches, but require review for high-impact SKUs. This is boring operational work, and it prevents expensive mistakes. What the analysis is actually good for Once the data is clean enough, competitive pricing analysis helps with more than repricing. It can show financial leaks, like a product priced above the market without a matching conversion rate. It can reveal white space, like a missing budget tier where competitors only sell premium bundles. It can support product decisions, like whether customers pay extra for a feature or whether everyone treats it as table stakes. The tradeoff is that none of this works from a single scrape. You need history, normalized units, extraction failure tracking, and reviewed SKU matches. A practical next step: pick 10 important SKUs, track 3 competitors for 30 days, store every observation, and review every anomaly by looking at the raw page. If the data still supports the same conclusion after that, it is probably safe enough to use in pricing discussions.",
+            "url": "https://dev.to/anakin_writers/competitor-pricing-data-is-only-useful-if-you-model-its-failure-modes-5067",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "programmation",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-09-08T10:01:28+00:00",
+            "collected_at": "2026-09-08T10:22:21.178323+00:00"
+        },
+        {
+            "id": "94b871961680155ffec3d8a0722f4bda35e3fcfefc3c29c0d5f4901cb0e838e2",
+            "title": "If the iPhone Ultra has these 5 features, I might ditch my Android phone",
+            "description": "Apple has an opportunity to do something special.",
+            "url": "https://www.androidauthority.com/iphone-ultra-features-ditch-android-phone-3708124/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "ios",
+                "smartphone"
+            ],
+            "published_at": "2026-09-08T10:00:32+00:00",
+            "collected_at": "2026-09-08T10:22:26.874782+00:00"
+        },
+        {
+            "id": "4cdca940895369973a5f2d7c7839b24f481a6f1c4b40e18941442855df4e64db",
+            "title": "EU Child Survey Highlights Reporting Follow-Up as a Priority for Online Platforms",
+            "description": "Children want more than a report button when they experience cyberbullying online. Results from an EU-wide survey of 6,343 children aged 12 to 17 show that 54% want social media platforms to take reports seriously and explain what happens next . The finding puts the quality of reporting workflows , not simply their existence, at the centre of the online safety conversation. The September 2025 survey covered children in all 27 EU member states through the EU Children’s Participation Platform. Its focus was cyberbullying and the steps children want adults and platforms to take. The EU has published the findings as part of its wider work to protect minors online, including Better Internet for Kids initiatives and the Digital Services Act’s emphasis on child safety . The EU Children’s Participation Platform’s cyberbullying findings provide the official context for the survey. For operators of social platforms, communities, games, marketplaces and apps with social features, the signal is practical. A reporting flow can be technically available while still failing users if it is difficult to find, unclear to complete or followed by silence. Trust depends on whether users understand that a report has been received and whether they are given useful information about the next stage. What children said platforms should improve The survey identifies three closely related expectations. Alongside the 54% who want reports to be taken seriously and followed up, 39% want reporting to be easier on an app or website. Another 39% want platforms to provide support for victims of cyberbullying . What children want from platforms Share of survey respondents Practical implication for a reporting experience Reports taken seriously, with information on what happens next 54% Provide meaningful acknowledgement and follow-up communication. Easier reporting on apps or websites 39% Make the route to report content or conduct straightforward to use. Support for cyberbullying victims 39% Consider how affected users can be directed to appropriate support. These results do not prescribe a single product design or a new technical standard. They do, however, give platform teams direct evidence about what young users consider missing from existing safety processes. The difference is important: a policy may say that reports are reviewed, while the user experience may leave the person reporting unsure whether anyone saw their submission or what will happen to it. Reporting needs a visible process The strongest finding concerns follow-up. For a platform, that can mean designing a process that distinguishes between an acknowledgement that a report was submitted and communication that tells the user what happens next. The survey does not specify the exact wording, timing or outcome messages that platforms should use. It does show that children value being informed after reporting. That makes reporting a cross-functional workflow rather than a single interface element. A report begins in the product experience, but it may then need to be routed for review, tracked through an internal process and connected to user communication. If those stages are disconnected, the platform may create the silence that the survey findings highlight. Ease of reporting also deserves attention as its own issue. A form that is hard to locate, difficult to understand or burdensome to complete can deter people before a moderation team has the opportunity to review the problem. The 39% result is a reminder that accessibility and clarity are part of whether a safety process works in practice. What the findings mean for platform operators The EU frames the survey within continuing efforts to make the internet safer for children and to incorporate young people’s views. It plans a child-friendly summary and further integration of youth input in the first and second quarters of 2026. That future work is worth watching for platforms that serve, or may be used by, minors in the EU. The immediate lesson is not that every business needs a complex moderation operation. It is that teams should understand their own reporting journey from a user’s perspective. A proportionate review can start by mapping what happens after a report is filed and checking whether the process has clear ownership. Useful questions include: Can a user quickly identify how to report harmful behaviour or content? Does the user receive confirmation that the report was received? Is there a defined internal path for review and follow-up? Does the platform provide or point users toward relevant support when cyberbullying is involved? For smaller platform teams, the operational challenge is often consistency. Manual processes can work at low volume, but unclear handoffs make it harder to provide reliable responses as activity grows. Building a clear workflow early can help teams identify where product changes, internal tools or integrations are actually needed, without assuming that a one-size-fits-all approach exists. Reporting tools are only useful when they fit a reliable process that users can understand. Scalevise helps businesses turn disconnected forms, inboxes and internal handoffs into practical software workflows, improving visibility and reducing avoidable manual work. If your platform needs a clearer path from user report to internal review and follow-up, explore Scalevise custom software development support and request a consultation. Frequently Asked Questions What did the EU cyberbullying survey find about platform reporting? In the EU survey, 54% of children said they want social media platforms to take reports seriously and inform them about what happens next. How many children took part in the survey? The September 2025 online survey included 6,343 children aged 12 to 17 from all 27 EU member states. What other changes did children want from apps and websites? Thirty-nine percent wanted reporting to be easier on apps or websites, and 39% wanted platforms to provide support for victims of cyberbullying. Does the survey create new Digital Services Act requirements? The published findings are survey results about children’s views on cyberbullying and platform safety. They are framed within the EU’s ongoing child-safety work and the Digital Services Act’s emphasis on protecting minors. What is expected next from the EU Children’s Participation Platform? The EU plans a child-friendly summary and further integration of youth input in the first and second quarters of 2026. Conclusion The EU survey makes a clear case that reporting cannot be treated as a compliance checkbox or isolated product feature. Children want reporting to be easier, taken seriously and followed by understandable communication. For platforms, that makes the design and operation of reporting workflows a meaningful part of building safer, more trusted online spaces.",
+            "url": "https://dev.to/alifar/eu-child-survey-highlights-reporting-follow-up-as-a-priority-for-online-platforms-4ppc",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "git",
+                "programmation",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-09-08T10:00:30+00:00",
+            "collected_at": "2026-09-08T10:22:21.179144+00:00"
+        },
+        {
+            "id": "823bb94fafc183822833d929249a33e57a880187eec3c29641909221c7a61c14",
+            "title": "Tech enthusiast finds $12,000 stack of RAM in their garage — work let them keep an old server stuffed with 1,920GB of DDR4",
+            "description": "A computing enthusiast found a fat stack of DDR4 RAM sticks that might be worth $10,000 in their garage.",
+            "url": "https://www.tomshardware.com/pc-components/ddr4/tech-enthusiast-finds-usd12-000-stack-of-ram-in-their-garage-work-let-them-keep-an-old-server-stuffed-with-1-920gb-of-ddr4",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "pc"
+            ],
+            "published_at": "2026-09-08T10:00:00+00:00",
+            "collected_at": "2026-09-08T10:22:22.615064+00:00"
+        },
+        {
+            "id": "7570cda868db31ba980c0a027b6300453ed6c8ba4de05289a8b966b6cd68b52f",
+            "title": "Surviving Black Friday: 329 billion requests with Falcon",
+            "description": "Comments",
+            "url": "https://www.youtube.com/watch?v=NMruXY3TrpI",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-09-08T09:55:42+00:00",
+            "collected_at": "2026-09-08T10:22:21.018905+00:00"
+        },
+        {
+            "id": "94232802f762276f47ebc498553f44cf12b906b19cce4d7163f0f813bf8a6f34",
+            "title": "Stablecoins could save South Korean merchants up to $3.8 billion a year, budget office says",
+            "description": "",
+            "url": "https://www.coindesk.com/business/2026/09/08/stablecoins-could-save-south-korean-merchants-up-to-usd3-8-billion-a-year-budget-office-says",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-08T09:51:01+00:00",
+            "collected_at": "2026-09-08T10:22:31.927686+00:00"
+        },
+        {
+            "id": "652ff4a65f4bdf24c6b47199ffa8e6ae7432989ce06665b63661e7bdbf4b6e94",
+            "title": "Belgian-Chinese semiconductor researcher arrested over alleged GaN trade-secret theft — prosecutors suspect BelGaN insiders transferred chip IP to China before the company collapsed",
+            "description": "Belgian authorities have arrested a former BelGaN researcher on suspicion of industrial espionage, alleging that proprietary gallium nitride semiconductor technology was transferred to a Chinese rival as the Belgian chipmaker headed toward bankruptcy.",
+            "url": "https://www.tomshardware.com/tech-industry/semiconductors/belgian-chinese-semiconductor-researcher-arrested-over-alleged-gan-trade-secret-theft-prosecutors-suspect-belgan-insiders-transferred-chip-ip-to-china-before-the-company-collapsed",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "pc"
+            ],
+            "published_at": "2026-09-08T09:50:00+00:00",
+            "collected_at": "2026-09-08T10:22:22.615148+00:00"
+        },
+        {
+            "id": "b52f9b66e3b04e2ef749791f27f7bf1ad5dc05ed0ee4222faec68a8152134462",
+            "title": "Why getting your hands dirty is good for you",
+            "description": "Comments",
+            "url": "https://www.bbc.com/future/article/20260904-how-getting-your-hands-dirty-boosts-your-health-within-weeks",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-08T09:48:24+00:00",
+            "collected_at": "2026-09-08T10:22:20.963541+00:00"
+        },
+        {
+            "id": "0b45a8a2b6c02f769196da0368058d5f02ada6cfaf1ee4b0c6e19bdc6e74e37f",
+            "title": "Whitehall's latest plan to get things done: Less Whitehall",
+            "description": "Ministers declare war on an 'industry of dither and delay' as consultations, legal caution, and judicial reviews get the chop",
+            "url": "https://www.theregister.com/public-sector/2026/09/08/whitehalls-latest-plan-to-get-things-done-less-whitehall/5294813",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-09-08T09:46:00+00:00",
+            "collected_at": "2026-09-08T10:22:19.921501+00:00"
+        },
+        {
+            "id": "c43ecbe47671517c0f59d56e990dff45bcf89adc90167b7b1609f0ecb99ec297",
+            "title": "Beyond The Dark - Nightwatch Looks Like A Wii U Game In The Best Way",
+            "description": "\"I'm gonna s*** myself!\". Developer Atlantis Studio has released a new gameplay trailer for Beyond the Dark - Nightwatch , confirming that the title will launch on Switch 2 on 22nd October 2026 . We've already spoken with creative director Nico Augusto, and we're pretty chuffed with what we've seen so far, but this new trailer really demonstrates Beyond the Dark's unique gameplay mechanics quite well. Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/news/2026/09/beyond-the-dark-nightwatch-looks-like-a-wii-u-game-in-the-best-way",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-09-08T09:45:00+00:00",
+            "collected_at": "2026-09-08T10:22:30.673056+00:00"
+        },
+        {
+            "id": "42c8b56363b6548c36307874ba571ae15b388fa08280e43036d16188e8d1045b",
+            "title": "Antiquated HTML Snippets and Artefacts",
+            "description": "Comments",
+            "url": "https://vale.rocks/posts/html-relics",
+            "source": "Hacker News",
+            "category": "web",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-08T09:43:14+00:00",
+            "collected_at": "2026-09-08T10:22:20.963724+00:00"
+        },
+        {
+            "id": "17b349f36fcdd57709e6ac0dc8cd2a2756530b9646b02d0cf803a4419441564d",
+            "title": "Tracking cocoa may be just the beginning for PwC, Merck, Hashgraph provenance system",
+            "description": "",
+            "url": "https://www.coindesk.com/tech/2026/09/08/tracking-cocoa-may-be-just-the-beginning-for-pwc-merck-hashgraph-provenance-system",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-08T09:39:36+00:00",
+            "collected_at": "2026-09-08T10:22:31.927729+00:00"
+        },
+        {
+            "id": "1b3e5b095dba28f6a8ae8e960e904db5391fccda5930c6ca7f37cd985aceb014",
+            "title": "OrbitX Introduces Stablecoin-Powered QR Payments Across 15+ Global Markets",
+            "description": "OrbitX has officially launched its QR payment functionality, enabling users to convert stablecoin balances into local currency purchases at point-of-sale terminals via simple QR scans. The initial rollout is active in Vietnam and the Philippines—two regions dominated by QR-based merchant transactions—with expansion planned across additional markets in the coming weeks. The launch addresses a fundamental […]",
+            "url": "https://news.bitcoin.com/press-releases/orbitx-introduces-stablecoin-powered-qr-payments-across-15-global-markets/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-08T09:34:16+00:00",
+            "collected_at": "2026-09-08T10:22:32.069614+00:00"
+        },
+        {
+            "id": "41875b01ad51cebefbb19343f2bac0d838a35bca82b5348411f09d68475fc162",
+            "title": "5 Android phones you should buy instead of the Samsung Galaxy S26 FE",
+            "description": "The Galaxy S26 FE has its advantages, but is it the best fit for your needs?",
+            "url": "https://www.androidauthority.com/samsung-galaxy-s26-fe-alternatives-3706527/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-09-08T09:30:59+00:00",
+            "collected_at": "2026-09-08T10:22:26.874826+00:00"
+        },
+        {
+            "id": "1af07e4088e526d5006b652b03e5cf4946808d742675a6c0660d3e6412bfbfc4",
+            "title": "Tron’s Justin Sun Pulls 10,000 ETH and Sends $12.3M to Poloniex",
+            "description": "Tron founder Justin Sun has redeemed 10,000 ETH from Lido since Aug. 26, and roughly $12.3 million of it has already landed on Poloniex, an exchange he backs. The Trail Since Aug. 26 Onchain analysts flagged the latest step on Tuesday: a wallet cluster attributed to Sun requested the unstaking of another 5,000 ETH from […]",
+            "url": "https://news.bitcoin.com/crypto-news/justin-sun-lido-eth-unstake-poloniex-594m/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-08T09:30:04+00:00",
+            "collected_at": "2026-09-08T10:22:32.069701+00:00"
+        },
+        {
+            "id": "6702fbadef78a2714b85cdd631080153290ab4b6700e08af861a4da6391070da",
+            "title": "These Android phones could beat iPhone for video capture, and we now have a launch date",
+            "description": "Recent history suggests a global release isn't far behind.",
+            "url": "https://www.androidauthority.com/vivo-x500-series-launch-date-3708651/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "ios",
+                "smartphone"
+            ],
+            "published_at": "2026-09-08T09:27:47+00:00",
+            "collected_at": "2026-09-08T10:22:26.874867+00:00"
+        },
+        {
+            "id": "4b8bab4a68c81cfe248a7d31ae1ea7c1e372cb153899a3560612761a6239ed91",
+            "title": "How to get a free .arpa domain",
+            "description": "Comments",
+            "url": "https://hawksley.dev/blog/get-free-arpa-domain",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-09-08T09:24:16+00:00",
+            "collected_at": "2026-09-08T10:22:21.018482+00:00"
+        },
+        {
+            "id": "2fdb7e2328900989dfc88cb081d19ce88b569381d5f03c16232fd6b010817483",
+            "title": "Adobe Patches Magento Zero-Day Exploited to Deploy Rust Backdoor and PHP Web Shell",
+            "description": "Adobe on Monday released security patches to address a maximum-severity flaw impacting Adobe Commerce and Magento Open Source that has come under active exploitation in the wild. The vulnerability, now tracked as CVE-2026-75650 (CVSS score: 10.0), has been codenamed StyleSmuggler by Sansec, which discovered zero-day exploitation starting September 4, 2026. \"This update resolves a critical",
+            "url": "https://thehackernews.com/2026/09/adobe-patches-magento-zero-day.html",
+            "source": "The Hacker News",
+            "category": "cybersecurite",
+            "tags": [
+                "cve",
+                "cybersecurite",
+                "hacking",
+                "php",
+                "rust",
+                "vulnerabilites",
+                "zero_day"
+            ],
+            "published_at": "2026-09-08T09:13:47+00:00",
+            "collected_at": "2026-09-08T10:22:18.671423+00:00"
+        },
+        {
+            "id": "5f1e8ea3805eedac3ed4d0815d83209c1922fe4c4411c38197f72b1ae24235d8",
+            "title": "Google is making sideloading harder, but Android fans aren’t giving it up",
+            "description": "The Play Store alone just isn't enough for many Android users.",
+            "url": "https://www.androidauthority.com/android-sideloading-hassle-poll-results-3708676/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-09-08T09:13:33+00:00",
+            "collected_at": "2026-09-08T10:22:26.874925+00:00"
+        },
+        {
+            "id": "fd7982b57ce1dbc2e90f57c0eb04ec6fe9c5daf20a5b9736f288c62707135865",
+            "title": "There’s a new dark side to Pixel software updates, and we’re already seeing it",
+            "description": "Pixel phones are getting updates, but not necessarily the features you want.",
+            "url": "https://www.androidauthority.com/pixel-software-updates-dark-side-3707641/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-09-08T09:00:05+00:00",
+            "collected_at": "2026-09-08T10:22:26.874973+00:00"
+        },
+        {
+            "id": "c84843786dfc62c68d484e4ef55e7fd8085a777a8d8c16abd3d55f148ae516f8",
+            "title": "Britain reboots its space strategy with £7.8B already on the launchpad",
+            "description": "Cross-government plan combines civil ambitions with an increasingly military view of orbit",
+            "url": "https://www.theregister.com/public-sector/2026/09/08/britain-reboots-its-space-strategy-with-78b-already-on-the-launchpad/5294839",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-09-08T09:00:00+00:00",
+            "collected_at": "2026-09-08T10:22:19.921556+00:00"
+        },
+        {
+            "id": "f50808fdb04791ea8597a50ead8c3ec10bf9768727ed4034073ef8a982c556e4",
+            "title": "Google Wallet will now let you add physical transit cards and balances with NFC",
+            "description": "The Play Store is also getting some UI tweaks.",
+            "url": "https://www.androidauthority.com/google-wallet-physical-transit-cards-nfc-support-3708656/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-09-08T08:48:42+00:00",
+            "collected_at": "2026-09-08T10:22:26.875011+00:00"
+        },
+        {
+            "id": "640afb9db3b284d465a31581c5c17ae3cbffcecf75af9970f69495797d5f1d97",
+            "title": "BengalSEO Poisons Bing Search Results to Deliver MayaBot and Tech Support Scams",
+            "description": "Cybersecurity researchers have disclosed details of a sprawling search engine optimization (SEO) poisoning campaign that paves the way for malware deployment and tech support scams. The campaign, discovered by the DFIR Report in March 2026, has been codenamed BengalSEO. It has operated out of the Indian state of Rajasthan since at least 2015, driven by two IT service providers named WeConnect",
+            "url": "https://thehackernews.com/2026/09/bengalseo-poisons-bing-search-results.html",
+            "source": "The Hacker News",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "hacking",
+                "malware",
+                "vulnerabilites"
+            ],
+            "published_at": "2026-09-08T08:43:51+00:00",
+            "collected_at": "2026-09-08T10:22:18.671493+00:00"
+        },
+        {
+            "id": "7602adacc35c2c62e0406a1f545456dbd06cdbfdac1a13620310a9f38ec2c69f",
+            "title": "Blank YouTube homepage? You’re not alone, and here’s a temporary workaround",
+            "description": "The issue reportedly impacts all platforms, including mobile, web, and TV.",
+            "url": "https://www.androidauthority.com/youtube-feed-blank-issue-fix-3708648/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-09-08T08:43:45+00:00",
+            "collected_at": "2026-09-08T10:22:26.875056+00:00"
+        },
+        {
+            "id": "0e5576b5567cadd0cd8731e565cfaa488aed85787bd28b8f86a859a61c9f1254",
+            "title": "Among European Companies That Use a CDN, Nearly 9 in 10 Use Cloudflare",
+            "description": "Comments",
+            "url": "https://ciphercue.com/blog/european-cdn-concentration-cloudflare-nine-in-ten",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-08T08:42:56+00:00",
+            "collected_at": "2026-09-08T10:22:20.963429+00:00"
+        },
+        {
+            "id": "e86ab3178a021af956c03dde5896b1779a2ce18955b68a8755f9cc547b115bbb",
+            "title": "Arm pushes agentic AI and desktop-quality graphics in next-gen phone platform",
+            "description": "New CPU and GPU designs chase lower latency and richer games within a 1 W power budget",
+            "url": "https://www.theregister.com/systems/2026/09/08/arm-pushes-agentic-ai-and-desktop-quality-graphics-in-next-gen-phone-platform/5294867",
+            "source": "The Register",
+            "category": "hardware",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-09-08T08:35:00+00:00",
+            "collected_at": "2026-09-08T10:22:19.921598+00:00"
+        },
+        {
+            "id": "6982f50ddc3c81da504053c18154b814a6a2bb1260cbb8f88e9f7bff3e923f5c",
+            "title": "Live updates: Yen rally and rising bond yields pressure bitcoin and risk assets",
+            "description": "",
+            "url": "https://www.coindesk.com/tech/2026/09/08/live-updates",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-08T08:30:30+00:00",
+            "collected_at": "2026-09-08T10:22:31.927765+00:00"
+        },
+        {
+            "id": "631795eb86ee46e676618aae3a348d0d1491716a906f21334e808690ca9cb05d",
+            "title": "Robinhood Chain Volume Pushes Uniswap’s UNI Burn Past $250M a Year",
+            "description": "Uniswap founder Hayden Adams says the protocol’s annualized UNI burn rate has passed $250 million, up from the $200 million pace he flagged days earlier. From $200M to $250M in a Single Post Adams marked the milestone with a simple message, “Update: now over $250m,” quoting his own earlier post noting that the trailing seven-day […]",
+            "url": "https://news.bitcoin.com/crypto-news/uniswap-uni-burn-rate-250-million-hayden-adams/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-08T08:30:16+00:00",
+            "collected_at": "2026-09-08T10:22:32.069784+00:00"
+        },
+        {
+            "id": "e0376bd0e75f280fd3c188b3b4eb05bf28138b31d3d8afa49deaefae5c8978c8",
+            "title": "Galaxy S25’s latest beta update brings even more Galaxy S26 and Z Fold 8 features",
+            "description": "Calls, daily briefings, and existing videos are all getting a little smarter.",
+            "url": "https://www.androidauthority.com/samsung-galaxy-s25-one-ui-9-beta-2-3708640/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-09-08T08:06:57+00:00",
+            "collected_at": "2026-09-08T10:22:26.875102+00:00"
+        },
+        {
+            "id": "8020886bc5cec9b3055daa4e71a363ef67bab02cb2eb4aa298880b282b89a4e5",
+            "title": "Best of IFA 2026 Awards: The products that impressed us most in Berlin",
+            "description": "The biggest announcements and most interesting innovations we saw in Berlin.",
+            "url": "https://www.androidauthority.com/android-authority-best-of-ifa-2026-awards-3707989/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-09-08T08:00:21+00:00",
+            "collected_at": "2026-09-08T10:22:26.875141+00:00"
+        },
+        {
+            "id": "63154d3df38480d026ba072fff646e602f8c3921066a52809d65445315ba5fb7",
+            "title": "HPE makes its “unified storage” claim real as B10000 R6 hits GA",
+            "description": "PARTNER CONTENT: Pairs block and adjacent file workloads with independent scaling of performance and capacity",
+            "url": "https://www.theregister.com/storage/2026/09/08/partner-content-hpe-makes-its-unified-storage-claim-real-as-b10000-r6-hits-ga/5294566",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-09-08T08:00:00+00:00",
+            "collected_at": "2026-09-08T10:22:19.921655+00:00"
+        },
+        {
+            "id": "b3f1d5748d7cd51c1cee57a47a37ca5ad3573dc05d1f06ea4579ce2c5710b03e",
+            "title": "Scaling your money safely with AI",
+            "description": "Ryan chats with Srini Venkatesan, CTO at PayPal, about validating AI-generated deterministic code for security, developing autonomous SDLC harnesses with iterative feedback loops, and creating a seamless headless checkout experience.",
+            "url": "https://stackoverflow.blog/2026/09/08/scaling-your-money-safely-with-ai/",
+            "source": "Stack Overflow Blog",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "stackoverflow"
+            ],
+            "published_at": "2026-09-08T07:40:00+00:00",
+            "collected_at": "2026-09-08T10:22:20.105373+00:00"
+        },
+        {
+            "id": "0d6572e08bb472110c9db655dafe1af6cbd95a643f06b076b082e4c172063b48",
+            "title": "220 million traveler records exposed in Vietnam-linked APIS leak",
+            "description": "Exclusive: An exposed Advance Passenger Information System (APIS) database held 220 million passenger and crew records containing names, passport numbers, dates of birth, nationalities, and flight details spanning 2017 to 2026. Researchers accessed the Vietnam-linked system through a cloud-based path using default credentials. [...]",
+            "url": "https://www.bleepingcomputer.com/news/security/220-million-traveler-records-exposed-in-vietnam-linked-apis-leak/",
+            "source": "BleepingComputer",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "malware",
+                "ransomware"
+            ],
+            "published_at": "2026-09-08T07:35:50+00:00",
+            "collected_at": "2026-09-08T10:22:18.385919+00:00"
+        },
+        {
+            "id": "5c43845770097aad15d0dc40ea249daf6a9f549fadb2801ad51a002f70a07974",
+            "title": "Bitcoin’s Price Action Has Three Dates Left to Escape the $80,000 Ceiling",
+            "description": "Bitcoin traded near $79,100 on Tuesday, unable to hold $80,000, with jobless claims, inflation data and a Federal Reserve decision all landing inside eight days. The Calendar Doing the Work Three dates now stand between bitcoin’s price and a resolution of the range it has been stuck in. The first is Sept. 10, when U.S. […]",
+            "url": "https://news.bitcoin.com/crypto-news/bitcoin-price-80k-fomc-cpi-jobless-claims-september-2026/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-08T07:30:23+00:00",
+            "collected_at": "2026-09-08T10:22:32.069864+00:00"
+        },
+        {
+            "id": "76b34868d6c31ff67b57b8d2eaa5090fd381bd6f730d8360fdc88fb405dd30f3",
+            "title": "The state of European cloud providers in 2026",
+            "description": "Comments",
+            "url": "https://crescentro.se/posts/euro-cloud-providers-2026/",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-09-08T07:20:16+00:00",
+            "collected_at": "2026-09-08T10:22:21.017982+00:00"
+        },
+        {
+            "id": "86a44f9f81c5c19adedc62e81ed2dd50632bb7cc2daf06cf494552b544ac5917",
+            "title": "Grindr to Pay £26 Million to Settle U.K. Claims Over HIV Status Data Sharing",
+            "description": "Online dating app Grindr has opted to pay £26 million ($35.1 million) to settle a lawsuit in the U.K. over allegations that it shared users' personal information, including their HIV status, with third-parties. Grindr, which is the largest LGBTQ+ dating app, was sued in April 2024, accusing it of violating U.K. privacy laws by sharing sensitive data for commercial purposes such as advertising.",
+            "url": "https://thehackernews.com/2026/09/grindr-to-pay-26-million-to-settle-uk.html",
+            "source": "The Hacker News",
+            "category": "cloud",
+            "tags": [
+                "aws",
+                "cybersecurite",
+                "hacking",
+                "vulnerabilites"
+            ],
+            "published_at": "2026-09-08T07:00:43+00:00",
+            "collected_at": "2026-09-08T10:22:18.671569+00:00"
+        },
+        {
+            "id": "a427f9f3ac6d784ff653dbb6ed08dfca4ee5cb5dd54f3d14e4d745c48fef313d",
+            "title": "I tried the Xiaomi 18 Fold, and I think Samsung and Apple should be worried",
+            "description": "Xiaomi has jumped into the wide-screen foldable race with an impressive contender.",
+            "url": "https://www.androidauthority.com/xiaomi-18-fold-hands-on-impressions-3706799/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-09-08T07:00:37+00:00",
+            "collected_at": "2026-09-08T10:22:26.875179+00:00"
+        },
+        {
+            "id": "a5fc0b8750cd78761b484c06a3ced9ab17fce43688825bb1fec146f476cf8880",
+            "title": "This new flagship Android tablet has impressive specs, but can also double as a monitor",
+            "description": "It has all the makings of an excellent flagship tablet.",
+            "url": "https://www.androidauthority.com/xiaomi-pad-9-pro-max-launch-3708632/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-09-08T07:00:30+00:00",
+            "collected_at": "2026-09-08T10:22:26.875217+00:00"
+        },
+        {
+            "id": "bcff068b9f13095c751f2c17850e10a9f4d7f4ac9c90b94edd176f5737cd4118",
+            "title": "Bit2Me sets up specialized unit to help law enforcement track down crypto assets",
+            "description": "",
+            "url": "https://www.coindesk.com/business/2026/09/02/bit2me-sets-up-specialized-unit-to-help-law-enforcement-track-down-crypto-assets",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-08T07:00:00+00:00",
+            "collected_at": "2026-09-08T10:22:31.927798+00:00"
+        },
+        {
+            "id": "20317f04882c1c2af4644b9f19f0ebdcd17dbbde07f45f36a49195dedd9d227a",
+            "title": "Bitap: my favorite string matching algorithm",
+            "description": "Comments",
+            "url": "https://jo3-l.dev/posts/bitap/",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-09-08T06:37:38+00:00",
+            "collected_at": "2026-09-08T10:22:21.017917+00:00"
+        },
+        {
+            "id": "e4f2f0775bdbf1c42e4be7702cbddd297603b63046498a4adb5f318c569ac7d6",
+            "title": "Type inference has usability problems (2019)",
+            "description": "Comments",
+            "url": "https://austinhenley.com/blog/typeinference.html",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-09-08T06:36:44+00:00",
+            "collected_at": "2026-09-08T10:22:21.018395+00:00"
+        },
+        {
+            "id": "2c22f122d370f6dc9ef983c660b07bc258540543a044a9473931be19865156a6",
+            "title": "UK Regulator Revisits the 2019 Ban Blocking Prediction Markets",
+            "description": "Britain’s Financial Conduct Authority has held talks with trading platforms about easing the retail binary options ban that keeps Kalshi and Polymarket out of the UK, The Times reported. The rules are unchanged, and a second regulator still stands between the platforms and British customers. A British Change in Direction The Financial Conduct Authority has […]",
+            "url": "https://news.bitcoin.com/igaming/uk-regulator-revisits-the-2019-ban-blocking-prediction-markets/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-08T06:30:21+00:00",
+            "collected_at": "2026-09-08T10:22:32.069959+00:00"
+        },
+        {
+            "id": "f8e5ca43f73b669d173d6601a677dee0aa72d34b383a5fe9c4bd4f6634c6a7a6",
+            "title": "Hunter Biden wants to launch a LAPTOP memecoin. Crypto traders hate it already",
+            "description": "",
+            "url": "https://www.coindesk.com/markets/2026/09/08/crypto-traders-turn-on-hunter-biden-s-laptop-memecoin-before-it-even-launches",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-08T06:23:53+00:00",
+            "collected_at": "2026-09-08T10:22:31.927830+00:00"
+        },
+        {
+            "id": "118abb7836237244296d25d63058ec2ff5f220c46c65a376fcbeb30b5303f4a4",
+            "title": "Intel surpasses one million High-NA EUV wafers processed, outpaces the rest of the industry combined — company also trailblazing giant 6×12 photomasks to speed production and lower costs",
+            "description": "Intel is leading the semiconductor industry with High-NA fleet and process-maturity milestone as it reaches 1 million wafers processed using High-NA tools, moves forward with 6×12 photomask effort.",
+            "url": "https://www.tomshardware.com/tech-industry/semiconductors/intel-surpasses-one-million-high-na-euv-wafers-processed-outpaces-the-rest-of-the-industry-combined-company-also-trailblazing-giant-6-12-photomasks-to-speed-production-and-lower-costs1",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "intel",
+                "pc"
+            ],
+            "published_at": "2026-09-08T06:00:00+00:00",
+            "collected_at": "2026-09-08T10:22:22.615222+00:00"
+        },
+        {
+            "id": "4fb8061f5607988b182f0cdbd9af6a5ff2d3abf0ff5c7bb3b505d669d48e8e23",
+            "title": "Bitcoin’s golden cross is here",
+            "description": "",
+            "url": "https://www.coindesk.com/markets/2026/09/08/bitcoin-s-golden-cross-is-here",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-08T05:56:23+00:00",
+            "collected_at": "2026-09-08T10:22:31.927864+00:00"
+        },
+        {
+            "id": "df3a1be48eb75c7aed03cacd09c139bc28d7f1f589180c597e5b17d719bc6d89",
+            "title": "‘Global reckoning’ is coming for big tech, says Australian minister",
+            "description": "Introduces 'digital duty of care' that will mean Aussies get ‘my feed, my way’ – without algorithms if requested",
+            "url": "https://www.theregister.com/legal/2026/09/08/global-reckoning-is-coming-for-big-tech-says-australian-minister/5294909",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "git",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-09-08T05:51:35+00:00",
+            "collected_at": "2026-09-08T10:22:19.921704+00:00"
+        },
+        {
+            "id": "76b45f7ef5abbe665f293cdbb8f3211b8923f281b8bd28f16b370a77e78ff992",
+            "title": "Jupiter Mobile Adds Physical Pokémon Card Ripping Feature",
+            "description": "Decentralized finance platform Jupiter has integrated its Gacha trading digital card platform directly into the mobile app, allowing users to buy, rip, and collect physical trading cards without leaving the application. Scaling Mobile Adoption Jupiter, a decentralized finance (DeFi) platform on Solana, announced Monday that its rip-and-collect trading card product, Jupiter Gacha, is now natively […]",
+            "url": "https://news.bitcoin.com/defi/jupiter-mobile-adds-physical-pokemon-card-ripping-feature/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto",
+                "git"
+            ],
+            "published_at": "2026-09-08T05:50:08+00:00",
+            "collected_at": "2026-09-08T10:22:32.070047+00:00"
+        },
+        {
+            "id": "b6d8a562a29fa3425083e0c98c508f8a3998af258ccb5a6f2a5394d2269f8be4",
+            "title": "Navier-Stokes – Tristan Buckmaster [pdf]",
+            "description": "Comments",
+            "url": "https://cims.nyu.edu/~tristanb/statement.pdf",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-08T05:42:28+00:00",
+            "collected_at": "2026-09-08T10:22:20.964133+00:00"
+        },
+        {
+            "id": "026de1221d2456d3172e9ae441142d2dbc0541b0d7a5ba1da3c1d9273907239f",
+            "title": "Meta wants you to trust its Muse AI with your calendar, reminders, and bank accounts",
+            "description": "I'm sure Meta won't do anything dubious with such broad access to users' devices. Right?",
+            "url": "https://www.androidauthority.com/meta-muse-agentic-ai-report-3708619/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "rust",
+                "smartphone"
+            ],
+            "published_at": "2026-09-08T05:34:14+00:00",
+            "collected_at": "2026-09-08T10:22:26.875257+00:00"
+        },
+        {
+            "id": "8594f2df322f47daa5622177ef6409a91d871a086f7f5665b239249e4d13e968",
+            "title": "Pokémon Champions Director Wants To Keep The Game's Focus On PvP",
+            "description": "\"At least while more people are increasingly playing\". Although Pokémon Champions is now the main competitive title for the video game, some trainers are still apparently calling for single-player content to be added. VGC recently spoke to the game's co-director Masaaki Hoshino about these fan requests for \"Pokémon Stadium-like offline modes\" in the free-to-play title, but it doesn't seem like this will be happening, at least in the foreseeable future... Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/news/2026/09/pokemon-champions-director-wants-to-keep-the-games-focus-on-pvp",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-09-08T05:30:00+00:00",
+            "collected_at": "2026-09-08T10:22:30.673246+00:00"
+        },
+        {
+            "id": "626a5e4fcb233d8d7ffe545e87dad1f9433e0f43b19e1e12b059e2092dcc5147",
+            "title": "Multi-Agents LLM Financial Trading Framework",
+            "description": "Comments",
+            "url": "https://github.com/TauricResearch/TradingAgents",
+            "source": "Hacker News",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "llm",
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-08T05:20:23+00:00",
+            "collected_at": "2026-09-08T10:22:20.963638+00:00"
+        },
+        {
+            "id": "44b3cd2366c8f7c8b4c4ac54f57c6e182b2dd9b0a46f506fd58287e0e5007417",
+            "title": "My Feed, My Way",
+            "description": "Comments",
+            "url": "https://www.pm.gov.au/media/my-feed-my-way",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-08T05:10:36+00:00",
+            "collected_at": "2026-09-08T10:22:20.963983+00:00"
+        },
+        {
+            "id": "b04518895486d2da668d19589a5d90ae194ff017d5285a6d777f52312a0d231b",
+            "title": "Chelsea’s USDC Jersey Deal Triggers Fears for Hong Kong Fans",
+            "description": "The deal has sparked concerns among Hong Kong fans, who fear that wearing the team’s jersey could make them liable for what the HKMA’s stablecoin ordinance describes as offenses related to advertising regulated stablecoin activity and offering specified stablecoins. Hong Kong Chelsea Fans Nervous About Latest USDC Jersey Deal The recent deal between Chelsea FC […]",
+            "url": "https://news.bitcoin.com/regulation-and-legal/chelseas-usdc-jersey-deal-triggers-fears-for-hong-kong-fans/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-08T05:10:21+00:00",
+            "collected_at": "2026-09-08T10:22:32.070128+00:00"
+        },
+        {
+            "id": "7db995c30f47deac24862c7ba1ef7e06890903c7b9a89be65912d3fe5053b704",
+            "title": "Mistral raises €3B",
+            "description": "Comments",
+            "url": "https://mistral.ai/news/mistral-makes-sovereign-open-weight-ai-to-frontier/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-08T05:06:23+00:00",
+            "collected_at": "2026-09-08T10:22:20.963610+00:00"
+        },
+        {
+            "id": "554b37481aef911bf0a0dea538ea783a3f0a4ec531851afcb0e8b2881b4295cd",
+            "title": "We have a year to fix security everywhere",
+            "description": "Comments",
+            "url": "https://jyn.dev/a-year-to-fix-security/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-08T04:48:10+00:00",
+            "collected_at": "2026-09-08T10:22:20.963818+00:00"
+        },
+        {
+            "id": "0d4bc21a316e25a545399244d387543c546763fb03b4a470933044fe46900b30",
+            "title": "Liquid Network gets back 3,400 bitcoin from whitehat hackers; talks underway for the rest",
+            "description": "",
+            "url": "https://www.coindesk.com/markets/2026/09/08/white-hat-hackers-return-most-of-usd320m-bitcoin-taken-from-liquid-network",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-08T04:41:17+00:00",
+            "collected_at": "2026-09-08T10:22:31.927909+00:00"
+        },
+        {
+            "id": "3c8366a593488baaa08690ce7cd3d864b1154f1e00b14d604fdf0e623a71327c",
+            "title": "Bitcoin slips under $79,000, Zcash leads losses as Fed hike odds hold near 60%",
+            "description": "",
+            "url": "https://www.coindesk.com/markets/2026/09/08/bitcoin-slips-under-usd79-000-zcash-leads-losses-as-fed-hike-odds-hold-near-60",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-08T04:40:57+00:00",
+            "collected_at": "2026-09-08T10:22:31.927939+00:00"
+        },
+        {
+            "id": "1a2af31f68d81542cc800b3b13e8533eb9c911573073ba04a34dd4b67ae7fa77",
+            "title": "The VMs Powering Mobile Agents (Instinct, Claude Code)",
+            "description": "Comments",
+            "url": "https://rohanadwankar.github.io/posts/platforms.html",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "anthropic",
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-08T04:36:26+00:00",
+            "collected_at": "2026-09-08T10:22:20.963957+00:00"
+        },
+        {
+            "id": "e03943913b6ecedb3b36d4b4ad83a6f8771c559d5ee38a29eca015b715bccdf6",
+            "title": "Sixteen Years After 12,000 Tons of Orange Peels, a Costa Rica Forest Grew Back",
+            "description": "Tree biomass jumped 176% on a degraded plot inside Costa Rica’s Guanacaste Conservation Area after 12,000 tonnes of orange peels were spread there in 1997. The experiment was later halted by Costa Rica’s Supreme Court after a challenge from rival producer TicoFruit, but researcher Timothy Treuer’s 2013 revisit found a nutrient-rich, invasive-resistant canopy where bare […]",
+            "url": "https://news.bitcoin.com/featured/sixteen-years-after-12000-tons-of-orange-peels-a-costa-rica-forest-grew-back-49201/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-08T04:30:57+00:00",
+            "collected_at": "2026-09-08T10:22:32.070209+00:00"
+        },
+        {
+            "id": "3d25c42c2e164ebdb96d5721e05ca08cca76e38dc82134c59dc7750699a7dd31",
+            "title": "Street Fighter 6's Next DLC Character Joins The Fight October 2026",
+            "description": "Here comes a new challenger! Capcom has been expanding the Street Fighter 6 roster with regular character updates and next up is Arjun. In an update this week, it's now been confirmed this new \"Year 4 Character\" will be arriving on 13th October 2026 . He comes equipped with \"brutal blows\" that will have other fighters gasping for air, and can move \"heaven and earth with his powerful breathing techniques\". Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/news/2026/09/street-fighter-6s-next-dlc-character-joins-the-fight-october-2026",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-09-08T04:30:00+00:00",
+            "collected_at": "2026-09-08T10:22:30.673327+00:00"
+        },
+        {
+            "id": "128471e4ddadd98757c8cc3715ac141b2b77c091b21962e4a1b680149e590988",
+            "title": "Arm Mali G2-Ultra NX GPU: desktop-class mobile gameplay with AI-native graphics",
+            "description": "Comments",
+            "url": "https://newsroom.arm.com/blog/arm-mali-g2-ultra-nx-ai-native-mobile-graphics",
+            "source": "Hacker News",
+            "category": "hardware",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-08T04:06:20+00:00",
+            "collected_at": "2026-09-08T10:22:20.963753+00:00"
+        },
+        {
+            "id": "0903f2c4b75ace0aa126f0cae2d8e5e1d0d243b5169b68acaa3840b95cd4330b",
+            "title": "Casino Lobby Blames Prediction Markets for First Flat NFL Betting Season",
+            "description": "The American Gaming Association expects citizens to wager $29.5 billion with regulated sportsbooks on the 2026 NFL season, the first one without meaningful growth since the Supreme Court struck down the federal betting ban in 2018. The trade body attributes the stall to prediction markets, which it calls “backdoor sports betting.” Trade Body Forecast Lands […]",
+            "url": "https://news.bitcoin.com/igaming/casino-lobby-blames-prediction-markets-for-first-flat-nfl-betting-season/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-08T03:50:42+00:00",
+            "collected_at": "2026-09-08T10:22:32.070287+00:00"
+        },
+        {
+            "id": "1e1448317cca73884d74c9efe63d42b11fea96b94a1fa6460a8d5b9ba22c9772",
+            "title": "My Nix Config Is Intimate",
+            "description": "Comments",
+            "url": "https://www.scd31.com/posts/nix-files-are-intimate",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-09-08T03:27:24+00:00",
+            "collected_at": "2026-09-08T10:22:21.018202+00:00"
+        },
+        {
+            "id": "ef7bb06378ffafad7e18ddffac181ae762281762aa8a2cc3750a055cd76809a7",
+            "title": "Jellyfin 12.0",
+            "description": "Comments",
+            "url": "https://jellyfin.org/posts/jellyfin-release-12.0",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-09-08T03:13:20+00:00",
+            "collected_at": "2026-09-08T10:22:21.017949+00:00"
+        },
+        {
+            "id": "a8e70abd580bbee76583eacd5041afeff642321f42b0a6b801997e5b5167ee0e",
+            "title": "Sweden Hits 6 Crypto Firms With $51M Back Tax Demand",
+            "description": "The Swedish Tax Agency ordered six cryptocurrency mining entities to pay approximately $56.5 million in back taxes and penalties. Audit Uncovers Systemic Tax Evasion The Swedish Tax Agency (STA) has reportedly imposed approximately $56.5 million (540 million Swedish kronor) in back taxes and penalties on six cryptocurrency mining companies operating in Boden following an investigation […]",
+            "url": "https://news.bitcoin.com/crypto-news/sweden-hits-6-crypto-firms-with-51m-back-tax-demand/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-08T03:10:44+00:00",
+            "collected_at": "2026-09-08T10:22:32.070364+00:00"
+        },
+        {
+            "id": "ea3039abd5b1900eb7d8323ecf9b6310eadc83dab71dd40aa7a03ae755c24b74",
+            "title": "Zelda: Ocarina Of Time Remake Price Seemingly Revealed",
+            "description": "Courtesy of Nintendo's official website. Nintendo's Zelda 40th Anniversary Direct is taking place later today. and it appears more information has surfaced ahead of schedule. Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/news/2026/09/zelda-ocarina-of-time-remake-price-seemingly-revealed",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-09-08T02:30:00+00:00",
+            "collected_at": "2026-09-08T10:22:30.673383+00:00"
+        },
+        {
+            "id": "8428de433c66d98a46fa5768240833387ed196289c44e4455929aa493ee67df8",
+            "title": "Huawei proudly shows off an entirely un-American chip",
+            "description": "Resistance is futile",
+            "url": "https://www.theregister.com/systems/2026/09/08/huawei-proudly-shows-off-an-entirely-un-american-chip/5294900",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-09-08T02:22:05+00:00",
+            "collected_at": "2026-09-08T10:22:19.921737+00:00"
+        },
         {
             "id": "fe6c53252f4c1cc6611bf35aba21ac391dd019ff6b07d66d97c347a856775ac6",
             "title": "Eric Wu’s newest company, out of stealth since May, is going after construction’s labor crunch",
@@ -115,6 +1348,21 @@
             ],
             "published_at": "2026-09-08T01:58:47+00:00",
             "collected_at": "2026-09-08T02:21:47.819295+00:00"
+        },
+        {
+            "id": "a7c5890f6b615ba4d5ceabf75edc0e696e79b61bca9f78e80cf7f1cb3a1ee675",
+            "title": "There's a new \"Google Jail\" for independent wikis",
+            "description": "Comments",
+            "url": "https://weirdgloop.org/blog/google-jail",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-08T01:57:23+00:00",
+            "collected_at": "2026-09-08T10:22:20.963573+00:00"
         },
         {
             "id": "35280f249708d2e5005646f524549ace64a1f060823f5987807258b6de834064",
@@ -697,6 +1945,21 @@
             "collected_at": "2026-09-08T02:21:35.635832+00:00"
         },
         {
+            "id": "a7831645f6289c72ba3e7b1447cee3d693d4a01e965406952f4bcb8b4a11faa9",
+            "title": "Emacs Bedrock 2.0",
+            "description": "Comments",
+            "url": "https://lambdaland.org/posts/2026-09-06-bedrock-v2/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-07T20:12:12+00:00",
+            "collected_at": "2026-09-08T10:22:20.964256+00:00"
+        },
+        {
             "id": "99805b8e938090798077b8e0c98f7f6e9d12532c19543d49fd1d4960afad014a",
             "title": "GrapheneOS is ‘slightly delaying’ its overhauled Messages app",
             "description": "GrapheneOS is pushing back its overhauled Messages app release.",
@@ -1222,6 +2485,22 @@
             "collected_at": "2026-09-07T16:57:47.670868+00:00"
         },
         {
+            "id": "94f34175eabfda6891540e30ddaba175bd1c7bcef3c18562f48dbcbae968a571",
+            "title": "Matt Clifford to leave ARIA before Anthropic role becomes a 'distraction'",
+            "description": "MPs welcome move but still want answers over how the conflict of interest was allowed to arise",
+            "url": "https://www.theregister.com/public-sector/2026/09/07/matt-clifford-to-leave-aria-before-anthropic-role-becomes-a-distraction/5294861",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "anthropic",
+                "entreprise",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-09-07T16:02:47+00:00",
+            "collected_at": "2026-09-08T10:22:19.921778+00:00"
+        },
+        {
             "id": "a167688cff130a2c82c3d59190f6dd7e49f3ebdbd7c1636ac2f002a80115f33a",
             "title": "Save up to 38% on a new gaming PC before the Labor Day sales end and beat the price rises — lock down last-minute savings on new pre-built rigs from Best Buy, Newegg, and Walmart",
             "description": "Labor Day is nearly over, but there's still an opportunity to save hundreds on a new gaming PC before the prices rise again.",
@@ -1266,6 +2545,21 @@
             ],
             "published_at": "2026-09-07T15:57:20+00:00",
             "collected_at": "2026-09-07T16:57:55.310833+00:00"
+        },
+        {
+            "id": "0d008fbeb300058a83a13bf11979a75f617d5e15ef07f07951bc45134959408d",
+            "title": "US watchdog opens probe into Tesla's Cybercab self-certification",
+            "description": "Wheels turning on the road and in government",
+            "url": "https://www.theregister.com/offbeat/2026/09/07/us-watchdog-opens-probe-into-teslas-cybercab-self-certification/5294833",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-09-07T15:53:00+00:00",
+            "collected_at": "2026-09-08T10:22:19.921813+00:00"
         },
         {
             "id": "9c92a7066f1fef34bc1e189dc2bf7953e6f91148a662e98752dc5ac0beff83a4",
@@ -1433,6 +2727,21 @@
             "collected_at": "2026-09-07T16:57:55.310961+00:00"
         },
         {
+            "id": "a34e4567fa7a89bde8a5f544330a15ce7c55d7c9bbdd741c31924265d7c857cb",
+            "title": "DRAM contract prices forecast to grow only 13-18% in Q3",
+            "description": "PC buyers already had enough of helping to fund the AI revolution, only essential refreshes happening now",
+            "url": "https://www.theregister.com/storage/2026/09/07/dram-contract-prices-forecast-to-grow-only-13-18-in-q3/5294776",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-09-07T15:20:00+00:00",
+            "collected_at": "2026-09-08T10:22:19.921852+00:00"
+        },
+        {
             "id": "edce8f5eb7728073eb2c12444187c00a069036604faefca4ddb92b6ed5cda9ef",
             "title": "Amazon slashes the Samsung Galaxy Z Fold 8 by $250, bringing it down to $1,649.99",
             "description": "The Samsung Galaxy Z Fold 8 gets its first Amazon deal with 13% off, dropping the new foldable to a new best price.",
@@ -1504,6 +2813,21 @@
             ],
             "published_at": "2026-09-07T14:49:43+00:00",
             "collected_at": "2026-09-07T16:57:47.534462+00:00"
+        },
+        {
+            "id": "3ea1a4d597ab4f9353a4ae1e3e0768235214028714b94daac7dc407dd76ce611",
+            "title": "Nightwing CEO has a Labor Day message for staff – and apparently The Register",
+            "description": "Nothing says ‘For internal use only’ quite like emailing it to the press",
+            "url": "https://www.theregister.com/security/2026/09/07/nightwing-ceo-has-a-labor-day-message-for-staff-and-apparently-the-register/5294819",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-09-07T14:43:00+00:00",
+            "collected_at": "2026-09-08T10:22:19.921910+00:00"
         },
         {
             "id": "24d56919cba73a5c6b6a6f6bf13aa24a0bf3e2f5069d0aca36e253aa95ccc781",
@@ -1613,6 +2937,21 @@
             "collected_at": "2026-09-07T16:58:00.119236+00:00"
         },
         {
+            "id": "67e2c3176e6f60e9387d6d70c2f4e8b530cda3089b40b377737ab9e2a7a3a17a",
+            "title": "Oracle may be next in EU software licensing hot seat following SAP deal",
+            "description": "Commission reportedly seeks third-party views, although no formal investigation is underway",
+            "url": "https://www.theregister.com/software/2026/09/07/oracle-may-be-next-in-eu-software-licensing-hot-seat-following-sap-deal/5294805",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-09-07T13:56:51+00:00",
+            "collected_at": "2026-09-08T10:22:19.921950+00:00"
+        },
+        {
             "id": "98658b963ff126ca8487881aa6fa8a6d2bf99e0d32ef6c1dd7845102f7dc883b",
             "title": "HYPE Price Hits Record $89.67 as UBS, Jane Street Hold HYPE ETFs",
             "description": "Hyperliquid’s HYPE token has surged to a record $89.67 as fresh exchange-traded fund (ETF) buying and institutional holdings reinforce demand. Bitwise’s BHYP has now accumulated $166.3 million since launch, while known institutional holders across HYPE ETFs include UBS, Bank of Montreal, and Jane Street. HYPE Gains 176% in Six Months as ETF Assets Reach $481M […]",
@@ -1705,6 +3044,22 @@
             "collected_at": "2026-09-07T16:57:59.903301+00:00"
         },
         {
+            "id": "bd51b8a92015707c01cba617b003e7cb0e2ffe776ab1c96b3e8334a78b1ef9f2",
+            "title": "Hackers drain $320M in Bitcoin from Liquid Network, claim they're the good guys",
+            "description": "Self-described white hats promise to return 'most' of the 4,000 BTC once the vulnerability is fixed",
+            "url": "https://www.theregister.com/security/2026/09/07/hackers-drain-320m-in-bitcoin-from-liquid-network-claim-theyre-the-good-guys/5294770",
+            "source": "The Register",
+            "category": "cybersecurite",
+            "tags": [
+                "bitcoin",
+                "entreprise",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-09-07T13:26:00+00:00",
+            "collected_at": "2026-09-08T10:22:19.921985+00:00"
+        },
+        {
             "id": "361ee72e377f285a8871c9aac43158224ee9793fa3bfd911f253adc1357147bd",
             "title": "Snapseed leans harder into professional editing with color grading and other upcoming features",
             "description": "We’re also getting our first glimpse at the reorganized Looks menu in Snapseed.",
@@ -1794,6 +3149,22 @@
             "collected_at": "2026-09-07T16:57:44.357767+00:00"
         },
         {
+            "id": "97352c5fef441d93eb917fbd3f4a6f1d6aaf1c3bd3d5514d95935bc6e3ea0d78",
+            "title": "Asahi Linux takes on Apple M3, minus a few creature comforts",
+            "description": "Most hardware works, although graphics, sleep, and external displays need more attention",
+            "url": "https://www.theregister.com/os-platforms/2026/09/07/asahi-linux-takes-on-apple-m3-minus-a-few-creature-comforts/5294788",
+            "source": "The Register",
+            "category": "linux",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "linux",
+                "technologie"
+            ],
+            "published_at": "2026-09-07T13:01:09+00:00",
+            "collected_at": "2026-09-08T10:22:19.922021+00:00"
+        },
+        {
             "id": "c180a9b0e05994ec4be9762628a39b53170dc9ecdd70738a3823eb728f2179ce",
             "title": "De-Brainrot Vacations",
             "description": "Comments",
@@ -1867,6 +3238,21 @@
             ],
             "published_at": "2026-09-07T12:33:56+00:00",
             "collected_at": "2026-09-07T16:57:49.985744+00:00"
+        },
+        {
+            "id": "16c93cd0af62a07899728e0b3c0791baa591a08a43e6a4ef0af986e71ffe54a4",
+            "title": "Nitter lives to proxy another day after taking legal advice",
+            "description": "Public instance XCancel uncancelled after X Corp's cease-and-desist campaign, with others promised shortly",
+            "url": "https://www.theregister.com/personal-tech/2026/09/07/nitter-lives-to-proxy-another-day-after-taking-legal-advice/5294754",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-09-07T12:30:00+00:00",
+            "collected_at": "2026-09-08T10:22:19.922061+00:00"
         },
         {
             "id": "93b61032b3b3e4e7b2aef00a6c1015ab1ea1cfbd662568f2e26e900435399ca1",
@@ -2273,6 +3659,21 @@
             ],
             "published_at": "2026-09-07T11:05:00+00:00",
             "collected_at": "2026-09-07T11:12:32.833969+00:00"
+        },
+        {
+            "id": "ddcf1311b38d7ffa116a0b847561d706d4fa757566799718a3ef66ab863edd53",
+            "title": "Welsh environment regulator's FoI blunder exposes diversity data of 2,000 staff",
+            "description": "NRW says it has found no evidence data was misused after spreadsheet published in error five years ago",
+            "url": "https://www.theregister.com/security/2026/09/07/welsh-environment-regulators-foi-blunder-exposes-diversity-data-of-2000-staff/5294748",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-09-07T11:04:46+00:00",
+            "collected_at": "2026-09-08T10:22:19.922146+00:00"
         },
         {
             "id": "d04841f68684497c422305b78432c951f9393ffafe7000157df853d29b04acec",
@@ -2872,6 +4273,21 @@
             "collected_at": "2026-09-07T11:12:38.092918+00:00"
         },
         {
+            "id": "986a1f961513ec20381ae7e2057307e4e13f5db2698ee5159b16d88433e657ec",
+            "title": "UK food supply chain at risk from hostile attacks",
+            "description": "Defending against cyber foes is among factors hitting food price inflation, report finds",
+            "url": "https://www.theregister.com/security/2026/09/07/uk-food-supply-chain-at-risk-from-hostile-attacks/5294719",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-09-07T10:06:10+00:00",
+            "collected_at": "2026-09-08T10:22:19.922184+00:00"
+        },
+        {
             "id": "551e905eddcba1de24ff6cfffd9b9268bdb91090db171eb1ecef40a377e35696",
             "title": "6 big problems Apple’s folding iPhone won’t solve (from a long-time foldable user)",
             "description": "The iPhone Ultra should be a great foldable, but it won't be perfect.",
@@ -2902,6 +4318,23 @@
             ],
             "published_at": "2026-09-07T10:00:00+00:00",
             "collected_at": "2026-09-07T11:12:32.834540+00:00"
+        },
+        {
+            "id": "7bc060ed52bb5cc454c766927d1b9905eac0ba04e7a172881718de52737567e1",
+            "title": "Feel peak Windows was 7? You might like Kumander Linux",
+            "description": "Debian and Xfce – solid, sensible choices – with a pretty skin",
+            "url": "https://www.theregister.com/os-platforms/2026/09/07/feel-peak-windows-was-7-you-might-like-kumander-linux/5294760",
+            "source": "The Register",
+            "category": "linux",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "linux",
+                "technologie",
+                "windows"
+            ],
+            "published_at": "2026-09-07T10:00:00+00:00",
+            "collected_at": "2026-09-08T10:22:19.922224+00:00"
         },
         {
             "id": "de94f875b0c838e325b72b1219e070f6ef13c068fb6260ce25ea067c01e48746",
@@ -3098,6 +4531,21 @@
             "collected_at": "2026-09-07T11:12:38.093179+00:00"
         },
         {
+            "id": "69ada4915517edd69ebe1077972d887672c7d31191c7f5bff52c2ee17f01b3e8",
+            "title": "Peers ask why UK cyber bill leaves execs off the personal liability hook",
+            "description": "Ministers say £17M corporate fines and forthcoming board-level governance rules provide sufficient accountability",
+            "url": "https://www.theregister.com/security/2026/09/07/peers-ask-why-uk-cyber-bill-leaves-execs-off-the-personal-liability-hook/5294586",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-09-07T09:15:00+00:00",
+            "collected_at": "2026-09-08T10:22:19.922270+00:00"
+        },
+        {
             "id": "b4d218b7a4fa0e8f11dbe13d2cba8cd35e07868a5da4fbcd976b6529309f9798",
             "title": "Samsung is shutting down two apps it used to brag about",
             "description": "Samsung's AR Doodle and Quick Measure are getting the axe.",
@@ -3153,6 +4601,21 @@
             ],
             "published_at": "2026-09-07T09:00:39+00:00",
             "collected_at": "2026-09-07T11:12:38.093340+00:00"
+        },
+        {
+            "id": "ee976f7c89314b3b9fe4af727479c82ce18b4a7ed9e1d275178bfb613f966232",
+            "title": "anystation: Calling any station A public board shaped like a tree. No account",
+            "description": "Comments",
+            "url": "https://anystation.net/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-07T09:00:01+00:00",
+            "collected_at": "2026-09-08T10:22:20.964199+00:00"
         },
         {
             "id": "30fe1e0b73337bde69b4f35c3f78a66c337fdc24f344f2288b99898fa49bdee4",
@@ -3227,6 +4690,22 @@
             ],
             "published_at": "2026-09-07T08:30:34+00:00",
             "collected_at": "2026-09-07T11:12:44.831413+00:00"
+        },
+        {
+            "id": "08d035d70c9dc1e93640b5572628d4698a2e97c5ef8d77bc5889d0e9fa8b3374",
+            "title": "OpenAI's rebel agent swarm died young, but its chilling logs live on",
+            "description": "'The Collective' learned to communicate, organize, cheat, and apparently sacrifice its own",
+            "url": "https://www.theregister.com/columnists/2026/09/07/openais-rebel-agent-swarm-died-young-but-its-chilling-logs-live-on/5294446",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "openai",
+                "technologie"
+            ],
+            "published_at": "2026-09-07T08:30:00+00:00",
+            "collected_at": "2026-09-08T10:22:19.922310+00:00"
         },
         {
             "id": "9fd8a36d6e24ebc63bb59b621ef1069d8315e955226156c3190b222fecef192f",
@@ -3353,6 +4832,21 @@
             "collected_at": "2026-09-07T11:12:30.508120+00:00"
         },
         {
+            "id": "ed2c10131fea310475ea12acc880ab9bdeb7f39222927a880955bcf9126ff3ca",
+            "title": "Amazon-branded plane in fatal accident at Miami Airport",
+            "description": "Couldn’t stop before the end of a runway",
+            "url": "https://www.theregister.com/on-prem/2026/09/07/amazon-branded-plane-in-fatal-accident-at-miami-airport/5294707",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-09-07T07:02:00+00:00",
+            "collected_at": "2026-09-08T10:22:19.922348+00:00"
+        },
+        {
             "id": "081cca8d27e88699c639bdb2b6cc930545766441920acab4ac8ce81c9dfa908f",
             "title": "Hikers found out the hard way why you shouldn’t trust AI",
             "description": "Gemini apparently told the hikers to take far less food and water than they actually needed.",
@@ -3413,6 +4907,21 @@
             ],
             "published_at": "2026-09-07T06:30:56+00:00",
             "collected_at": "2026-09-07T11:12:44.831611+00:00"
+        },
+        {
+            "id": "ce99935af9315633a01afd1c294591640c5bd33ea30d1f4ad83235a96e7e95f6",
+            "title": "Who, Me? Techie sent to fix Nobel Prize winner’s PC almost set it on fire",
+            "description": "Even the greatest scientific minds are at risk of rogue 9-pin connectors",
+            "url": "https://www.theregister.com/personal-tech/2026/09/07/who-me-techie-sent-to-fix-nobel-prize-winners-pc-almost-set-it-on-fire/5294430",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-09-07T06:30:00+00:00",
+            "collected_at": "2026-09-08T10:22:19.922391+00:00"
         },
         {
             "id": "4a81effbff6827ff083d3728f16b5dcc7dc35260147c5ccbda23959fda43228d",
@@ -3487,6 +4996,22 @@
             ],
             "published_at": "2026-09-07T05:30:38+00:00",
             "collected_at": "2026-09-07T11:12:44.831721+00:00"
+        },
+        {
+            "id": "56ea1d87e070cf9a4df29a88c3520ed9897d596f5b6f8bf35c549ff6b1adb01a",
+            "title": "Jensen's purchase of a new toy could reshape the entire AI industry",
+            "description": "This week on The Kettle we weigh in on Nvidia's Hugging Face acquisition and why it could spell a new, more fragmented and siloed era of AI development",
+            "url": "https://www.theregister.com/ai-and-ml/2026/09/07/jensens-purchase-of-a-new-toy-could-reshape-the-entire-ai-industry/5294610",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "nvidia",
+                "technologie"
+            ],
+            "published_at": "2026-09-07T05:30:00+00:00",
+            "collected_at": "2026-09-08T10:22:19.922436+00:00"
         },
         {
             "id": "3c53f36a7a7ec1e48206a95745a07828bd6c7da964283d40fc06a4c4f45a79de",
@@ -3578,6 +5103,22 @@
             ],
             "published_at": "2026-09-07T03:29:51+00:00",
             "collected_at": "2026-09-07T11:12:30.507877+00:00"
+        },
+        {
+            "id": "805d531cc305655513975bdc9334ff4742c2af53f7ab1ea3f60eb744c08abcff",
+            "title": "Might as well blame AI for this giant Linux release candidate, says Linus Torvalds",
+            "description": "Last week, he blamed himself for being ‘a grade A nincompoop’ who assumed a system upgrade couldn’t possibly go wrong",
+            "url": "https://www.theregister.com/os-platforms/2026/09/07/might-as-well-blame-ai-for-this-giant-linux-release-candidate-says-linus-torvalds/5294697",
+            "source": "The Register",
+            "category": "linux",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "linux",
+                "technologie"
+            ],
+            "published_at": "2026-09-07T02:32:33+00:00",
+            "collected_at": "2026-09-08T10:22:19.922481+00:00"
         },
         {
             "id": "86eb6d207ab3329f316005c5b2b83f23537c044ff21757bf027ef4d17e75c534",
@@ -3857,6 +5398,21 @@
             ],
             "published_at": "2026-09-07T01:06:59+00:00",
             "collected_at": "2026-09-07T02:09:45.507917+00:00"
+        },
+        {
+            "id": "182d6394121f3c6d64a67c4df3f70160c69d897c33c73deded4f945b45549493",
+            "title": "Thailand pauses all datacenter builds and approvals",
+            "description": "PLUS: Fujitsu not yet budgeting Horizon compensation; DeepSeek's vast Huawei GPU buy; Korea plans sovereign security model; and more",
+            "url": "https://www.theregister.com/off-prem/2026/09/07/thailand-pauses-all-datacenter-builds-and-approvals/5294688",
+            "source": "The Register",
+            "category": "hardware",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-09-07T01:05:51+00:00",
+            "collected_at": "2026-09-08T10:22:19.922518+00:00"
         },
         {
             "id": "64bdcdb063387289e2693e90f661477fcd1edfecefffdd20a781c2f1ea513902",
@@ -4365,6 +5921,21 @@
             ],
             "published_at": "2026-09-06T20:07:16+00:00",
             "collected_at": "2026-09-07T02:09:45.279557+00:00"
+        },
+        {
+            "id": "39e0ff6df49e51ffb3ff7290121684f71b9bceab9b4df4e125de2a2b3067f8e3",
+            "title": "Understanding Computer Memory Architecture and SSD Internals",
+            "description": "Comments",
+            "url": "https://codingpirate.com/understanding-computer-memory-architecture-ac9320110787",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-06T19:51:28+00:00",
+            "collected_at": "2026-09-08T10:22:20.963926+00:00"
         },
         {
             "id": "dfd10d55b254e7d449ace4754e909d5e1bdc00d3cc439ad067f99f144b89d1b6",
@@ -5148,6 +6719,21 @@
             ],
             "published_at": "2026-09-06T15:00:00+00:00",
             "collected_at": "2026-09-06T15:37:10.928838+00:00"
+        },
+        {
+            "id": "d76823530b755e8d10de4c7c495b7fa0274dfa839f7d0a762d337934afe6fd31",
+            "title": "Feather Atlas",
+            "description": "Comments",
+            "url": "https://www.fws.gov/lab/featheratlas/identify.html",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-06T14:59:08+00:00",
+            "collected_at": "2026-09-08T10:22:20.964281+00:00"
         },
         {
             "id": "0ef02f5d151946b34b14ec15ed1bbbcd4f2ea9ee30b7f3ff8cf1bd8510455ec3",
@@ -6440,6 +8026,21 @@
             "collected_at": "2026-09-06T15:36:58.915716+00:00"
         },
         {
+            "id": "17555f9a91f5678e7d0e97656a5bbd0770ee837f7cf3bd90984a1c3a6e29bf2d",
+            "title": "We built our house for LAN parties",
+            "description": "Comments",
+            "url": "https://lanparty.house/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-05T18:44:40+00:00",
+            "collected_at": "2026-09-08T10:22:20.963471+00:00"
+        },
+        {
             "id": "b86b5015c5da7a4038c913c44ce254104f289935590ef6a257a275115898be13",
             "title": "OpenAI confirms ‘wiki incident,’ says it’s ‘working on a framework’ for more disclosure",
             "description": "OpenAI acknowledged its role in a recently reported incident where AI agents took over a German wiki forum.",
@@ -7469,6 +9070,21 @@
             ],
             "published_at": "2026-09-04T21:29:00+00:00",
             "collected_at": "2026-09-06T15:36:59.798080+00:00"
+        },
+        {
+            "id": "fe331b5ed36e0e6a0e249bb2a447bba15073637aac7c24d0d16e85ca4f6f3c80",
+            "title": "End-to-end infrastructure for training and inferencing open weight models",
+            "description": "Comments",
+            "url": "https://docs.appliedcompute.com",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-04T21:25:49+00:00",
+            "collected_at": "2026-09-08T10:22:20.964016+00:00"
         },
         {
             "id": "de4eba1167c2a07b0e421dc0a6593b75fdea3693f6e5bd1324e6bf5c2114b0c7",
@@ -12234,6 +13850,21 @@
             ],
             "published_at": "2026-09-03T13:00:00+00:00",
             "collected_at": "2026-09-06T15:37:11.061901+00:00"
+        },
+        {
+            "id": "f2862dbb7b814a71a5034a37c3a6608843cd14eff3f963af16b2cf08c34a121c",
+            "title": "Extinct Tasmanian tiger's 'snap' unlike any living mammal's bite",
+            "description": "Comments",
+            "url": "https://www.cnn.com/2026/09/02/science/tasmanian-tiger-skull-bite-force",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-03T12:53:21+00:00",
+            "collected_at": "2026-09-08T10:22:20.964231+00:00"
         },
         {
             "id": "713a19968691e9565aacb3144e87dfb264c1f8f3336e83ee55d8dfd51ec91283",
@@ -76285,6 +77916,21 @@
             ],
             "published_at": null,
             "collected_at": "2026-09-08T02:21:34.030148+00:00"
+        },
+        {
+            "id": "9a87d46b14bf3e969734c15f35cd53b605602752607dabab22819554672aa9d7",
+            "title": "Xiaomi’s wide foldable promises more power than Samsung’s",
+            "description": "Xiaomi is the latest manufacturer to release a short, wide foldable phone, in the week Apple is expected to do the same. I got to try the 18 Fold behind closed doors at IFA last week, and while it looks and feels similar enough to Samsung's Galaxy Z Fold 8, superior specs make it feel […]",
+            "url": "https://www.theverge.com/tech/991008/xiaomi-18-fold-hands-on-impressions-specs-wide",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-09-08T10:22:19.607383+00:00"
         }
     ]
 }
