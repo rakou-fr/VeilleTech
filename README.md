@@ -18,7 +18,7 @@ Dans le cadre du diplôme **BTS SIO (Services Informatiques aux Organisations)**
 ## 🏗️ Architecture des fichiers
 
 * `sources.json` : Liste de configuration des flux RSS/Atom suivis.
-* `main.py` : Script de collecte, nettoyage HTML, tagging et parsing de dates.
+* `scrapper.py` : Script de collecte, nettoyage HTML, tagging et parsing de dates.
 * `requirements.txt` : Dépendances Python nécessaires au projet.
 * `news.json` : Base de données générée contenant les articles triés du plus récent au plus ancien.
 
