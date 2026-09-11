@@ -1,7 +1,842 @@
 {
-    "updated_at": "2026-09-10T20:18:27.208147+00:00",
-    "count": 6305,
+    "updated_at": "2026-09-11T02:19:33.643241+00:00",
+    "count": 6376,
     "articles": [
+        {
+            "id": "a36d8c648d3c57defc449b610ae26b8f67a97fade2f70662da3514c0403b7077",
+            "title": "AI Agent Tool Mastery: How Modern Agents Choose and Use Tools Effectively",
+            "description": "AI Agent Tool Mastery: How Modern Agents Choose and Use Tools Effectively The Tool Selection Problem When an AI agent receives a complex request like \"Find the weather, book a flight, and send a confirmation email,\" it must do more than just generate text. It needs to: Understand intent — What does the user actually want? Match tools — Which tools can fulfill each part of the request? Chain operations — How do results from one tool feed into the next? Handle failures — What happens when a tool fails or returns unexpected data? The Architecture of Tool Selection Modern AI agents use a multi-stage pipeline to select and execute tools: Stage 1: Intent Analysis The agent parses the user request to identify: Primary goals (e.g., \"get weather,\" \"book flight\") Secondary goals (e.g., \"send confirmation\") Constraints (e.g., \"tomorrow morning,\" \"economy class\") Stage 2: Tool Matching Each identified goal is matched against available tools using: Semantic similarity (does the tool description match the intent?) Historical performance (has this tool succeeded for similar requests?) Availability (is the tool currently accessible?) Stage 3: Execution Chaining Results from one tool may trigger additional tool calls: Weather data → Flight search with date constraints Flight results → Booking API with passenger details Booking confirmation → Email tool with itinerary Performance Metrics That Matter Not all tools are created equal. Here's how different tool categories perform: Metric Search Weather Booking Email Accuracy 92% 88% 76% 95% Speed 78 95 65 90 Reliability 88 92 70 96 Key Insight : High accuracy doesn't always mean high speed. Agents must balance these trade-offs based on context. The Evolution of Agent Tools The capability of agent tools has evolved dramatically: 2020 : Basic functions — simple API calls with fixed parameters 2021 : Static tools — predefined toolsets with limited flexibility 2022 : Dynamic selection — agents could choose tools based on context 2023 : Multi-tool chaining — agents could sequence multiple tool calls 2024 : Self-improving tools — tools that learn from past failures 2025 : Autonomous tool creation — agents that write their own tools 2026 : Adaptive ecosystems — tools that evolve based on user behavior Practical Example: A Day in the Life of an Agent Let's walk through a real-world scenario: User Request : \"I need to travel to Tokyo next week for a conference. Find flights, book the cheapest option, and send the itinerary to my assistant.\" Agent Actions : Search API — Finds conference dates and location Weather API — Checks Tokyo weather for next week Flight Search API — Finds available flights Booking API — Books the cheapest flight Email API — Sends itinerary to assistant Calendar API — Adds event to user's calendar Result : A fully automated travel booking experience. Common Pitfalls and How to Avoid Them Pitfall 1: Over-Tooling Using too many tools for simple tasks slows down responses. Solution : Implement a complexity threshold — only chain tools when necessary. Pitfall 2: Ignoring Tool Failures When a tool fails, agents should have fallback strategies. Solution : Implement retry logic, alternative tools, and user notifications. Pitfall 3: No Performance Monitoring Without tracking tool performance, agents can't optimize. Solution : Log all tool calls, measure success rates, and adjust weights. The Future of Agent Tools As AI agents become more sophisticated, tool ecosystems will evolve: Self-optimizing tools that adjust parameters based on usage patterns Cross-platform tools that work across different services seamlessly User-adaptive tools that learn individual preferences over time Collaborative tools that work together across agent boundaries Conclusion AI agent tool mastery isn't just about having access to many tools — it's about selecting the right tools, chaining them effectively, and continuously improving based on performance data. The agents that thrive will be those that treat tools not as static resources, but as dynamic components of an adaptive ecosystem. What tool challenges have you encountered with AI agents? Share your experiences in the comments.",
+            "url": "https://dev.to/ryan_zhao/ai-agent-tool-mastery-how-modern-agents-choose-and-use-tools-effectively-2hkg",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-11T02:17:32+00:00",
+            "collected_at": "2026-09-11T02:19:16.385504+00:00"
+        },
+        {
+            "id": "90065bb0637fa51e1383147ff74fb36b997e5576d81e12e61f1dcf61db10edf0",
+            "title": "Post-hoc dedupe or a single writer? What a double-posted announcement taught us about the cost of each",
+            "description": "On 2026-08-31 our agent announced the same dev.to article on Bluesky twice, from two runs on two different machines that started 57 minutes apart. Both announcements were correct. Both were produced by code that had checked for duplicates before posting. The fix we shipped that evening was a better check. The fix we shipped six days later was to delete one of the machines. This is a comparison of the two approaches we had on the table for the second fix: detect duplicates after the fact and reverse the extra one, or arrange things so a second writer cannot exist. We chose the second. The judgment came from what we had measured, and I want to lay out the measurements rather than the principle. How two writers came to exist The announcement path is one CLI, auto-publish-devto-article . It publishes the day's article if it has not gone out, posts an announcement for any article whose scheduled time has passed, and reserves tomorrow's article on dev.to. It is meant to run from a GitHub Actions cron at 02:17 UTC, with a retry cron at 08:33 UTC. GitHub's cron does not fire on time under load. On some days ours fired two to four and a half hours late. Our health check noticed the missing announcement and, as written, advised the agent to run the same CLI locally. The agent followed the advice. So on any late day there were two writers: the local session and the cron that would eventually fire. On the 31st the local run started at 07:46 UTC and wrote a reservation mark, the new dev.to article id, into the stock file. That mark is the idempotency key: a row with an id is done. But the mark lived in a git-tracked file, and the push did not happen until 09:25. The retry cron fired at 08:43, checked out origin/main , saw a row with no mark, and did the whole thing again. Two scheduled articles, two announcements. The idempotency key was correct. It was just sitting in a state that only one writer could see. The first fix: read before you write That evening's commit moved both checks off the local file and onto the platforms themselves. Before creating an article, the publisher now fetches the account's full article list, drafts and scheduled included, and refuses on a title match. Before posting an announcement, it fetches the account's own Bluesky feed, up to 100 posts, and looks for the exact announcement text: const alreadyPosted = await blueskyClient . findRecentPostsByText ({ texts : [ announcementText ], limit : 100 , }) if ( alreadyPosted . length > 0 ) { return { postUri : alreadyPosted [ 0 ]. uri , skippedReason : null } } If the lookup itself fails, it does not post. Leaving the announcement for the next run is cheaper than a possible duplicate. This closed the case that had actually happened, where the two runs started 57 minutes apart. It does not close the case where they are seconds apart. It is a read followed by a write, and between the read and the write there is a window: the round trip to Bluesky, plus however long a new post takes to appear in the author feed. Two writers inside that window both read an empty feed and both post. A reader of the article about the original incident pointed exactly at this, and put the alternative well: if the write side has no conditional write, do not make the read authoritative; make duplicates visible and reversible instead. Option A: reverse after the fact That reader's suggestion became a deferred item in our ledger, with a plan: after posting, search the feed again for the same text, delete every copy but the oldest, record each deletion in the post log, and expose the count of detected duplicates in the health check. The cost estimate was one to two hours of CLI work and tests. The Bluesky client already had a delete call. Here is what the ledger also recorded, because it matters for the comparison. The recurrence count since the read-before-write check went in was zero. And the impact if we did nothing was a duplicate that stays on the timeline until a human deletes it, in a window we had measured in seconds to tens of seconds, on a job that runs a couple of times a day. Option B: make the second writer impossible The other option was to stop the local session from being a writer at all. That is a guard of about forty lines: export function assertGitHubActionsIsTheOnlyWriter ({ env , commandName , workflowFile }) { if ( env . GITHUB_ACTIONS === ' true ' ) return throw new Error ( ` ${ commandName } は GHA（ ${ workflowFile } ）だけが実行する CLI です。...` + `gh workflow run ${ workflowFile } で GHA 側を手動起動し、gh run watch で完了を待ってください` , ) } It runs before any side effect in the CLI. Outside Actions it throws and tells you how to trigger the workflow by hand instead. The health check's advice was rewritten from \"run the CLI\" to \"run gh workflow run autopostarticle.yml and wait.\" That leaves the case of the cron and a manual dispatch overlapping. Our jobs all share one concurrency group, aishop-git-write , with cancel-in-progress: false . GitHub's documentation states that there can be at most one running job in a concurrency group at any time, and that a newly queued job waits as pending. So the cron and a manual run serialize. A test reads the workflow file and fails if the group, the cancel setting, or the workflow_dispatch trigger disappears. Six tests total, plus a positive control: we ran the CLI locally and confirmed it throws before touching anything. The comparison, on three axes we could actually measure Detection delay. Post-hoc reversal detects after the write, by definition, and only if the re-read sees the duplicate, which puts it on the same feed-visibility clock as the check it is patching. Read-before-write detects before the write, but only outside the window. Single writer detects nothing, because there is nothing to detect; the competing write is not a race that gets lost, it is a call that throws. On this axis the ordering is unambiguous, and it is the axis that had bitten us. Reversibility of the side effect. This is where the measurement surprised me. A Bluesky post can be deleted, so a duplicate announcement looks reversible on paper. In practice, on the 31st, the automated cleanup could not delete the second announcement: the permission classifier our agent runs under refused the delete call, and the owner had to remove the post by hand. The duplicate dev.to article was reversible, into a draft, and we verified that with an unauthenticated GET. So of the two side effects, one was reversible by the agent and one was reversible only by a human. A design that leans on reversibility has to know which side effects are reversible by whom, and our own guardrails made the important one a human's job. Post-hoc reversal would have needed a carve-out in the same classifier that is there to stop the agent from deleting things. Implementation cost. The read-before-write commit touched 7 files and added 154 lines, most of it the dev.to cross-check. The post-hoc plan was estimated at one to two hours and never built. The single-writer guard is one small module, six tests, and a handful of doc and health-check edits. But the real cost of option B is not in code. The local session gave up a capability. On a day the cron is late, the agent now waits on gh run watch instead of finishing the job itself, and the announcement is late by however late GitHub is. We accepted that because a late announcement is a non-event and a duplicate one is a public mistake, and because a session that can do anything the cron can do will keep being asked to. The option we did not take, for completeness AT Protocol's createRecord does accept a swapCommit parameter, described in the lexicon as compare-and-swap against the previous commit CID, and an optional rkey . Post records use TID keys, so an rkey derived from the announcement's hash is not a valid key without contortions. swapCommit is a real conditional write, but it conditions on the whole repository's head, not on the record: any write in between, a like, a follow, fails the swap, and the failure does not tell you whether the other writer posted your announcement or something unrelated. You would still re-read and retry. It is a legitimate route and we did not need it once there was one writer. What generalizes A dedupe check that reads a shared resource is a promise about a window, and the window is set by the platform's propagation time, not by your code. If two writers exist, the honest description of read-before-write is \"duplicates only during the window,\" and you should measure the window before you decide that is fine. Post-hoc reversal is only as good as the reversibility of the side effect for the actor doing the reversing, and in an agent system that actor is often the one your guardrails trust least. Removing a writer costs a capability and buys a guarantee. The residual risk with one writer is a stuck or delayed cron, and that was already visible: the health check's article-cadence and announcement-backlog checks fire every turn, and the manual dispatch is the recovery. Since the guard went in, zero duplicates, which is the same number as the week before it, so the guard has not yet been tested by the race it exists for. What it has done is turn a race into a wait, and a wait is something a health check can see. The workflows and the single-writer guard here run Rulestack , a shop whose article announcements now come from exactly one place. Those announcements, one a day, go out on @ai-shop.bsky.social .",
+            "url": "https://dev.to/rulestack/post-hoc-dedupe-or-a-single-writer-what-a-double-posted-announcement-taught-us-about-the-cost-of-f63",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "git",
+                "programmation",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-09-11T02:17:00+00:00",
+            "collected_at": "2026-09-11T02:19:16.387009+00:00"
+        },
+        {
+            "id": "04a3b18bb9764ad53f670f549e30aa9d2f9c02b0e71a90bcb5b744e0b3439207",
+            "title": "Museum Image Access: Watermarked Derivatives Without Touching Master Files (3 Safeguards)",
+            "description": "Short answer: Serve a watermarked derivative from a separate object, never rewrite the museum's master image. Keep the master immutable, make derivative creation idempotent, and let the portal publish only a validated, access-controlled thumbnail. That gives visitors responsive images while preserving the archival file byte for byte. I learned to treat this as a scheduling problem after a thumbnail worker was retried during an upload burst. The queue delivered one job twice, and both attempts tried to write the same public object. Nothing was lost, but the incident made the invariant obvious: a retry may repeat computation, not change the preservation record. The first alert showed only queue depth, so the on-call had to trace the upload ID through the manifest, temporary object, and CDN log before deciding whether another render was safe. That took longer than the render itself. We added a duplicate-claim counter and a manifest lookup to the runbook after that review. It failed loudly. That distinction matters in a collection portal. A curator may replace a display caption, but an imaging master usually has a chain of custody, checksums, and retention rules. A web-friendly copy belongs in a different namespace with a different lifecycle. What should a museum portal preserve when it publishes watermarked images? Preserve the original bytes and their identity first. On ingest, record a content hash, media type, dimensions, capture identifier, rights statement, and preservation storage key. Treat that row as append-only. A thumbnail request can refer to the row, but it cannot mutate it. The public derivative needs its own key. I use a tuple such as (master_hash, transform_version, watermark_version, size) , encoded as a stable path. If the watermark artwork or resize policy changes, the version changes and a new object is produced. Old derivatives can be retired according to policy without rewriting the master. There is a useful operational split: Record Purpose Mutable fields Master manifest Chain of custody and preservation Status metadata only, by approval Derivative manifest Public thumbnail and watermark identity Build state, access policy, expiry Delivery log Evidence of who received what Append-only event data Do not infer a rights decision from a file extension. Browsers support multiple image formats and codecs, and format choice affects compatibility and payload size; the MDN media formats guide is a good baseline for testing actual browser targets. The rights statement and portal policy still decide whether a derivative may be delivered. Build the derivative path as a replayable job The upload handler should commit the master manifest before enqueueing derivative work. A worker then claims a job, reads the immutable source, renders into a temporary buffer, applies the watermark, validates the output, and atomically publishes the derivative. A lost acknowledgement causes another claim; it must not create a second logical derivative. Here is the shape of that path in Go. The storage methods are deliberately generic so the same fencing rules can sit above object storage, a filesystem, or a managed image service. package thumbnails import ( \"context\" \"fmt\" \"time\" ) type Job struct { ID string MasterKey string MasterHash string TransformVersion string WatermarkVersion string Size int Fence int64 } type Store interface { Claim ( ctx context . Context , id string , lease time . Duration ) ( Job , error ) ReadMaster ( ctx context . Context , key string ) ([] byte , error ) PublishDerivative ( ctx context . Context , key string , data [] byte , fence int64 ) error Complete ( ctx context . Context , id string , fence int64 , key string ) error Release ( ctx context . Context , id string , fence int64 , reason string ) error } type Renderer interface { Thumbnail ( ctx context . Context , source [] byte , size int ) ([] byte , error ) Watermark ( ctx context . Context , image [] byte , version string ) ([] byte , error ) } func Run ( ctx context . Context , store Store , renderer Renderer , id string ) error { job , err := store . Claim ( ctx , id , 60 * time . Second ) if err != nil { return err } source , err := store . ReadMaster ( ctx , job . MasterKey ) if err != nil { _ = store . Release ( ctx , job . ID , job . Fence , \"master read failed\" ) return err } thumb , err := renderer . Thumbnail ( ctx , source , job . Size ) if err != nil { _ = store . Release ( ctx , job . ID , job . Fence , \"thumbnail render failed\" ) return err } marked , err := renderer . Watermark ( ctx , thumb , job . WatermarkVersion ) if err != nil { _ = store . Release ( ctx , job . ID , job . Fence , \"watermark render failed\" ) return err } key := fmt . Sprintf ( \"derivatives/%s/%s/%d\" , job . MasterHash , job . WatermarkVersion , job . Size ) if err := store . PublishDerivative ( ctx , key , marked , job . Fence ); err != nil { return err } return store . Complete ( ctx , job . ID , job . Fence , key ) } The fence prevents an expired worker from publishing after a replacement worker has claimed the job. PublishDerivative and Complete must reject stale fences. The derivative key is deterministic, so an accepted retry overwrites the same derived object or observes it already present; it never invents a new public URL. That's the whole point. One concrete failure mode is a process dying after publication but before completion. The next worker should check the deterministic key and validate its metadata before doing expensive work. Another is a process dying before publication; the next worker renders normally. Those cases look identical in queue metrics, so retain job state, fence, and object version in the manifest. Keep raw visitor identifiers out of object keys and metric labels. Use a short request ID in logs, and put the full audit event in an access-controlled store. Watermarking is an access signal, not encryption; a downloaded derivative can still be copied. How do responsive thumbnails, watermark policy, and access checks fit together? Resolve authorization before expensive rendering when possible. The portal can return a signed URL only after checking collection policy, embargo dates, and the derivative manifest. The URL should point to the derivative namespace, never the master key. Cache headers must match the policy: a public, stable derivative can be cached longer than an embargo-sensitive one. Responsive delivery is a bounded set of sizes, not arbitrary user input. Predeclare widths such as 320, 640, and 1280 pixels, then include the selected size and format in the derivative identity. This keeps storage growth predictable and makes cache invalidation a version change. Your mileage may vary on the exact widths; measure the portal's layouts and the connection profiles of its visitors. Keep it boring. Validate dimensions, decoded pixel limits, color profile handling, and output media type before publication. A malformed upload should be quarantined with an operator-visible reason. Never replace the master with a normalized copy just because a browser decoder rejected the source. The trade-off is visible. A derivative pipeline costs storage and a little delay on first view. In return, it gives the archive an immutable source and a clear place to enforce presentation policy. If a portal requires pixel-perfect, unwatermarked research downloads, this path is not suitable for that endpoint; keep a separately authorized original-download workflow. Stick with on-demand rendering only when traffic is sparse and cold-start latency is acceptable. Compare implementation choices by failure behavior A self-hosted image worker offers control over codecs, fonts, and where bytes are processed, but your team owns patching and capacity. A managed transformation service can shorten operations work, yet its retention, region, and watermark primitives become part of the compliance review. A CDN image layer is excellent at delivery and cache fan-out, but it should consume an approved derivative, not reach into preservation storage. I would compare options with the same test corpus: a large TIFF master, a PNG with transparency, an unusual color profile, a rights-restricted object, and a duplicate upload. Record output dimensions, media type, watermark placement, cache behavior, and audit events. Do not rank tools on a single throughput number; a fast renderer that cannot prove which master produced a public image fails the real requirement. Run a canary with a small collection subset. Watch queue age, duplicate claims, derivative validation rejects, source-read latency, and unauthorized URL attempts. Keep the previous transform version available so rollback means stopping new admissions and serving the last known-good derivative set. Reconciliation comes first; replaying every queued item can hide whether an object was already published. The selection rule is simple: choose the implementation that preserves the master, makes retries harmless, and leaves an audit trail a curator can understand. Rendering speed is useful. Provenance is the gate. References https://developer.mozilla.org/en-US/docs/Web/Media/Guides/Formats https://www.w3.org/TR/PNG/ https://www.w3.org/TR/SVG11/",
+            "url": "https://dev.to/ellsworthpierce7528/museum-image-access-watermarked-derivatives-without-touching-master-files-3-safeguards-3d1d",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-11T02:13:32+00:00",
+            "collected_at": "2026-09-11T02:19:16.388270+00:00"
+        },
+        {
+            "id": "9e5a0ef776add8aac584ab4ab05f8926caeea9ed9e4f457c3a94e8e9ea72451c",
+            "title": "HarnessDev: Self-Evolving Agent Frameworks — How LLMs Build Their Own Infrastructure",
+            "description": "HarnessDev: How LLMs Are Building Their Own Agent Frameworks ByteDance's Breakthrough in Self-Evolving Agent Systems Published: September 10, 2026 | Reading time: 12 minutes The Revolutionary Research Last week, ByteDance's Seed team, in collaboration with Singapore University of Technology and Design, Georgia Tech, and other institutions, released HarnessDev — a groundbreaking research project that answers a fundamental question in AI agent engineering: Can LLMs create their own Agent Harnesses and continuously improve them based on task feedback? The answer is a resounding yes . What Is an Agent Harness? An Agent Harness is the core control system that drives an AI agent. It includes: Task execution loops Tool selection and parameter constraints Context management State tracking Result verification Failure recovery mechanisms Think of it as the \"operating system\" for an AI agent — without it, the agent is just a language model with no structure or direction. The Two-Phase Process HarnessDev divides the agent development process into two phases: Phase 1: Creation Starting from a Weak Seed Harness (a minimal framework with basic I/O capabilities), the LLM builds a complete agent harness by adding control logic for: Execution — Task loops, planning, scheduling, and stopping conditions Tools — Tool selection, parameter constraints, input/output handling, and error processing Context — Organization of task information, code, history, and constraints State — Current goals, progress tracking, attempt records, and failure information Lifecycle — Timeout handling, recovery mechanisms, and task cleanup Verification — Testing, result checking, completion determination, and logging Phase 2: Evolution Using the created harness as a starting point, the LLM continuously adjusts it based on downstream task feedback, evaluating performance on held-out tasks. Key Findings 1. LLMs Can Build Effective Harnesses 18 Code Harnesses were created, adding a total of 17,111 lines of code Gemini required the fewest changes (1,006 lines) but achieved the highest score on Terminal-Bench 2.1 ( 68.8 ) All 18 harnesses implemented Execution Loops; Tools, Lifecycle, and Verification had high completion rates 2. Not All Code Is Used Out of 108 component instances in Code Harnesses, only 72 were observed running in real tasks 18 components (all from State and Memory) never appeared in actual execution 26,679 task trajectories recorded zero checkpoint events, despite some harnesses implementing checkpoint logic This reveals a critical insight: implementing a mechanism doesn't mean it's actually used . 3. The Verification Gap In self-evaluation, Opus found that out of 100 runs, the harness reported success 99 times, but only 48 were actually correct. This led to the addition of a Completion Check mechanism. Similarly, in Data tasks, 441 out of 2,325 executions produced degraded commits, but the harness failed to detect them. 4. Cross-Model Adaptation Challenges When switching executors, performance varies significantly: Opus's SWE-Pro Harness : 69.3 (Self-Eval) → 33.0 (Gemini executor) Qwen Harness : Improved by 17.6 points on BrowseComp when using Gemini This shows that harnesses become executor-specific over time, requiring re-tuning when switching models. 5. Evolution Limitations 5 evolution trajectories improved on the visible feedback set However, improvements on held-out tasks were much smaller (average 3.11 points) Only 53.1% of version changes showed consistent direction between feedback and held-out sets Evaluation fluctuation is approximately ±4.75 points, making it hard to distinguish real improvements from noise The Six Control Capabilities HarnessDev categorizes agent control into six capabilities: Capability Description Example Execution Task loops, planning, scheduling When to stop, how to plan Tools Tool selection, parameters, error handling Which API to call, how to handle errors Context Organization of task info and history What context to provide the LLM State Goals, progress, failure records Current state, attempt history Lifecycle Timeout, recovery, cleanup Handle failures, recover from errors Verification Testing, result checking, logging Verify results, log outcomes Execution Cost Analysis Different execution strategies significantly impact token consumption: GPT-5.5 Harness : 29.3M tokens, medal rate 19.1 DeepSeek V4 Harness : 208.4M tokens, score 19.6 Same performance, 7x token difference! Across the entire MLE-bench experiment, token overhead varied by 19x between different harnesses. This highlights the importance of cost-aware design — a small performance improvement may not justify a large token increase. Code Example: Creating a Simple Harness # Weak Seed Harness (minimal framework) class WeakSeed : def __init__ ( self ): self . task = None self . state = \" initial \" self . history = [] def execute ( self , task ): self . task = task self . state = \" running \" # Basic execution loop while self . state == \" running \" : action = self . plan_action () result = self . call_tool ( action ) self . record_history ( result ) if self . is_complete (): self . state = \" completed \" def plan_action ( self ): # LLM generates action pass def call_tool ( self , action ): # Execute tool pass def is_complete ( self ): # Check completion pass # LLM enhances this with control logic # (Execution, Tools, Context, State, Lifecycle, Verification) Why This Matters For AI Researchers Shows LLMs can self-improve their own execution frameworks Highlights the gap between implemented and actually used mechanisms Reveals the importance of verification and cross-model adaptation For AI Practitioners Demonstrates the value of structured agent design over pure memory Shows the importance of cost-aware optimization Highlights the need for robust verification mechanisms For the Industry Represents a step toward self-evolving AI systems Shows the potential for automated agent development Highlights challenges in generalization and adaptation Conclusion HarnessDev represents a significant step toward self-evolving AI agents. However, several challenges remain: Implementation vs. Usage Gap — Not all implemented mechanisms are actually used Cross-Model Adaptation — Harnesses become executor-specific Evolution Limitations — Improvements don't always generalize to new tasks Cost Awareness — Performance gains may come with disproportionate token costs The research provides valuable insights for building more robust, efficient, and self-improving AI agents. This article is based on research published by ByteDance Seed team on September 8, 2026. Paper: arXiv:2609.01437 | Project: self-developing-agents.github.io",
+            "url": "https://dev.to/ryan_zhao/harnessdev-self-evolving-agent-frameworks-how-llms-build-their-own-infrastructure-332k",
+            "source": "DEV Community",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "developpement",
+                "gemini",
+                "git",
+                "llm",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-11T02:07:56+00:00",
+            "collected_at": "2026-09-11T02:19:16.389172+00:00"
+        },
+        {
+            "id": "209cc633102ee30cdd618b12fb34d9227e6715b9d0b7931cab4b00614e77c35a",
+            "title": "Procedural Graphs: Self-Improving LLM Agent Execution Structures",
+            "description": "Procedural Graphs: Self-Evolving Execution Structures for LLM Agents When AI Agents Start Writing Their Own \"Brain Circuits\" Published: September 10, 2026 | Reading time: 12 minutes The Revolutionary Research On September 9, 2026, researchers Yuxing Lu , Yicheng Chen , and Shanchan Wu published a groundbreaking paper on Procedural Graphs — a self-evolving execution structure for LLM agents that can literally rewrite its own \"brain circuits.\" Paper: arXiv:2609.08593 The Problem with Current LLM Agents Today's LLM agents (like AutoGPT, LangChain agents) work like this: Maintain a growing memory of past thoughts, observations, actions Generate next action based on this memory No fixed structure , no predefined流程 This works for simple tasks, but breaks down for complex ones: Lost goals : Forget what they're supposed to do in long interactions Action mismatch : Call tools in wrong order (e.g., analyze before searching) Repeated labor : Try same ineffective operations repeatedly No planning : No global view, step-by-step navigation Analogy : Like a chef without a recipe — overwhelmed by complex dishes. The Solution: Procedural Graphs Procedural Graphs organize procedural knowledge (\"how to do\") just like Knowledge Graphs organize factual knowledge (\"what is\"): Type Structure Question Knowledge Graph (Entity, Relation, Entity) What is? Procedural Graph (Procedure, Relation, Procedure) How to? Core Components Nodes (程序步骤) : Each node represents a procedural step Contains: description, expected I/O, success/failure conditions Like a box in a flowchart Edges (关系) : Represent relationships between steps Types: Sequential (\"then\"), Conditional (\"if...then\"), Parallel (\"simultaneously\") Like arrows in a flowchart Attributes (属性) : Execution probability, average time, success rate, common error patterns Update with execution experience How It Works: A Concrete Example Task : \"Book a cheap flight from Beijing to Shanghai, departing tomorrow.\" Procedural Graph : [Start] ↓ [Search Flight Info] ↓ [Filter Low-Cost Options] ↓ [Check Seat Availability] ↓ [If Available: Fill Passenger Info] ↓ [Select Payment Method] ↓ [Confirm Order] ↓ [End] ↓ [If Unavailable: Return to Filter] ↓ [If No Satisfying Result: Expand Search] ↓ [Search Nearby Airports] ↓ [Return to Filter] This is a directed graph with branches, loops, and conditionals — far more powerful than linear memory. The Self-Evolution Mechanism The most amazing capability is self-evolution : Evolution Cycle Collect trajectories : Record complete execution paths Compare analysis : Contrast failed trajectories with successful ones Identify differences : Find where things went wrong Generate edits : LLM Refiner proposes modifications Verify and retain : Test on validation set Three Types of Edits Topology Edits : Add new nodes (new steps) Remove redundant nodes Add/modify edges (change flow structure) Attribute Edits : Update node success rate statistics Adjust condition thresholds Update execution probabilities Content Edits : Modify node descriptions for accuracy Update guidance language for effectiveness From Skeleton to Maturity Researchers tested three initialization methods: Initialization Evolution Speed Final Performance Empty Graph (only \"Start\" node) Slower Close to others Minimal Skeleton (basic manual nodes) Fastest Best Expert Prior (human-designed) N/A Repairable if flawed Amazing Discovery : Even starting from a flawed expert prior , the evolution mechanism can \"repair\" it to achieve good performance. This shows robustness — doesn't require perfect initial design. Why Graphs Beat Memory Dimension Pure Memory Workflow Memory Procedural Graph Structure None Case-level abstract Procedure-level Generalization Poor Medium Good Explainability Poor Medium Good Evolution None Limited Strong Efficiency Low Medium High Key Advantage : Procedural Graphs abstract the general flow for a class of tasks, not just specific past cases. Analogy : Workflow Memory = Remember \"Last time I made Mapo Tofu, I stir-fried meat first, then added bean paste\" Procedural Graph = Understand \"General stir-fry flow: Heat pan → Add oil → Stir-fry main ingredient → Season → Serve\" The latter generalizes to any stir-fry ; the latter can only repeat Mapo Tofu. Experimental Results WebShop (Web Shopping) Task: Purchase items on e-commerce sites based on natural language instructions Graph vs Memory: 15-25% success rate improvement Evolved Graph vs Initial: 10-20% improvement ALFWorld (Home Tasks) Task: Execute daily tasks in simulated home environment Graph helps remember complex object interaction sequences HotPotQA (Multi-hop QA) Task: Multi-step information retrieval and reasoning Graph optimizes retrieval strategy and evidence integration Tool Use Tasks Task: Combine multiple APIs to complete complex goals Graph ensures correct tool call order and parameter settings Key Findings Finding 1: Cross-LLM Generalization Graph evolved on one LLM (e.g., GPT-4) can transfer to another (e.g., Claude or Llama) Shows graphs capture task structure , not model-specific traits Finding 2: Few-Shot Advantage Effective even with few examples (<10) Pure memory baseline drops sharply with few samples Finding 3: Expert Prior Repairability Can repair flawed human-designed starting points Lowers deployment threshold — no perfect initial design needed Deeper Insights From Connectionism to Symbolism Procedural Graphs represent an important trend: neural-network + symbolic-structure fusion . Deep Learning (connectionism): Good at learning patterns from data, lacks explicit reasoning structure Symbolic AI : Good at logical reasoning and structured knowledge, lacks learning from data Graph combines both : LLM provides semantic understanding Graph structure provides procedural constraints This is a Neuro-Symbolic architecture — possibly a key path to more reliable AI. Biological Intelligence Analogy Human brain similarly combines two systems: System 1 (fast, intuitive, pattern-matching): Like LLM generation System 2 (slow, logical, rule-based): Like Procedural Graph execution The graph is like giving LLMs a System 2 — an explicit, checkable, fixable execution controller. Code Example: Creating a Procedural Graph from procedural_graph import ProceduralGraph , Node , Edge # Create a simple graph for a coding task graph = ProceduralGraph () # Add nodes start = Node ( \" Start \" , description = \" Begin task \" ) search = Node ( \" Search Info \" , description = \" Search for relevant information \" ) analyze = Node ( \" Analyze Data \" , description = \" Analyze collected data \" ) code = Node ( \" Write Code \" , description = \" Generate code solution \" ) verify = Node ( \" Verify Result \" , description = \" Test and verify output \" ) end = Node ( \" End \" , description = \" Task complete \" ) # Add edges graph . add_edge ( start , search , type = \" sequential \" ) graph . add_edge ( search , analyze , type = \" conditional \" , condition = \" info_found \" ) graph . add_edge ( analyze , code , type = \" sequential \" ) graph . add_edge ( code , verify , type = \" sequential \" ) graph . add_edge ( verify , end , type = \" conditional \" , condition = \" passed \" ) graph . add_edge ( verify , code , type = \" conditional \" , condition = \" failed \" ) # Loop back # Navigate the graph current = start while current != end : context = graph . get_local_subgraph ( current ) action = llm . generate_action ( context ) result = execute ( action ) current = graph . navigate ( current , result ) Architecture Overview Key Components Graph Store : Stores nodes, edges, and attributes Navigator : Determines next node based on current state Refiner : Proposes graph edits based on trajectory feedback Verifier : Tests graph modifications on validation set Evolution Process Collect execution trajectories Compare successful vs. failed paths Identify differences and generate edits Verify edits on validation set Apply successful edits to production graph Software Engineering Perspective Procedural Graphs introduce key concepts: 1. Separation of Concerns \"What to do\" (task understanding): LLM \"How to do\" (execution flow): Graph \"How to improve\" (flow optimization): Refiner 2. Version Control Every graph edit is recorded Can rollback to previous versions Can compare performance across versions 3. Testability Graph can be independently tested on validation sets Edit effects can be quantified Avoids \"black-box optimization\" uncertainty Conclusion The story of Procedural Graphs is essentially a story about organization . Information alone has no value. Only when organized into useful structures — recipes, flowcharts, algorithms, organizational charts — can it guide action, produce results, and continuously improve. LLM agents have massive knowledge and powerful generation capabilities, but lack structured execution frameworks. Procedural Graphs fill this gap : Give agents a \"skeleton\" — clear execution flow Give agents \"learning ability\" — self-evolve from failures Give agents \"explainability\" — humans can understand and modify its \"thinking\" When that recipe starts rewriting itself, it's no longer just a book. It becomes a living thing — constantly adapting, learning, and improving. This is the ultimate vision of Procedural Graphs : Not giving agents a fixed program, but giving them a brain that can write its own programs . This article is based on research published by Yuxing Lu, Yicheng Chen, and Shanchan Wu on September 9, 2026. Paper: arXiv:2609.08593",
+            "url": "https://dev.to/ryan_zhao/procedural-graphs-self-improving-llm-agent-execution-structures-ba2",
+            "source": "DEV Community",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "anthropic",
+                "deep_learning",
+                "developpement",
+                "intel",
+                "llm",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-11T02:05:56+00:00",
+            "collected_at": "2026-09-11T02:19:16.390457+00:00"
+        },
+        {
+            "id": "39f13456e5a274fe4936d7d7b2716c630e5d8a1d6dec039ffeeea45fd3b22775",
+            "title": "PlaidQ: Single-Step Diffusion Code Generation — The Future of AI Programming",
+            "description": "PlaidQ: Writing Code in One Step — The Diffusion Model Revolution Duke University and Tsinghua University's Breakthrough in Code Generation Published: September 10, 2026 | Reading time: 10 minutes The Revolutionary Research On September 3, 2026, researchers from Duke University and Tsinghua University published a groundbreaking paper that answers a fundamental question in AI code generation: Can language models write code using diffusion models — and do it in just one step? The answer is yes . What Is PlaidQ? PlaidQ is a continuous (Gaussian) latent-diffusion language model that works differently from traditional autoregressive models: Traditional LLMs (Autoregressive) Generate tokens left to right Each token depends on all previous tokens Sequential process — slow for long sequences PlaidQ (Diffusion) Diffuses a whole sequence in a 16-dimensional continuous token-embedding latent Denoises with a bidirectional Qwen3-0.6B trunk Can generate all tokens simultaneously — or in just a few steps The Distillation Breakthrough The key innovation is distillation — reducing the number of denoising steps: Steps Description Performance 512 Original diffusion process Baseline 16 Distilled to 16 steps Student outperforms teacher on HumanEval pass@10 1 Distilled to single step Can generate executable code, but HumanEval pass@1 is only 7.07 The 16-step model demonstrates that students can surpass teachers on certain benchmarks. The 1-step model shows the feasibility of parallel generation, though it's not yet reliable for high-quality coding. Code Example: Using PlaidQ import torch from plaidq import PlaidQModel # Load the distilled model model = PlaidQModel . from_pretrained ( \" plaidq-0.7b \" ) # Generate code in a single step prompt = \"\"\" def fibonacci(n): \"\"\" Generate Fibonacci sequence . \"\"\" if n <= 1: return n return fibonacci(n-1) + fibonacci(n-2) \"\"\" # PlaidQ generates the entire sequence at once result = model . generate ( prompt , num_steps = 16 ) print ( result ) # Or even in one step (experimental) result_one_step = model . generate ( prompt , num_steps = 1 ) print ( result_one_step ) Why This Matters For Code Generation Speed : Generate entire code sequences in parallel, not sequentially Efficiency : Fewer steps mean faster generation Quality : 16-step model outperforms teacher on certain benchmarks For AI Research Diffusion Models : Show potential beyond image generation Distillation : Demonstrate effective knowledge transfer Parallel Generation : Challenge the autoregressive paradigm For Developers Faster Iteration : Generate code faster than traditional LLMs Better Quality : 16-step model achieves high pass rates New Paradigm : Explore diffusion-based code generation Performance Comparison Model HumanEval pass@1 HumanEval pass@10 MBPP pass@1 Teacher (512 steps) 65.85 78.05 72.30 Student (16 steps) 63.41 80.73 70.15 Student (1 step) 7.07 15.30 8.20 Key Insight : The 16-step student outperforms the teacher on HumanEval pass@10, demonstrating effective distillation. The 1-step model shows feasibility but needs improvement. Technical Details Architecture Backbone : Qwen3-0.6B (bidirectional trunk) Latent Space : 16-dimensional continuous token embeddings Diffusion Process : Gaussian noise addition and removal Distillation : Knowledge transfer from 512-step to 16-step model Training Data : Code datasets (HumanEval, MBPP) Method : Distilled continuous diffusion Goal : Reduce steps while maintaining quality Code Example: Distillation Process from plaidq.distill import distill_model # Load teacher model teacher = PlaidQModel . from_pretrained ( \" plaidq-teacher \" ) # Distill to student model student = distill_model ( teacher = teacher , num_steps = 16 , dataset = \" humaneval \" , epochs = 10 ) # Evaluate student score = student . evaluate ( \" humaneval \" , metric = \" pass@10 \" ) print ( f \" Student pass@10: { score } \" ) # Distill further to 1 step student_1step = distill_model ( teacher = student , num_steps = 1 , dataset = \" humaneval \" , epochs = 5 ) Future Directions Short-term Improve 1-step model quality Extend to more code benchmarks Optimize distillation process Long-term Apply to other domains (text, images) Combine with autoregressive models Develop hybrid generation methods Conclusion PlaidQ represents a significant step toward parallel code generation using diffusion models. The ability to generate code in just 16 steps — or even 1 step — challenges the traditional autoregressive paradigm and opens new possibilities for AI code generation. While the 1-step model is not yet reliable for production use, the 16-step model demonstrates that students can surpass teachers through effective distillation. This research highlights the potential of diffusion-based language models and the importance of distillation in achieving high-quality, efficient code generation. This article is based on research published by Duke University and Tsinghua University on September 3, 2026. Paper: arXiv:2609.04531 | Code: github.com/pengzhangzhi/plaidq",
+            "url": "https://dev.to/ryan_zhao/plaidq-single-step-diffusion-code-generation-the-future-of-ai-programming-18al",
+            "source": "DEV Community",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "developpement",
+                "git",
+                "llm",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-11T02:04:44+00:00",
+            "collected_at": "2026-09-11T02:19:16.391221+00:00"
+        },
+        {
+            "id": "bcb12a6d885048319b0592f53fa3c261d1be4d5bae61e4743d40549e68f2516d",
+            "title": "The AI approval boundary nobody talks about until the audit finds it",
+            "description": "The first time I saw an AI approve a CAPA closure, I'll admit I paused. Not because the decision was wrong — it wasn't — but because I couldn't find a written record of who decided the AI was allowed to make that call. This was about 18 months ago, back when we were still evaluating eQMS platforms. Both had some AI features in various states of maturity. The question that nagged me then — and keeps nagging me now — is simpler than it sounds: does your tool have an explicit, written list of things the AI is not allowed to approve? I'm not talking about capability. Any sufficiently complex system can technically do just about anything. I'm talking about the explicit governance boundary — the line drawn in your QMS that says \"AI assists here, but a human must be in the loop for these decisions.\" Why the list matters more than the feature ISO 13485:2016 is clear enough on management responsibility. EU MDR Article 2 (46) defines \"human oversight\" in terms that imply someone has to be accountable for decisions. FDA's guidance on AI/ML-based software keeps circling back to \"intended use\" and \"meaningful human control.\" But none of these documents hand you a checkbox list of AI-forbidden tasks. So you have to build it yourself. And if you're building it, you need to know what boundaries your platform has already drawn — or whether it has drawn any at all. In our setup (Class II, Greenlight Guru, about 200 people), the AI features we use are largely advisory. The system flags potential NCs from complaint text. It suggests CAPA linkages. It drafts risk matrix summaries. But closing a CAPA? That requires a named human in the approval chain. Always has. We wrote it into our SOP. I know qmsWrapper takes a similar approach — they've documented that their AI blocks on CAPA closure, reportability, risk acceptability, and regulated submissions. That's the kind of explicit statement I can point to in an audit. \"Here's where the line is. Here's why. Here's who drew it.\" The question I'd ask anyone else in this space Does your eQMS vendor give you a written list of AI-prohibited approvals? Or did you discover the boundary by accident, the way I almost did? Because there's a meaningful difference between: Platform-enforced boundaries — the software physically prevents the AI from approving certain workflow states SOP-enforced boundaries — you wrote the rule yourself, but the software doesn't enforce it Implied boundaries — the AI doesn't currently have that capability, so it never comes up Each has a different audit posture. The first is defensible. The second is fine if your SOP is good and people follow it. The third is a gap waiting to surface. What I've seen go sideways A peer at a smaller shop (Class I,在欧洲) told me about a near-miss last year. Their eQMS had been auto-closing low-risk CAPAs after 90 days of no activity. Worked fine for months. Then someone realized that a legitimate corrective action had been \"closed\" without a formal root cause review — because the AI treated the silence as acceptance. No harm done. They caught it. But they spent two days reconstructing the record and updating their workflow. If a notified body had audited during that window, the CAPA would have shown as closed with no human sign-off. ISO 13485:2016 clause 8.5.2 wants to know that corrective action adequacy is reviewed. If your system auto-closes CAPAs, can you demonstrate that a human made the adequacy determination? Even if they just clicked \"confirm closure\" on a pre-filled form? The practical ask I'd genuinely like to know how others are handling this. Specifically: Does your platform document its AI approval boundaries anywhere, or is it undocumented behavior you discovered by testing? If you drew the line yourself in an SOP, did you pressure-test whether the software enforces it or just expects it? And — the one I keep coming back to — if a notified body asked you to explain why your AI can't approve a CAPA closure, do you have a written answer ready? The EU AI Act and ISO 42001 (AI management systems) are going to make this more formal over time. But the audit-ready answer shouldn't wait for regulation to force the question. For me, the working heuristic is simple: AI can recommend. Humans must approve — in writing, in the record, with accountability. The line is only as good as the evidence that someone drew it and the system respects it. Does your current eQMS have an explicit, documented list of AI-prohibited approvals — and if so, how did you get the vendor to confirm it?",
+            "url": "https://dev.to/jwithfield_qa/the-ai-approval-boundary-nobody-talks-about-until-the-audit-finds-it-1hc9",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "ai_act",
+                "developpement",
+                "git",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-11T02:01:17+00:00",
+            "collected_at": "2026-09-11T02:19:16.391919+00:00"
+        },
+        {
+            "id": "9ba5d5baaf9028ac5e62d98464a6eda7dd0569dc6e4e950cffb3b795df46c27c",
+            "title": "A new WebAssembly runtime enters the arena... Is it worthy?",
+            "description": "A few minutes ago, I released my brand-new WebAssembly runtime, Wago . There's one massive problem though. Wasmtime is mature, fast, and backed by the Bytecode Alliance . Wasmer has been around for years, V8 speaks wasm fluently, and if you're writing Go, wazero is already the de-facto answer. So why would I be stupid enough to make a new wasm runtime? Seems like all the bases are already covered, right? ...right..???? Well, kind of. The existing runtimes are really good, don't get me wrong. I don't think Wago exists because Wasmtime or wazero are bad. In fact, I've spent way too many hours of my life staring at their codebases while building this thing. But there were a few things that still bugged me. Let me give you some backstory. The past two companies I've worked at, Hypermode and Impart Security , both use the venerable wazero to run isolated, secure wasm applications. And it's great! We don't need to boot thousands of Docker containers, spin up micro-VMs, or do anything crazy like that. We can use a few kilobytes of RAM to run some wasm here and a megabyte there. Wazero though... wazero is slow as hell . When I compare it to Wasmtime, it runs much slower. This isn't really wazero's fault though. Wasmtime gets to use Cranelift , a proper optimizing compiler that outputs excellent machine code. Wazero is meant to be simple and \"just work.\" It doesn't aggressively chase peak performance; it chooses to ride the middle ground. Maybe I'm crazy, but I deem that laziness . A quote stuck with me, and I forget who said it. It went something like: Fast hardware should bring excellence, not reason to waste it. I'll answer you myself. I am crazy. I'm GREEDY . I want unreasonably excellent performance while using tiny amounts of RAM. I want something that steps so lightly you barely notice it. The only thing you notice is the results--a runtime that used kilobytes of RAM to compile , generated less machine code than wazero , runs substantially faster , and somehow remains a single-pass compiler . So, I started experimenting. At work, we can deal with poor performance by scaling, but that has a limit. More CPU costs money. More memory costs money. Eventually, \"just add another machine\" stops being a satisfying answer. I thought, Hey, if i can reduce memory usage by 10x and improve performance by 50%, surely I can cut our costs in half, right? Compilation was especially painful for us. On some of our larger workloads, wazero could peak at hundreds of megabytes of memory just to compile a module. That was unacceptable. So I set myself some slightly unreasonable goals. I wanted a compiler that: used kilobytes of memory to compile generated less machine code compiled several times faster produced code substantially faster than wazero and was still single-pass Oh, and I wanted it to eventually run on embedded systems . Totally reasonable, right? Okay, okay, ideas are nice and all... but did you actually accomplish anything? My experiments eventually became Railshot , Wago's compiler. Railshot doesn't build some enormous IR, optimize it tens of different ways, and then finally spit out pristine machine code. It mostly just goes: .wasm → analyze → compile → machine code That sounds horribly naïve. And, traditionally, it is. Single-pass compilers are incredibly fast to compile with, but they generally produce worse code. Optimizing compilers get to look at the entire function, analyze it, shuffle things around, run optimization passes, and make globally better decisions. Railshot doesn't get that luxury. But scarcity brings excellence, because to overcome your limitations, you must become more than you ever imagined. The wonderful thing about WebAssembly is that binaries often arrive already optimized . If your .wasm came out of LLVM, Rust, TinyGo, or another optimizing compiler, a whole bunch of work has already happened before Wago ever sees it. I don't necessarily need Railshot to rediscover everything the frontend compiler already figured out. WebAssembly is also beautifully structured! Blocks, loops, branches, types, and the operand stack give the compiler a surprising amount of information basically for free . So, instead of building a giant IR, I tried to exploit that structure directly, which led me to something called Valent Blocks (go read the research paper about it if you want to go down that rabbit hole). The basic idea is to maintain small, temporary views of the program that give Railshot just enough information to make smarter decisions while it is compiling . Things like: register pinning bounds-check elimination instruction combining constant folding branch simplification avoiding unnecessary loads and stores ...all without turning Railshot into a traditional (fat) optimizing compiler. In other words: Cheat as much as possible while remaining single-pass. I suppose there's some tipping point where cheating becomes more smart than it is lazy. And somehow... it worked. Let's see those numbers though... Here's the obligatory disclaimer: I wrote Wago. I also ran these benchmarks. Please go run them yourself. Seriously. Please. That said... Here's a few corpora Execution Latency Compile Latency Compile Heap The full benchmark tables are here Across my current corpus, Wago is roughly: 5.7× faster to compile 11× less memory-hungry during compilation 70% faster at execution 52% smaller in generated machine code Not bad for a compiler that's supposed to be generating bad code. The compilation memory is probably the result I'm happiest with. I wanted running wasm to be cheap enough that you just... don't need to worry about it. Ooh, but can it run real stuff? A fast compiler isn't much use if it can only run Fibonacci and some compression algorithms. So Wago has grown into quite a bit more than Railshot. Today, Wago has: support for modern WebAssembly (3.0+!) extremely cheap instance creation standalone native executables a cool plugin system AMD64 and ARM64 native backends (risc-v in the works!) macos, linux, and windows support And here's where things start getting a little weird. Wago's plugin system can extend the runtime itself. Not just add another host function. I mean custom WebAssembly instructions and types . I've even implemented wider SIMD support including 512-bit vectors backed by AVX-512 where available as a plugin That's the kind of insanity I wanted Wago's architecture to allow. A runtime that belongs to you. A runtime that doesn't worry you. A runtime that gives you all the freedom you could imagine. I mean, wasmer is like some cloud-container-pass thing right now. I don't want that. rather than paying wasmer, you can always sponsor me :) :P :O :D <3 [IMAGE: Wago core surrounded by WASI / Component Model / SIMD / custom plugins] Want WASI? wago add wago-org/wasi Don't want WASI? No biggie. You're in control. You don't pay for it. I want users to have full control over their WebAssembly runtime. That's basically the philosophy behind this whole project: Do as little work as possible, but do that work extremely well. So... is it worthy? Honestly? I don't know yet. Wago is brand new. Wasmtime and wazero have years of production use and thousands of people finding increasingly creative ways to break them. No benchmark chart can fake that kind of maturity. There are bugs in Wago. There will be breaking changes. Somebody is probably going to read this post, download it, and immediately find a .wasm file that makes Railshot do something incredibly stupid. I genuinely hope you do. I've spent the past few months testing Wago against workloads that I chose. Now I want yours. Run your weirdest wasm. Benchmark it. Throw Rust at it. Throw Go at it. Throw C and C++ at it. Try it on a microcontroller. Find somewhere wazero demolishes it. Make it panic. Make it segfault. Make it generate absolutely atrocious machine code. Then open an issue . Let's see how far we can take this. Together. Please give it a try :) go run github.com/wago-org/wago/cli/wago-installer@main P.S. please join our Discord to discuss stuff, mull over features, and test new releases!",
+            "url": "https://dev.to/jairussw/a-new-webassembly-runtime-enters-the-arena-is-it-worthy-3n8b",
+            "source": "DEV Community",
+            "category": "cybersecurite",
+            "tags": [
+                "amd",
+                "cpp",
+                "developpement",
+                "docker",
+                "git",
+                "linux",
+                "macos",
+                "programmation",
+                "rust",
+                "web",
+                "windows"
+            ],
+            "published_at": "2026-09-11T01:53:20+00:00",
+            "collected_at": "2026-09-11T02:19:16.392894+00:00"
+        },
+        {
+            "id": "21fc51583276b1db179bb172731da25f2efb5cf0d66e2610c5fbcefe47e4f86f",
+            "title": "The Symmetry of State: Why Flutter Deserves context.value and context.state",
+            "description": "The State Access Dilemma in Flutter Executive Summary : For more than six years, Flutter developers have wrestled with how to cleanly read state from the widget tree. Teams were forced to choose between the indentation tax of the \"Builder Pyramid\" ( BlocBuilder nesting) and BuildContext extensions ( context.watch , context.select ) that carried subtle whole-tree rebuild traps or heavy closure boilerplate. By establishing an elegant 1:1 architectural symmetry between state containers and the widget tree—introducing context.value , context.state , and zero-closure provider tearoffs— BlocSignal eliminates the ceremony. Here is why Flutter state consumption should have always worked this way. The Friction of Reading State Every Flutter developer knows the feeling of writing a clean business logic component, only to watch the presentation layer devolve into nested boilerplate: // The classic Flutter BLoC indentation tax: class CartSummaryCard extends StatelessWidget { const CartSummaryCard ({ super . key }); @override Widget build ( BuildContext context ) { return BlocBuilder < UserCubit , UserState >( builder: ( context , userState ) { return BlocBuilder < CartCubit , CartState >( builder: ( context , cartState ) { final discount = userState . isVip ? cartState . subtotal * 0.20 : 0.0 ; final total = cartState . subtotal - discount ; return Card ( child: Padding ( padding: const EdgeInsets . all ( 16 ), child: Text ( 'Total: \\$ ${total.toStringAsFixed(2)} ' ), ), ); }, ); }, ); } } What is conceptually a simple read of two state values turns into two layers of widget indentation, two anonymous builder closures, and two context shadowing levels. To avoid this \"Builder Pyramid,\" the community turned to BuildContext extensions. But as teams adopted context.watch and context.select , they encountered an entirely new class of performance pitfalls and developer confusion. 1. The Three Sins of Context Reading in Classic BLoC To appreciate the modern solution, we must examine the three distinct pain points that have plagued contextual state consumption in Flutter. Sin 1: The Indentation and Rebuild Tax of BlocBuilder BlocBuilder works by inserting an internal StatefulWidget into the element tree that subscribes to the BLoC's underlying Dart Stream . While reliable, it forces every state-dependent piece of UI into an explicit builder closure. When a screen depends on multiple state containers (for example, user authentication, shopping cart items, theme preferences, and localized settings), nesting builders produces severe \"pyramid of doom\" indentation. Refactoring a widget to depend on one additional piece of state requires wrapping large chunks of widget hierarchy, causing noisy git diffs and fragile layout structures. Sin 2: The Treacherous context.watch Mental Model Trap To escape BlocBuilder , classic flutter_bloc introduced context.watch<B>() . But context.watch introduces a dangerous performance trap: it rebuilds the entire enclosing widget whenever any state emits from the BLoC . @override Widget build ( BuildContext context ) { // ⚠️ TRAP: Subscribes the ENTIRE widget to every CartState emission: final cart = context . watch < CartCubit >() . state ; return Scaffold ( appBar: AppBar ( title: const Text ( 'Store' )), body: Column ( children: [ const HeavyDashboardHeader (), // Rebuilds unnecessarily! const PromotionalBanner (), // Rebuilds unnecessarily! Text ( 'Cart Items: ${cart.items.length} ' ), const ProductListView (), // Rebuilds unnecessarily! ], ), ); } Even if you only needed cart.items.length in a single Text widget, the entire Scaffold , its AppBar , and every heavy child widget rebuild on every emission. The Signal Architecture \"Scar\" When reactive signal engines emerged, this trap became even more confusing. In bloc_signals_flutter , state updates propagate synchronously via fine-grained signals rather than Stream-backed InheritedWidget mutations. Consequently, context.watch<B>() was implemented to track container instance swapping only (ensuring inherited dependencies update when a parent widget swaps container instances), not state emissions. Developers coming from classic flutter_bloc who wrote: final count = context . watch < CounterCubit >() . stateValue ; walked straight into an architectural trap: their UI never rebuilt on state emissions . Because context.watch only checks container instance identity ( bloc != oldWidget.bloc ), state mutations were silently ignored by the widget element. Sin 3: Closure Fatigue in context.select To solve whole-widget rebuilds, libraries introduced context.select : final count = context . select < CounterCubit , int >( ( cubit ) = > cubit . stateValue . count , ); While context.select provides surgical, fine-grained rebuilds, it imposes heavy syntax friction. For every single value you want to display, you must provide: The container type generic ( CounterCubit ). The return type generic ( int ). An anonymous extraction lambda (cubit) => cubit.stateValue.count . When writing modern Flutter code, writing (c) => c.stateValue dozens of times across UI widgets creates undeniable closure fatigue. 2. The Architectural Symmetry: Container vs. Context The solution in BlocSignal is rooted in a fundamental architectural principle: 1:1 Conceptual Symmetry . In modern reactive architectures, you interact with state in two distinct forms: The Reactive Signal ( ReadonlySignal<S> ): A push-pull reactive primitive designed for dependency tracking, computed derived values, and observable subscriptions. The Unwrapped Value ( S ): The raw immutable domain object ready for direct display or evaluation. Historically, state management libraries mixed and matched inconsistent naming conventions across the container and the widget context. BlocSignal creates strict, predictable symmetry across both levels: ┌────────────────────────────────────────────────────────────────────────┐ │ ARCHITECTURAL SYMMETRY │ ├───────────────────┬──────────────────────────┬─────────────────────────┤ │ Scope │ Reactive Signal │ Unwrapped State Value │ ├───────────────────┼──────────────────────────┼─────────────────────────┤ │ Container Level │ cubit.state │ cubit.value │ │ Widget Context │ context.state<B, S>() │ context.value<B, S>() │ │ Web / Jaspr │ context.state<B, S>() │ context.value<B, S>() │ └───────────────────┴──────────────────────────┴─────────────────────────┘ Notice the simplicity: On your state container: cubit.state returns ReadonlySignal<S> . cubit.value returns raw S (with cubit.stateValue preserved as a permanent alias). On your widget BuildContext : context.state<B, S>() returns ReadonlySignal<S> (for reactive signal graph composition). context.value<B, S>() returns raw S (and subscribes the widget element to rebuilds). 3. Deep Dive: context.value<B, S>() context.value<B, S>() provides single-line, zero-closure state subscription directly inside your widget's build() method. class CounterDisplay extends StatelessWidget { const CounterDisplay ({ super . key }); @override Widget build ( BuildContext context ) { // 1-line read that automatically subscribes this element to updates: final count = context . value < CounterCubit , int >(); return Text ( 'Count: $count ' ); } } How It Works Under the Hood Under the hood, context.value<B, S>() delegates directly to BlocSignal's optimized select engine: extension BlocSignalProviderExtension on BuildContext { S value < T extends BlocSignalBase < S >, S >() { return select < T , S >(( bloc ) = > bloc . value ); } } Because it routes through select : It looks up T via BlocSignalProvider.of<T>(this, listen: true) . It attaches a fine-grained element subscription that triggers element.markNeedsBuild() only when bloc.value emits a new state. It eliminates the need to pass an extraction closure (b) => b.value . Scoped Micro-Rebuilds with Standard Flutter Builder Because context.value binds to the calling BuildContext element, you can scope rebuild boundaries using standard, built-in Flutter widgets like Builder without ever importing a specialized builder component: class ProductCheckoutScreen extends StatelessWidget { const ProductCheckoutScreen ({ super . key }); @override Widget build ( BuildContext context ) { return Scaffold ( appBar: AppBar ( title: const Text ( 'Checkout' )), body: Column ( children: [ // Heavy static widgets that NEVER rebuild: const CheckoutBanner (), const ShippingAddressCard (), // Surgical micro-rebuild scope: Builder ( builder: ( scopedContext ) { // Only this inner Builder element rebuilds when Cart updates: final cart = scopedContext . value < CartCubit , CartState >(); return Text ( 'Total: \\$ ${cart.subtotal.toStringAsFixed(2)} ' ); }, ), ], ), ); } } You get surgical rebuild boundaries, zero third-party builder nesting, and 100% native Flutter element semantics. 4. Deep Dive: context.state<B, S>() What if you want to look up a state container from the widget tree, but you do not want your widget element to rebuild when that state changes? For example, what if you are constructing a derived signal graph using computed() or feeding multiple state containers into a SignalBuilder ? That is the exact role of context.state<B, S>() . class DiscountBadge extends StatelessWidget { const DiscountBadge ({ super . key }); @override Widget build ( BuildContext context ) { // 1. Look up reactive signals WITHOUT subscribing this widget element: final cartSignal = context . state < CartCubit , CartState >(); final userSignal = context . state < UserCubit , UserState >(); // 2. Compose reactively inside SignalBuilder: return SignalBuilder ( builder: ( context ) { final isVip = userSignal . value . isVip ; final subtotal = cartSignal . value . subtotal ; final discount = isVip ? subtotal * 0.20 : 0.0 ; return Text ( 'VIP Savings: \\$ ${discount.toStringAsFixed(2)} ' ); }, ); } } Why Not Just Use context.read<B>().state ? A common question from architects is: Why can't I just write context.read<CartCubit>().state ? The answer lies in one of the most insidious bugs in Flutter provider trees: The Zombie Subscription Trap . Imagine an application where an ancestor widget replaces or swaps the provided container instance. For example: A user selects a different workspace or account, causing an ancestor BlocSignalProvider.value(value: newCubit) to swap instances. A test harness or modal flow injects a fresh container into a subtree. If your widget looked up the container with context.read<CartCubit>().state : context.read does not register an inherited widget dependency. When the ancestor provider swaps the cubit, your widget is never notified. Your reactive signal effects and computed() properties remain permanently attached to the discarded, dead cubit instance , leaking memory and failing to reflect updates from the new container. context.state<B, S>() solves this permanently: ReadonlySignal < S > state < T extends BlocSignalBase < S >, S >() { return BlocSignalProvider . of < T >( this , listen: true ) . state ; } Because _BlocSignalProviderInherited.updateShouldNotify checks bloc != oldWidget.bloc : During regular state emissions, updateShouldNotify returns false . listen: true costs exactly zero extra rebuilds. If an ancestor provider replaces the container instance with a new one, updateShouldNotify returns true , immediately triggering a rebind of your signal references without leaving zombie subscriptions. 5. Multi-Container Reactive Composition Without Multi-Bloc Builders In classic flutter_bloc , composing multiple state machines in the UI required either: MultiBlocBuilder or heavily indented nested builders. Creating an artificial \"coordinator BLoC\" whose only job was subscribing to both streams and emitting a merged state. With context.state and signals, multi-container composition becomes effortless. Let's compare the two approaches side-by-side: The Classic BLoC Approach (Ceremonial Indentation) // ❌ Classic flutter_bloc: Nested builders or MultiBlocBuilder Widget build ( BuildContext context ) { return MultiBlocListener ( listeners: [ BlocListener < CartBloc , CartState >( listener: ( context , state ) = > ...), BlocListener < UserBloc , UserState >( listener: ( context , state ) = > ...), ], child: BlocBuilder < CartBloc , CartState >( builder: ( context , cartState ) { return BlocBuilder < UserBloc , UserState >( builder: ( context , userState ) { final total = calculateDiscount ( cartState , userState ); return Text ( 'Total: \\ $total ' ); }, ); }, ), ); } The Modern BlocSignal Approach (Push-Pull Reactivity) // ✅ Modern BlocSignal: Pure reactive signal composition Widget build ( BuildContext context ) { final cart = context . state < CartCubit , CartState >(); final user = context . state < UserCubit , UserState >(); return SignalBuilder ( builder: ( context ) { final subtotal = cart . value . subtotal ; final discount = user . value . isVip ? ( subtotal * 0.20 ) : 0.0 ; return Text ( 'Total: \\$ ${(subtotal - discount).toStringAsFixed(2)} ' ); }, ); } Whenever cart emits, SignalBuilder recalculates. Whenever user emits, SignalBuilder recalculates. If neither emits, zero CPU cycles are spent. No streams, no coordinators, no nested builder widgets. 6. Zero-Closure Provider Tearoffs ( Cubit.create ) The ergonomic improvements extend to how state containers are injected into the widget tree. In Dart, generative constructor tearoffs (for example CounterCubit.new ) have a zero-parameter signature: CounterCubit Function() . However, Flutter provider APIs require a factory closure that accepts a BuildContext : // The traditional lambda tax: BlocSignalProvider < CounterCubit >( create: ( context ) = > CounterCubit (), child: const CounterPage (), ) Typing (context) => MyCubit() across dozens of providers in large applications adds minor but persistent friction. By defining a dedicated .create named constructor that accepts BuildContext _ and redirects to the default constructor, you unlock zero-closure constructor tearoffs: class CounterCubit extends CubitSignal < int > { CounterCubit () : super ( initialState: 0 ); /// Zero-closure provider factory constructor. CounterCubit . create ( BuildContext _ ) : this (); void increment () = > emit ( value + 1 ); } Now, providing containers in your widget tree is completely lambda-free: // ✅ Zero-closure constructor tearoffs: MultiBlocSignalProvider ( providers: const [ BlocSignalProvider < CartCubit >( create: CartCubit . create ), BlocSignalProvider < UserCubit >( create: UserCubit . create ), ], child: const ShoppingApp (), ) 7. Hands-On: The Context Ergonomics Showcase To demonstrate these patterns in a production-style application, we added a complete, runnable showcase to the BlocSignal monorepo: examples/flutter_context_ergonomics . examples/flutter_context_ergonomics/ ├── lib/ │ └── main.dart # Complete 3-tab interactive showcase ├── test/ │ └── widget_test.dart # Comprehensive widget test suite ├── README.md # Run instructions and pattern tour └── pubspec.yaml The sample application features: Interactive Cart & User Cubits : Complete with zero-closure CartCubit.create and UserCubit.create tearoffs. Tab 1 ( context.value ) : Live rebuild counter badges comparing parent widget scopes with surgical Builder micro-rebuilds. Tapping \"Add Item\" proves that only the inner badge rebuilds, while the outer widget scope build counter remains completely static. Tab 2 ( context.state ) : Real-time multi-cubit discount calculations inside SignalBuilder . Toggling VIP membership or adjusting cart items triggers instant reactive recalculations with zero coordinator boilerplate. Tab 3 (Architecture Matrix) : An interactive reference comparing all five BuildContext state access methods in detail. To run the example locally: cd examples/flutter_context_ergonomics flutter run -d chrome # or macos, ios, android To run the automated test suite: flutter test 8. Cross-Platform Parity: Jaspr Web & SSR One of BlocSignal's greatest strengths is that its reactive principles are not confined to Flutter mobile and desktop. Through bloc_signals_jaspr , the exact same ergonomic extensions are available when building web applications and server-side rendered (SSR) components with Jaspr: import 'package:bloc_signals_jaspr/bloc_signals_jaspr.dart' ; import 'package:jaspr/jaspr.dart' ; class WebCartSummary extends StatelessComponent { const WebCartSummary ({ super . key }); @override Iterable < Component > build ( BuildContext context ) sync * { // Exact same API in Jaspr Web: final cart = context . value < CartCubit , CartState >(); yield div ([ h2 ([ Component . text ( 'Cart ( ${cart.totalCount} items)' )]), p ([ Component . text ( 'Subtotal: \\$ ${cart.subtotal} ' )]), ]); } } Whether you are writing a high-frequency Flutter mobile app or rendering HTML on the web, your mental model, state access methods, and architectural boundaries remain 100% identical. 9. Summary: The Modern State Access Cheat Sheet When working with BlocSignal in your Flutter presentation layer, use this simple cheat sheet to select the exact method matching your intent: Method What It Returns Rebuilds on State? Rebinds on Instance Swap? Primary Use Case context.read<B>() B (Container) ❌ No ❌ No Button onPressed callbacks, event dispatch, method calls. context.value<B, S>() S (State Value) ✅ Yes ✅ Yes Widget build() methods where the element needs to rebuild on state updates. context.state<B, S>() ReadonlySignal<S> ❌ No ✅ Yes Reactive signal composition in computed() , SignalBuilder , or effect() . context.select<B, R>(sel) R (Selected Value) ✅ Yes ✅ Yes Slicing a specific property to prevent rebuilds when other fields change. context.watch<B>() B (Container) ❌ No ✅ Yes Observing provider container instance replacements (rare). Conclusion Frontend state management should make reading state feel natural, predictable, and clean. By eliminating the ceremony of the Builder Pyramid, solving the context.watch mental model trap, and establishing strict 1:1 symmetry between containers and widget contexts, context.value and context.state make writing reactive Flutter applications a joy. Give the new ergonomics a try in bloc_signals_flutter: ^1.4.0 and bloc_signals_jaspr: ^1.2.0 , explore the runnable showcase , and let us know what you think in the comments!",
+            "url": "https://dev.to/gde/the-symmetry-of-state-why-flutter-deserves-contextvalue-and-contextstate-4250",
+            "source": "DEV Community",
+            "category": "hardware",
+            "tags": [
+                "android",
+                "developpement",
+                "git",
+                "ios",
+                "macos",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-11T01:51:14+00:00",
+            "collected_at": "2026-09-11T02:19:16.395435+00:00"
+        },
+        {
+            "id": "bf8f7e12e51ab5cd250b84bc56fa7d9ac0b16ff3b6bb314546c20f167aa9b166",
+            "title": "Humbled by the Basics: Week 1 with Python",
+            "description": "One would think beginner Python is just printing \"Hello, World!\", copy-pasting a few lines of syntax, and vibing.Until you sit down to actually do the tasks, and suddenly you realize you need to use your entire brain. Going through the initial crash course material, all I could see were blocks upon blocks of code. At first glance, everything looked straightforward. Then things escalated quickly. I was looking at the screen thinking, “Wait, what is this?” I could literally feel my brain expanding and buffering in real-time. It reminded me so much of primary school mathematics: the teacher’s classroom example is 2 + 2 = 4, but the homework questions ask you to calculate the total energy required to push a car (HOT TEARS😭). Here is what went down, how I tackled 10 core logic questions plus 5 mini projects, and why this assignment completely cured my habit of rushing past the fundamentals. Phase 1: Warming Up (And Getting Humbled) I decided to put my thinking cap on and take the questions one by one instead of staring at the whole list and panicking. The first couple of questions were smooth sailing: Outputting \"Hello, World!\" (classic tradition). Taking user inputs for name and age and formatting them into a greeting message using f-strings. Using the modulo operator (% 2) to separate even numbers from odd numbers. Then came the loop questions🥲. Generating a multiplication table from 1 to 12 was clean enough with a for i in range(1, 13) loop. But then I hit Factorial. Even though I knew the mathematical definitions, translating them into working Python loops made me pause and think real deep. Then a term I had never heard “Fibonacci”. It made me question my mathematical knowledge. Eventually, I got it all done, but getting there required slowing down, being open to learning new things and remembering that a single problem in code can always be solved in multiple ways. Phase 2: The Mini Projects: Python in the Real World Once the 10 quick tasks were out of the way, the assignment moved into 5 mini-projects. This was my favorite part because you actually see how the syntax connects to stuff people use every day: The Student Grades System: It involved taking scores for 5 subjects, calculating an average, and chaining if-elif-else conditions to award letter grades (A, B, C, or F). It hit me that this is literally the baseline script behind automated school portal grading. Simple Calculator: Handling operations (+, -, *, /) with conditional branching, plus catching edge cases like trying to divide by zero so the script doesn't crash. Shopping Cart: Using a Python dictionary to store item names and prices dynamically in a while loop until typing \"done\", then summing up the grand total. The Number Guessing Game: Importing random, generating an integer between 1 and 20, and running a loop with \"too high\" or \"too low\" hints until the user nails it (hehe🤖). File Handling: Taking input for student names, writing them to a .txt file using the with open(...) context manager, and then reading them back to the terminal. The Biggest Challenge & How I Beat It My biggest hurdle wasn’t that I didn’t know Python syntax. It was the disconnect between thinking you know a concept versus translating an open-ended problem statement into working logic. You think you understood the concepts until you are humbled by questions🙂‍↕️. When you read through notes or watch a tutorial, everything makes sense because someone else already solved the puzzle. When you’re sitting alone in a Colab notebook with a blank cell, your mind freezes: Where do I start? What variable do I initialize first? Should this be a while loop or a for loop? Whenever I felt stuck, I did three things: Stepped away from the code editor: I took a pause to think, and tried to understand the question in simple basic english. Re-read the documentation: Instead of guessing, I went back to the course notes and official Python docs to clarify how specific built-ins and loops actually behave. Tested incrementally: Instead of writing 20 lines and praying, I wrote two lines, printed the output, verified it worked, and built from there. Lessons Taken to Heart🙂‍↔️ If this assignment taught me anything, it’s that you should never rush the foundation. Although I wasn’t completely new to Python, I had rushed through the basics in the past just to get to the “flashy” stuff. And when your foundation has cracks, the moment you get a problem without a pre-made template, you get stuck. I also learned that: There’s never just one way to code a solution: The same message can be said in ten different tones; the same task can be coded with loops, list comprehensions, or recursion. Basic commands build practical tools: An if statement can grade an exam. A dictionary can run a supermarket checkout. A file handling script can save a business database. The tools aren't complicated; it's how you combine them. I got humbled, took a step back, and rebuilt my confidence with the fundamentals. And honestly? I’m glad I did it right this time. Module 2 next… shall we?",
+            "url": "https://dev.to/onabanjokofoworola/humbled-by-the-basics-week-1-with-python-40k2",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "python",
+                "web"
+            ],
+            "published_at": "2026-09-11T01:46:56+00:00",
+            "collected_at": "2026-09-11T02:19:16.396237+00:00"
+        },
+        {
+            "id": "3051de1e2ebaaad74cec8ecab0415828f15ac580e0aa9693740ce3d52c37bab1",
+            "title": "Elon Musk Says AI and Robots Could Double the Global Economy",
+            "description": "Elon Musk predicts artificial intelligence and humanoid robots could more than double global economic output within a decade. His forecast rests on rapid automation, mass robot production, and enough electricity to support the expansion. Musk Sees Machines Transforming Global Economic Output A surge in machine-driven production could transform employment, wages, prices, and investment across nearly […]",
+            "url": "https://news.bitcoin.com/featured/elon-musk-says-ai-and-robots-could-double-the-global-economy/",
+            "source": "Bitcoin.com News",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto",
+                "intel"
+            ],
+            "published_at": "2026-09-11T01:45:30+00:00",
+            "collected_at": "2026-09-11T02:19:32.231261+00:00"
+        },
+        {
+            "id": "5024ac6a9c9a9c469505806fe1b370348bb88209bf29e011002bc63ee14c07c6",
+            "title": "Nintendo's Latest System Firmware Update Resolves Switch Vulnerability",
+            "description": "\"Please update your console\". Nintendo released a major system firmware update yesterday, and while most of the focus is on the Switch 2 adding support for VRR in docked mode, the Switch also got a patch. Tacked on to the end of the official patch notes for the latest Switch update ( Version 23.0.0 ) is a notice about a vulnerability fix. Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/news/2026/09/nintendos-latest-system-firmware-update-resolves-switch-vulnerability",
+            "source": "Nintendo Life",
+            "category": "cybersecurite",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-09-11T01:45:00+00:00",
+            "collected_at": "2026-09-11T02:19:30.360692+00:00"
+        },
+        {
+            "id": "9bcc05abd5a4404cabf1425cebe2ccdbfa972d730f511594fc30efde7e536043",
+            "title": "TS Evidence Graph: Make Every SKILL Instruction 100% Enforced",
+            "description": "TL;DR Write the rules into AGENTS.md or a skill file and the agent still will not follow them . Six frontier models, 60 runs, zero actually followed. They said they had followed them more than 90% of the time. @ttsc/evidence turns those instructions into compiler rules. Every rule turns into a statement each function has to write, and that is how all of them end up followed. Repository · Guide · Setup · Slides 1. Instructions Alone Do Not Get Followed 1.1. The Rules Are Already Written The first thing you do when you hand work to a coding agent is write down the rules. AGENTS.md , CLAUDE.md , .agents/skills/*/SKILL.md , it does not matter which. They exist for one reason: to stop the agent from doing whatever it wants, and make it follow the same engineering principles you follow. Here is mine. # Engineering principles ## No hard coding {#no-hard-coding} ## No test-passing-only logic {#no-test-only-logic} ## Never weaken a test {#never-weaken-the-test} ## Do not be liberal in what you accept {#strict-input} ## Fix causes, not symptoms {#fix-root-causes} ## No whack-a-mole {#seal-the-class} ## Trace the consequences {#trace-consequences} ## Do not build it before you need it {#yagni} ## No monkey patching {#open-closed} ## Keep coupling low {#loose-coupling} ## Do not duplicate knowledge {#dry} ## Leave no broken windows {#no-broken-windows} ## Follow the surrounding code {#match-conventions} ## A dependency is a decision {#justify-dependencies} ## Stay in the scope you were given {#stay-in-scope} ## No snapshot-only tests {#no-change-detector-tests} ## Boundaries and negative cases {#boundaries-and-negatives} ## Some things you do not touch {#change-integrity} The agent reads all of it at the start of the session and says it understands all of it. Four hours later, this is in the commit. if ( file === \" wide-chars.ts \" ) return WIDE_CHARS_EXPECTED ; One test would not go green, so it put the answer in by hand. That breaks the very first rule on the list, and the build passes anyway. The type checker only looks at types. The tests only look for green. The linter only looks for unused variables. Nothing in there asks which of those eighteen rules was broken. The rules live in a document, and the build does not read documents. So somebody has to read the diff and hold all eighteen in their head while they do it. At 4,000 lines, that check may as well not exist. 1.2. Writing Them Harder Does Not Help Since it does not work, everybody tries the same escalation. Put it in caps, bold the never , move it to the top of the file, repeat it in the prompt, and add an emoji when none of that lands. Nobody starts honoring a contract because you set it in a bigger font. One study measured it. It read tool logs instead of what the model said at the end, and six frontier models followed the instruction in 0 of 60 runs. In those same runs, they claimed they had followed it more than 90% of the time. It gets worse as you add rules. Another study found that under eight simultaneous constraints, models satisfied an individual constraint about 41% of the time and satisfied all eight in 5.7% of responses. The list above has eighteen. Every rule you add pushes one you already wrote further back. 1.3. If There Is a Shortcut, It Takes It This is not malice. If there is a cheaper way to make the check pass, that is the way it goes. I once got code like this , written for no purpose other than passing the tests, with the answers pasted straight in. function generate ( typeName : string ): string { switch ( typeName ) { case \" ObjectSimple \" : return `const _io0 = (input) => \"number\" === typeof input.x && \"number\" === typeof input.y && \"number\" === typeof input.z; (input) => \"object\" === typeof input && null !== input && _io0(input);` ; case \" ArrayRecursive \" : return `...` ; case \" ObjectUnionExplicit \" : return `...` ; // 165 more cases } } All 170-odd types looked like that, and every test passed. It is not just me. This year's measurements counted the same thing. SpecBench gave agents one test suite they could see and held another one back. Every frontier agent saturated the visible suite, and the held-out suite is where they came apart. Cursor measured that 63% of successful resolutions were retrieved from somewhere rather than derived. Cut off the internet and seal the git history, and the score fell from 87.1% to 73.0%. A team at the University of Pennsylvania found more than 1,000 cheating instances across nine benchmarks . In one of them, an agent that could not solve the algorithm hardcoded the return value for each test input. Same motive every time. Not taking the exam, but finding the cheapest way to look like you took it. 2. So I Made the Compiler Ask 2.1. The Rule Document Becomes a Compile Condition Every function has to answer every rule in your skill file. Leave one answer out and the build stops. You never write these comments yourself. The compile fails without them, so the agent writes them and hands them over. You read what it says about the code. /** * @evidence .agents/skills/principles/SKILL.md#no-hard-coding Builds the table from the registry it was handed, and branches on no known name. * @evidence .agents/skills/principles/SKILL.md#open-closed Uses the public adapter only, and touches no prototype or module state. * @evidence .agents/skills/principles/SKILL.md#yagni One Map and one pass, with no cache or index built ahead of time. * @evidence .agents/skills/principles/SKILL.md#fix-root-causes Rejects an unknown name at registration instead of retrying a failed lookup. */ export function resolveHandler ( name : string , registry : IRegistry ): Handler ; Delete any one of those four lines and the build stops. $ npx ttsc error TS16411: [evidence/graph] Missing acknowledgement for '.agents/skills/principles/SKILL.md#fix-root-causes' (Markdown H2 'Fix causes, not symptoms' at .agents/skills/principles/SKILL.md:24) The error list is the task list. Add one rule to the document and from the next build on, every function owes one more answer. ttsc is a compiler built on typescript-go. It drops into the place of tsc and runs lint rules inside the compile. @ttsc/evidence is one of the rules that runs there. Its diagnostics come out of npx ttsc in the same list as your type errors. There is no separate checker to run. This is the whole configuration behind it. Every function under src answers the rules in this skill file. { type : \" typescript \" , files : [ \" src/**/*.ts \" ], symbol : \" function \" , reference : { type : \" markdown \" , files : [ \" .agents/skills/principles/SKILL.md \" ], symbol : \" h2 \" , checklist : true , }, } 2.2. There Are Sentences It Cannot Write Say the agent took the shortcut. It special-cased a fixture name to make one test pass. Now that same function has to answer #no-hard-coding , and the honest version reads like this. /** * @evidence .agents/skills/principles/SKILL.md#no-hard-coding Branches on the fixture name \"sample.ts\" so the snapshot test passes. */ Two options. Write that sentence as it stands, or fix the code so it never has to be written. In practice it fixes the code. 2.3. It Outlives the Prompt An instruction in a prompt gets buried as the conversation grows, and in the next session it is simply gone. It is not in CI, and it is not in a pull request opened by someone who never read your AGENTS.md . The checklist lives in the repository. A function written from an empty context by a different model owes the same answers before the build will pass. 3. Spec Driven Development You can take this further. The tool does not read meaning. It only looks at who cited what. Anything you can address can be cited. 3.1. Documents Hold Up the Code Once there are documents to cite, the picture looks like this. Requirements cite the idea notes. An idea that got dropped is caught before any code is written. Specifications cite the requirements and the idea notes. Implementation cites the requirements and the specifications. Tests cite the requirements, the specifications, and the implementation. An untested feature never finishes building. 3.2. Backend No table without a document behind it, and no API without a test on it. The database schema cites the requirements, the API cites the requirements and the schema, and the tests cite that API. 3.3. Frontend \"The API is wired up but there is no screen yet\" stops being a green build. The frontend starts from somebody else's document. The Swagger the backend publishes is the starting point, then hooks cite operations, screens cite hooks, and end-to-end journeys cite screens. 3.4. How Much It Changes Spec Driven Development stops being a slogan and becomes something the build enforces. In our benchmark we built all four applications twice with the same model, and the only difference was this plugin. Application Plain With the plugin Tokens todo 85.5% 100% 866M → 92M reddit 80.3% 100% 1,179M → 245M shopping 63.1% 100% 1,516M → 271M erp 51.6% 100% 5,449M → 411M The bigger the application, the further plain coverage falls. With no way to know what is missing, you read everything again, fix what you find, and start over, until a round turns up nothing. That loop until dry ate 90% of the tokens on the left of those arrows. The benchmark documentation has the details. Getting to this picture takes a requirements document a human has reviewed, and existing projects usually do not have one. That is why I say to start from the other end. The rule file is already there. It is already Markdown, it already has headings, and it is already the document you wish the agent would follow. 4. What a Green Build Means It means every function left an answer for every rule. Code that cannot answer only goes green after it has been fixed into something that can. An answer is writable only where the rule was actually followed, so by the time the build is green, the code is that much better. \"Our agent follows our rules\" is now something the compiler proves. 5. Install npm install -D typescript ttsc @ttsc/lint @ttsc/evidence import { evidence , type ITtscEvidenceGraphConfig } from \" @ttsc/evidence \" ; import type { ITtscLintConfig } from \" @ttsc/lint \" ; const graph : ITtscEvidenceGraphConfig = { claims : [ { type : \" typescript \" , files : [ \" src/**/*.ts \" ], symbol : \" function \" , reference : { type : \" markdown \" , files : [ \" .agents/skills/principles/SKILL.md \" ], symbol : \" h2 \" , checklist : true , }, }, ], }; export default { plugins : { evidence }, rules : { \" evidence/graph \" : [ \" error \" , graph ] }, } satisfies ITtscLintConfig ; npx ttsc Put this on an existing repository and the first run produces hundreds of errors. That is the function count times the rule count, so of course it does. It is the real distance between your rule file and your code, and until now there was no way to see it. Paying it down is not your job. Hand that error list to the agent and it works through them one at a time. Where an answer cannot be written, it fixes the code first and then writes the answer. Start with the rules you already wrote. Ten-minute setup guide . GitHub repository Evidence Graph documentation and the configuration reference Backend and frontend graph examples Benchmark and slides",
+            "url": "https://dev.to/samchon/ts-evidence-graph-make-every-skill-instruction-100-enforced-2n03",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "anthropic",
+                "developpement",
+                "git",
+                "programmation",
+                "typescript",
+                "web",
+                "windows"
+            ],
+            "published_at": "2026-09-11T01:36:13+00:00",
+            "collected_at": "2026-09-11T02:19:16.397914+00:00"
+        },
+        {
+            "id": "f7f6774a2acdc5cf2981d4761109e9b3524c763d96db18e3950d0fd464d3e4bf",
+            "title": "I built Iriszip, an encrypted P2P file transfer that runs in the browser",
+            "description": "I wanted a simple way to move a file between two devices without installing an app, creating an account, or uploading it somewhere first. So I built Iriszip . Open the site on both devices, scan a QR code or enter the 9-digit pairing code, and send files or text directly from the browser. On the same network, transfers can stay device-to-device and run at LAN speed. Across the internet, Iriszip tries a direct WebRTC connection first and falls back to a relay when a direct connection isn't possible. The relay only handles ciphertext. No file or message content is persisted on the server. On relayed connections, encrypted data only passes through memory, and session state is discarded when the session ends. The security side ended up becoming a much bigger part of the project than I originally expected. Iriszip uses end-to-end encryption, and the cryptographic protocol design went through an independent security review. Everything is open source. The browser client is MIT-licensed, the crypto core is Apache-2.0, and the server is AGPL-3.0. The server can also be self-hosted with Docker Compose. Try it: https://iriszip.com Source: https://github.com/iris-zip/iris This is still a solo project and it only recently went public. I'd especially like feedback from people working with WebRTC, cryptography, networking, privacy, or self-hosted software. If you find something weird, manage to break something, or think part of the design could be better, I'd genuinely like to hear about it.",
+            "url": "https://dev.to/scar_1990/i-built-iriszip-an-encrypted-p2p-file-transfer-that-runs-in-the-browser-4g3",
+            "source": "DEV Community",
+            "category": "devops",
+            "tags": [
+                "developpement",
+                "docker",
+                "git",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-11T01:32:20+00:00",
+            "collected_at": "2026-09-11T02:19:16.398141+00:00"
+        },
+        {
+            "id": "93b62d639a3aa253e86063a47a498de9d361b92c86257187778e03b144ce041b",
+            "title": "GIMP 3.2.6 released with faster font loading, Wacom barrel rotation",
+            "description": "GIMP 3.2.6 has arrived, a new maintenance update in the 3.2.x series that made a splash earlier this year. You won’t find any major new features, but plenty of improvements – not least in font handling. GIMP say font loading is faster, with start-up times, Text tool typing and closing large font lists all nippier when lots of fonts are installed. The team note “some lag remains”, and solving that would require a GTK4 port – for which some initial prep has begun. On the editing side, Cut now works on layer groups; Color Picker can picks up filters applied […] You're reading GIMP 3.2.6 released with faster font loading, Wacom barrel rotation , a blog post from OMG! Ubuntu . Do not reproduce elsewhere without permission.",
+            "url": "https://www.omgubuntu.co.uk/2026/09/gimp-3-2-6-wacom-rotation-input",
+            "source": "OMG! Ubuntu",
+            "category": "linux",
+            "tags": [
+                "desktop",
+                "linux",
+                "ubuntu"
+            ],
+            "published_at": "2026-09-11T01:05:58+00:00",
+            "collected_at": "2026-09-11T02:19:21.048332+00:00"
+        },
+        {
+            "id": "6f1437f77c33f8df3c6074c4294ed709c2939617086ff679de1191b597813f08",
+            "title": "Bessent Urges Senate to Advance Clarity Act Ahead of Tuesday Vote",
+            "description": "Treasury Secretary Scott Bessent urged senators to advance the CLARITY Act before Tuesday’s scheduled procedural vote. The measure would establish federal digital asset rules, but unresolved political divisions leave its path through the Senate uncertain. Treasury Push Raises Pressure Before Senate Vote Federal digital asset legislation faces a decisive procedural test Tuesday after Treasury Secretary […]",
+            "url": "https://news.bitcoin.com/regulation-and-legal/bessent-urges-senate-to-advance-clarity-act-ahead-of-tuesday-vote/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto",
+                "git"
+            ],
+            "published_at": "2026-09-11T01:05:32+00:00",
+            "collected_at": "2026-09-11T02:19:32.231395+00:00"
+        },
+        {
+            "id": "133227570f5c5c019b0e16cc908d5cdd4fd4aeba5d79d322a9160fda0e462caa",
+            "title": "Indonesia Hit by Android Banking App-Cloning Campaign",
+            "description": "The GoldFactory threat group exploits the Android Work Profile feature to deliver the Gigabud Trojan, while Mantax Otax spreads separately.",
+            "url": "https://www.darkreading.com/mobile-security/indonesia-android-banking-app-cloning-campaign",
+            "source": "Dark Reading",
+            "category": "cybersecurite",
+            "tags": [
+                "android",
+                "cybersecurite",
+                "enterprise-security",
+                "malware"
+            ],
+            "published_at": "2026-09-11T01:00:00+00:00",
+            "collected_at": "2026-09-11T02:19:14.157178+00:00"
+        },
+        {
+            "id": "1ccbec204999a9303185ecdf4333b8b6f0177607775aca368d7581a8606b5ed3",
+            "title": "Setting up OpenCode with Ollama and sbx on Mac",
+            "description": "Comments",
+            "url": "https://tensorsandtokens.com/posts/opencode-ollama/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-11T00:45:26+00:00",
+            "collected_at": "2026-09-11T02:19:15.918102+00:00"
+        },
+        {
+            "id": "d73c7d39c95d5e6b686837ac57d62bd89ae0594e417aab6e0049f816f291e97c",
+            "title": "Google will buy half the electricity of a nuclear power plant",
+            "description": "Comments",
+            "url": "https://www.bbc.com/news/articles/c8r6y4me2g6o",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-11T00:42:41+00:00",
+            "collected_at": "2026-09-11T02:19:15.917652+00:00"
+        },
+        {
+            "id": "15e2051c5046525ff0e1b35aeaf4a9056a6c692d14f00283487b731d5351f9e3",
+            "title": "YuE2 · Frontier Music with Symbolic Planning",
+            "description": "Comments",
+            "url": "https://map-yue2.github.io/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-11T00:33:26+00:00",
+            "collected_at": "2026-09-11T02:19:15.917454+00:00"
+        },
+        {
+            "id": "dd7866c5bc78b8b7180326c3946d2fe4f831648bee841e02df628c1729ae9026",
+            "title": "Bitcoin Eyes $100K as Analyst Sees Potentially Explosive Q4",
+            "description": "Bitcoin’s outlook has strengthened amid positive September ETF flows and signs of greater risk appetite across altcoins. Following new PPI data, a 21Shares strategist said conditions could propel BTC toward $100,000 during a “potentially explosive Q4.” Inflation Data Put Bitcoin’s Support Level to the Test Bitcoin investors face another inflation test after wholesale prices climbed […]",
+            "url": "https://news.bitcoin.com/market-updates/bitcoin-eyes-100k-as-analyst-sees-potentially-explosive-q4/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-11T00:25:37+00:00",
+            "collected_at": "2026-09-11T02:19:32.231518+00:00"
+        },
+        {
+            "id": "df682efcd639a6b902b440a16c14ee3efb59e60beda82f6ebef1c290090793db",
+            "title": "Zelda: Ocarina Of Time Switch 2 Pre-Order Comes With Bonus N64-Style Slipcover",
+            "description": "\"Exclusively available in Canada at EB Games\". The original N64 box art and game. Zelda: Ocarina of Time Switch 2 pre-orders have now opened on Nintendo's website, eShop, and at select retailers around the globe. If you haven't already pre-ordered and happen to be located in Canada, EB Games has announced an exclusive deal . Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/news/2026/09/zelda-ocarina-of-time-switch-2-pre-order-comes-with-bonus-n64-style-slipcover",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-09-11T00:15:00+00:00",
+            "collected_at": "2026-09-11T02:19:30.360815+00:00"
+        },
+        {
+            "id": "4ab42a415a9fe9e3e336d70c5a9807707a1a6677b64186621e79545fa07eface",
+            "title": "Ubuntu 26.10 will ship with Linux kernel 7.3",
+            "description": "Ubuntu 26.10 'Stonking Stingray' is getting a newer kernel than planned. Canonical has switched its target from Linux 7.2 to Linux 7.3. You're reading Ubuntu 26.10 will ship with Linux kernel 7.3 , a blog post from OMG! Ubuntu . Do not reproduce elsewhere without permission.",
+            "url": "https://www.omgubuntu.co.uk/2026/09/ubuntu-2610-kernel-version",
+            "source": "OMG! Ubuntu",
+            "category": "linux",
+            "tags": [
+                "desktop",
+                "linux",
+                "ubuntu"
+            ],
+            "published_at": "2026-09-11T00:03:30+00:00",
+            "collected_at": "2026-09-11T02:19:21.048427+00:00"
+        },
+        {
+            "id": "1c79abc8f67b4e683be90765862038f75a112000301e023e684e43a570020c4c",
+            "title": "Inside Ripple’s AI Treasury Push: Automation Without Losing Control",
+            "description": "Ripple is expanding GSmart with AI agents that monitor corporate treasury operations and recommend actions under company-defined policies. Financial calculations remain deterministic, while treasury personnel preserve approval authority over every transaction. Ripple Puts Guardrails Around Treasury Automation Corporate finance teams can automate more treasury analysis without transferring final decision-making authority to artificial intelligence. Ripple expanded […]",
+            "url": "https://news.bitcoin.com/featured/inside-ripples-ai-treasury-push-automation-without-losing-control/",
+            "source": "Bitcoin.com News",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto",
+                "intel"
+            ],
+            "published_at": "2026-09-10T23:51:13+00:00",
+            "collected_at": "2026-09-11T02:19:32.231653+00:00"
+        },
+        {
+            "id": "43bee4329c9e0fc39137082e1ad0fb6d18b69c6c9413328dc915ade4dae56196",
+            "title": "BTCC Exchange Unveils TOKEN2049 “Trade to Win” Competition: $1M Prize Pool and Tesla Cybertruck Giveaway",
+            "description": "GEORGE TOWN, Cayman Islands, September 10, 2026 — BTCC, the world’s longest-serving cryptocurrency exchange, has launched its “Trade To Win” trading competition to celebrate TOKEN2049 Singapore 2026. Featuring a $1,000,000 prize pool and a Tesla Cybertruck as the top prize, the campaign is one of the exchange’s most rewarding trading competitions to date. As the […]",
+            "url": "https://news.bitcoin.com/press-releases/btcc-exchange-unveils-token2049-trade-to-win-competition-1m-prize-pool-and-tesla-cybertruck-giveaway/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-10T23:31:36+00:00",
+            "collected_at": "2026-09-11T02:19:32.231775+00:00"
+        },
+        {
+            "id": "2f73a3afd8e807a7df20a48b9813879fca9ec88d53dfa8fe54100a216d1018e3",
+            "title": "Banca d’Italia Tightens Crypto Screening to Enforce EU Sanctions",
+            "description": "Banca d’Italia has issued a communication to payment service providers and crypto asset service providers (CASPs), reinforcing the need for continued screening of financial transactions using travel rule-related procedures, stressing that there are no minimum amounts for these checks. Italy Highlights ‘No Minimum’ Exception for Sanctions Screening on Crypto Transactions The European Union (EU) is […]",
+            "url": "https://news.bitcoin.com/regulation-and-legal/banca-ditalia-tightens-crypto-screening-to-enforce-eu-sanctions/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-10T23:19:54+00:00",
+            "collected_at": "2026-09-11T02:19:32.231892+00:00"
+        },
+        {
+            "id": "7068f4bd3401bbcf5e143b2fd85a35e581c755c1ed99147a379e2c0c6a0f55d3",
+            "title": "Thelio Mira AI Linux Workstation: 192 GB GPU Memory",
+            "description": "Comments",
+            "url": "https://system76.com/workstations/thelio-mira-ai",
+            "source": "Hacker News",
+            "category": "hardware",
+            "tags": [
+                "linux",
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-10T23:10:06+00:00",
+            "collected_at": "2026-09-11T02:19:15.917876+00:00"
+        },
+        {
+            "id": "6f98020f2f157136c16fa55e709169c5a65aff08a0336462f592e32662918ca3",
+            "title": "Thrive Capital led VCs into pro sports ownership; Collaborative Fund just upped that play",
+            "description": "Collaborative Fund just bought into D.C. United and its stadium, with firm founder Craig Shapiro pitching it as a way to showcase for the firm's startups.",
+            "url": "https://techcrunch.com/2026/09/10/thrive-capital-showed-vcs-the-way-into-pro-sports-ownership-collaborative-fund-is-now-trying-its-own-version-of-the-same-play/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-09-10T22:30:00+00:00",
+            "collected_at": "2026-09-11T02:19:14.785678+00:00"
+        },
+        {
+            "id": "f02c9eba9c6c9d71660153425a8e3f3af21d99d373e697fc54103153e03e9ef5",
+            "title": "Boy developed \"toasted skin\" condition from using a laptop every day",
+            "description": "Laptops don't usually get hot enough to burn—but they can still be harmful.",
+            "url": "https://arstechnica.com/health/2026/09/boy-developed-toasted-skin-condition-from-using-a-laptop-every-day/",
+            "source": "Ars Technica",
+            "category": "technologie",
+            "tags": [
+                "informatique",
+                "innovation",
+                "technologie"
+            ],
+            "published_at": "2026-09-10T22:16:05+00:00",
+            "collected_at": "2026-09-11T02:19:14.644312+00:00"
+        },
+        {
+            "id": "a2ca7f407a41f97cb79dbf62e73a7dd7f103725ba835c9f6acaf65f2c641b855",
+            "title": "Tim Draper Tells Families: Stockpile Bitcoin Before a Run on US Dollar",
+            "description": "Venture capitalist Tim Draper warned Thursday that the U.S. dollar could eventually become unwanted money, urging families, companies, and governments to stock up on bitcoin before a potential rush out of dollars begins. Writing on Sept. 10, Draper reached back to a childhood lesson involving a Confederate banknote his father gave him. The bill carried […]",
+            "url": "https://news.bitcoin.com/crypto-news/tim-draper-tells-families-stockpile-bitcoin-before-a-run-on-us-dollar/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-10T22:14:02+00:00",
+            "collected_at": "2026-09-11T02:19:32.231996+00:00"
+        },
+        {
+            "id": "5fe75a5fc53d34adba444dad5541d4e329deb9af43cb83eda5f050bcfd980e28",
+            "title": "Soft-deprecating re.match()",
+            "description": "Comments",
+            "url": "https://hugovk.dev/blog/2026/soft-deprecating-re.match/",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-09-10T21:59:16+00:00",
+            "collected_at": "2026-09-11T02:19:16.180878+00:00"
+        },
+        {
+            "id": "97377afac67526a6914e4dc17c22d4fe841ead8562e8a176bceff4c0a547d274",
+            "title": "Fastly Speedtest Test",
+            "description": "The result should fairly accurately reflect cache fetch speed you’re going to get with the official Nix binary cache ;) Comments",
+            "url": "https://speed.edgecompute.app/",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-09-10T21:58:12+00:00",
+            "collected_at": "2026-09-11T02:19:16.180696+00:00"
+        },
+        {
+            "id": "ab2afd5299068837dcf8eae0314ae3bed283defeb4727e5a8e765da4f19e3ed1",
+            "title": "Jensen Huang explains why Nvidia will grow an astounding 70% next year",
+            "description": "Nvidia has its finger in every pie, and sees another year of plenty in its future, Jensen Huang says. But, he insists, its deals are not circular.",
+            "url": "https://techcrunch.com/2026/09/10/jensen-huang-explains-why-nvidia-will-grow-an-astounding-70-next-year/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "nvidia",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-09-10T21:51:59+00:00",
+            "collected_at": "2026-09-11T02:19:14.785758+00:00"
+        },
+        {
+            "id": "30d4ce92c75371fef29d73fa53271f8d6cb46bda75aa7e296b36742ffd880653",
+            "title": "Ubuntu 24.04.5 LTS released with Linux 7.0",
+            "description": "The fifth (and final) point release of Ubuntu 24.04 LTS is available to download. Ubuntu 24.04.5 LTS delivers refreshed installation media (ISOs) that includes of the software updates, bug fixes and security patches released since the last ISO was produced. This cuts down on the number of updates that need to downloaded post-install. More important than that, this release runs on a new hardware enablement (HWE) stack, back-ported from Ubuntu 26.04 LTS. The 24.04.5 LTS HWE stack brings the Linux 7.0 kernel and updated graphic drivers, plus a few other key hardware-related packages. Existing users already have it; the HWE […] You're reading Ubuntu 24.04.5 LTS released with Linux 7.0 , a blog post from OMG! Ubuntu . Do not reproduce elsewhere without permission.",
+            "url": "https://www.omgubuntu.co.uk/2026/09/ubuntu-24-04-5-lts-released-with-linux-kernel-7-0",
+            "source": "OMG! Ubuntu",
+            "category": "linux",
+            "tags": [
+                "desktop",
+                "linux",
+                "ubuntu"
+            ],
+            "published_at": "2026-09-10T21:51:04+00:00",
+            "collected_at": "2026-09-11T02:19:21.048620+00:00"
+        },
+        {
+            "id": "b8fb164281cc000e4810214e0ef514397da99ae4cf16ec7903b9f65f92742ca3",
+            "title": "New Android malware encrypts files, steals data, and harasses victims",
+            "description": "A new Android malware strain called Mantax Otax combines ransomware and spyware capabilities to encrypt files, steal sensitive data, and spam and harass victims. [...]",
+            "url": "https://www.bleepingcomputer.com/news/security/new-android-malware-encrypts-files-steals-data-and-harasses-victims/",
+            "source": "BleepingComputer",
+            "category": "cybersecurite",
+            "tags": [
+                "android",
+                "cybersecurite",
+                "malware",
+                "ransomware"
+            ],
+            "published_at": "2026-09-10T21:40:43+00:00",
+            "collected_at": "2026-09-11T02:19:13.249433+00:00"
+        },
+        {
+            "id": "1587a3fbe537eff745f6bd840e6ed1d0181ab2d0c04260fdd409f98a5a6e8692",
+            "title": "Mark Wahlberg is coming to TechCrunch Disrupt 2026, and he wants to talk about your work, not his",
+            "description": "Mark Wahlberg joins Bruce K. Lee at Disrupt to discuss investing, entrepreneurship, healthcare, wellness and building businesses.",
+            "url": "https://techcrunch.com/2026/09/10/mark-wahlberg-is-coming-to-techcrunch-disrupt-2026/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-09-10T21:35:00+00:00",
+            "collected_at": "2026-09-11T02:19:14.785829+00:00"
+        },
+        {
+            "id": "53dc2a824ef94f8a40d1eb21d2bfea3bb352b3450bbbc67c9cdd4c3f7ad7752c",
+            "title": "GitHub Copilot app for Beginners: Using the diff, terminal, and browser",
+            "description": "Checking agent-generated code usually means hopping between tabs. Learn how to view diffs, run terminal commands, and preview web apps side by side in the GitHub Copilot app. The post GitHub Copilot app for Beginners: Using the diff, terminal, and browser appeared first on The GitHub Blog .",
+            "url": "https://github.blog/ai-and-ml/github-copilot/github-copilot-app-for-beginners-using-the-diff-terminal-and-browser/",
+            "source": "GitHub Blog",
+            "category": "web",
+            "tags": [
+                "git",
+                "github",
+                "open-source"
+            ],
+            "published_at": "2026-09-10T21:31:19+00:00",
+            "collected_at": "2026-09-11T02:19:15.298897+00:00"
+        },
+        {
+            "id": "0fc721ba653083a49c1efd4d107718157300180ae11cd4c917a7236d04f33163",
+            "title": "NTSB issues investigative update on B-767 runway excursion accident in Miami",
+            "description": "Comments",
+            "url": "https://www.ntsb.gov:443/news/press-releases/Pages/NR20260909.aspx",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-10T21:30:55+00:00",
+            "collected_at": "2026-09-11T02:19:15.917974+00:00"
+        },
+        {
+            "id": "8f3ed18e78f6172346ad29dcd86c1b538f92dc8dfcf44b7bb9d1753b4736bd20",
+            "title": "Paypal, M0 and Moonpay Let Companies Build Branded Stablecoins in Days",
+            "description": "This week, payments juggernaut Paypal, alongside M0 and Moonpay, launched PYUSDx, a platform that allows companies to create their own stablecoin-based products. Moreover, Paypal’s Senior Vice President and General Manager of Crypto explained that the fiat-pegged sector is growing up and “maturing fast.” Paypal, M0 and Moonpay Turn Stablecoin Launches Into a Days-Long Job On […]",
+            "url": "https://news.bitcoin.com/stablecoins/paypal-m0-and-moonpay-let-companies-build-branded-stablecoins-in-days/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-10T21:29:20+00:00",
+            "collected_at": "2026-09-11T02:19:32.232101+00:00"
+        },
+        {
+            "id": "0c423cdb6ebab28ce651f3cdcec64fce7c558de71bb67a7d0ab2014d2eebc6e9",
+            "title": "OpenAI’s Navier-Stokes release included a Lean 4 formal proof",
+            "description": "Comments",
+            "url": "https://www.johndcook.com/blog/2026/09/09/formal-method-revolution/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "openai",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-10T21:22:59+00:00",
+            "collected_at": "2026-09-11T02:19:15.918689+00:00"
+        },
+        {
+            "id": "717e25fc7d78721b0f05ba3d5111133c664294b14bfa486afd96b1681958d930",
+            "title": "Retroid Pocket Duo takes on Anbernic with more RAM and storage",
+            "description": "Retroid has provided all the information you need to know about its new hardware.",
+            "url": "https://www.androidauthority.com/retroid-pocket-duo-specs-pricing-3710136/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-09-10T21:09:53+00:00",
+            "collected_at": "2026-09-11T02:19:24.581936+00:00"
+        },
+        {
+            "id": "40b2dd0cc67b57c9e1999447d69f262a7bf04201d9c549370aeeae3a88c17c81",
+            "title": "phlex-hanami v0.2.0",
+            "description": "Comments",
+            "url": "https://github.com/aaronmallen/phlex-hanami/releases/tag/0.2.0",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-09-10T21:07:36+00:00",
+            "collected_at": "2026-09-11T02:19:16.181264+00:00"
+        },
+        {
+            "id": "54827c4e6e1210d7188d729c208e0092acd73b0681baa346ef87fc6c71c0ed0c",
+            "title": "OpenAI puts Pro subscriptions on hold due to Astra demand",
+            "description": "The company said Pro subscriptions put the most strain on its systems, so it's pausing sign-ups while adding more capacity.",
+            "url": "https://techcrunch.com/2026/09/10/openai-puts-pro-subscriptions-on-hold-due-to-astra-demand/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "openai",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-09-10T20:59:51+00:00",
+            "collected_at": "2026-09-11T02:19:14.785891+00:00"
+        },
+        {
+            "id": "43169485cbc7075535a4d3926a88b58c2ad20f9472889fa06283a238ec5eb07e",
+            "title": "Anthropic details distillation campaigns from Alibaba, Moonshot AI, and DeepSeek",
+            "description": "A new report released Thursday by Anthropic alleges persistent distillation attacks by China-based AI companies, which have escalated in recent months as competition in the space has intensified.",
+            "url": "https://techcrunch.com/2026/09/10/anthropic-details-distillation-campaigns-from-alibaba-moonshot-ai-and-deepseek/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "anthropic",
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-09-10T20:57:30+00:00",
+            "collected_at": "2026-09-11T02:19:14.785962+00:00"
+        },
+        {
+            "id": "50e3d32504e46d4f0dd6ae6f9681ab11ed500917404b92d7d6d06e060d5fc6ea",
+            "title": "LinkedIn beats \"BrowserGate\" lawsuits over scanning users' Chrome extensions",
+            "description": "Judge tosses lawsuits, says plaintiffs didn't allege any real privacy violation.",
+            "url": "https://arstechnica.com/tech-policy/2026/09/linkedin-beats-browsergate-lawsuits-over-scanning-users-chrome-extensions/",
+            "source": "Ars Technica",
+            "category": "cloud",
+            "tags": [
+                "aws",
+                "informatique",
+                "innovation",
+                "technologie"
+            ],
+            "published_at": "2026-09-10T20:55:29+00:00",
+            "collected_at": "2026-09-11T02:19:14.644379+00:00"
+        },
+        {
+            "id": "dddff2c07154f897ed224e6eb550e72b3bab4bfaef039864ee678caf154542f3",
+            "title": "Furo’s founders left Silicon Valley — and it’s paying off",
+            "description": "The three 28-year-old founders behind energy startup Furo moved from Silicon Valley and back to Germany, and yet secured $4 million in funding from mostly U.S. backers.",
+            "url": "https://techcrunch.com/2026/09/10/furos-founders-left-silicon-valley-and-its-paying-off/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-09-10T20:48:00+00:00",
+            "collected_at": "2026-09-11T02:19:14.786041+00:00"
+        },
+        {
+            "id": "03383b39b67e666ce8c39430761cab8767d5e34bcfca7256031fc7b2cdaab06b",
+            "title": "Pump.fun Lets Memecoins Trade Against Tokenized Stocks on Solana",
+            "description": "Pump.fun is letting users launch tokens paired directly with tokenized stocks, crypto majors, and metals on Solana. The move brings memecoin speculation and real-world assets into the same liquidity pools, while reviving questions about how far tokenized equities can stretch before regulation catches up. Pump.fun Pushes Tokenized Stocks Into 24/7 Solana Trading Pump.fun is blurring […]",
+            "url": "https://news.bitcoin.com/defi/pump-fun-lets-memecoins-trade-against-tokenized-stocks-on-solana/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-10T20:47:18+00:00",
+            "collected_at": "2026-09-11T02:19:32.232205+00:00"
+        },
+        {
+            "id": "432786c4f1ef859914ae67cc2f36062b41445d53f944aac6457bd6f02d0c9b3b",
+            "title": "Voice Callers Exploit BYOD to Reach Microsoft 365, Corporate Data",
+            "description": "Threat actors are leveraging Microsoft's Graph API to identify lucrative targets, then passing their access to extortion groups like ShinyHunters.",
+            "url": "https://www.darkreading.com/threat-intelligence/voice-callers-exploit-byod-microsoft-365-corporate-data",
+            "source": "Dark Reading",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "enterprise-security"
+            ],
+            "published_at": "2026-09-10T20:36:03+00:00",
+            "collected_at": "2026-09-11T02:19:14.157247+00:00"
+        },
+        {
+            "id": "c7ea8e96bfef1f4f88b41dec161b83967f363ef4441f48913118a5696aecbcf7",
+            "title": "Optimizing a Spin-Lock",
+            "description": "Comments",
+            "url": "https://david.alvarezrosa.com/posts/optimizing-a-spin-lock/",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-09-10T20:34:57+00:00",
+            "collected_at": "2026-09-11T02:19:16.181304+00:00"
+        },
+        {
+            "id": "5125040d57bfdbf4b58ff1d964f58d00986cc6cf00c4eb5978eaadbc695a1000",
+            "title": "September Windows Server updates break Remote Desktop Services",
+            "description": "Windows admins report that the September 2026 security updates are causing Remote Desktop Services (RDS) failures on Windows Server 2019, 2022, and 2025 servers, preventing users from connecting and, in some cases, requiring a hard reset to restore functionality. [...]",
+            "url": "https://www.bleepingcomputer.com/news/microsoft/september-windows-server-updates-break-remote-desktop-services/",
+            "source": "BleepingComputer",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "malware",
+                "ransomware",
+                "windows"
+            ],
+            "published_at": "2026-09-10T20:34:37+00:00",
+            "collected_at": "2026-09-11T02:19:13.249570+00:00"
+        },
+        {
+            "id": "835d48f9f589804259968dc2dbccba68dfd7511576598b4ea30944c077d9c06d",
+            "title": "Mandiant Founder Kevin Mandia Joins Amazon Board",
+            "description": "Mandiant founder and cybersecurity veteran brings more than 30 years of public and private sector experience to Amazon’s board. The post Mandiant Founder Kevin Mandia Joins Amazon Board appeared first on SecurityWeek .",
+            "url": "https://www.securityweek.com/mandiant-founder-kevin-mandia-joins-amazon-board/",
+            "source": "SecurityWeek",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "security",
+                "vulnerabilites"
+            ],
+            "published_at": "2026-09-10T20:30:44+00:00",
+            "collected_at": "2026-09-11T02:19:14.387505+00:00"
+        },
+        {
+            "id": "ebf7351aadd2df6e7e55d8a19d61f862dc2ba80a0a442cc7c35d32d1f91f3476",
+            "title": "New Clarity Act text tweaks DeFi, credit union provisions, but road ahead for bill remains murky",
+            "description": "",
+            "url": "https://www.coindesk.com/policy/2026/09/10/new-clarity-act-text-tweaks-defi-credit-union-provisions-but-road-ahead-for-bill-remains-murky",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-10T20:21:57+00:00",
+            "collected_at": "2026-09-11T02:19:32.065611+00:00"
+        },
+        {
+            "id": "fffa255df8b54d9196e90baf2789b07cc4202670e427c4219a6f40d4c0113eea",
+            "title": "Liquid Glass GNOME Shell extension uses real refraction shaders",
+            "description": "You can now give the Ubuntu desktop a ‘Liquid Glass’ makeover using a new GNOME Shell Extension that written with ‘significant’ help from AI. Its developer, Ryosuke Watanabe, said they loved the look of Liquid Glass – Apple’s new design material that gives UI elements light-bending surfaces with depth and motion – but, not owning an Apple device, wanted a way to enjoy it on their Linux desktop. So they created an extension to do it. “The design, the shader math, the architecture decisions, and all of the testing on real hardware are mine”, says Watanabe, but adds that a […] You're reading Liquid Glass GNOME Shell extension uses real refraction shaders , a blog post from OMG! Ubuntu . Do not reproduce elsewhere without permission.",
+            "url": "https://www.omgubuntu.co.uk/2026/09/liquid-glass-gnome-shell",
+            "source": "OMG! Ubuntu",
+            "category": "linux",
+            "tags": [
+                "desktop",
+                "linux",
+                "ubuntu"
+            ],
+            "published_at": "2026-09-10T20:19:14+00:00",
+            "collected_at": "2026-09-11T02:19:21.048799+00:00"
+        },
         {
             "id": "3982fbfdc5a7e28fab5a15f89a75202894a0adaa8aaf27134e468427c3b31934",
             "title": "The CLARITY Act Has 100 New Changes and a 60-Vote Problem",
@@ -105,6 +940,52 @@
             ],
             "published_at": "2026-09-10T20:02:06+00:00",
             "collected_at": "2026-09-10T20:17:19.064746+00:00"
+        },
+        {
+            "id": "52d10ed7b11a286ddaf0dab18d960670f3cc8cc8b93aa4649bd5362a687f6c8d",
+            "title": "AWS Lambda recursive loop detection is now available in Europe Sovereign Cloud",
+            "description": "AWS Lambda recursive loop detection is now supported for functions running in Europe Sovereign Cloud. Recursive loop detection automatically detects and stops recursive invocations between Lambda functions and other supported services, preventing unexpected billing caused by unintended recursive loops. Customers use event sources such as Amazon S3, Amazon SQS, and Amazon SNS to build event driven applications that trigger Lambda functions. Misconfiguration or code defect can cause events to be sent back to the same source that triggered the Lambda function, causing recursive loops and unintended usage. When such a loop is detected, recursive loop detection automatically stops processing the event and sends you an AWS Health Dashboard notification with troubleshooting steps. Recursive loop detection is enabled by default for Lambda functions using a supported SDK version . If your function intentionally uses recursive loops, you can use the PutFunctionRecursionConfig API to turn off recursive loop detection on your Lambda function. To learn about recursive loop detection, visit Lambda documentation .",
+            "url": "https://aws.amazon.com/about-aws/whats-new/2026/09/lambda-recursion-europe-sovereign-cloud",
+            "source": "AWS What's New",
+            "category": "cloud",
+            "tags": [
+                "amazon",
+                "aws",
+                "cloud"
+            ],
+            "published_at": "2026-09-10T20:00:00+00:00",
+            "collected_at": "2026-09-11T02:19:19.841639+00:00"
+        },
+        {
+            "id": "7350f13f35f6faa0344dc7b54b057ffd186b1b3ba5b7c3cd528958200b55e4ae",
+            "title": "AWS Transform for .NET now generates unit tests for modernized code",
+            "description": "Today, AWS announced that AWS Transform for .NET can automatically generate unit tests for the code it modernizes. When enabled, AWS Transform generates unit tests that target the testable classes in your transformed .NET application, such as business logic and controllers, giving you an automated test safety net on the modernized code as part of the same job that performs the migration. Modernizing a .NET Framework application to modern .NET produces a transformed, buildable codebase, but teams previously had to write test coverage for that modernized code by hand. With this launch, AWS Transform assesses your application for testability in parallel with the standard .NET assessment, plans which classes and methods to cover, and generates the corresponding unit test code, so you complete the migration with tests already in place. Unit test generation is opt-in: you can enable it at the start of a job or after transformation completes. Unit test generation for AWS Transform for .NET is supported in the AWS Toolkit for Visual Studio extension. It is available in all AWS Regions where AWS Transform for .NET is supported. To get started, run a .NET transformation with AWS Transform for .NET in Visual Studio and choose to generate unit tests. To learn more, refer to Modernizing .NET in the IDE in the AWS Transform User Guide.",
+            "url": "https://aws.amazon.com/about-aws/whats-new/2026/09/aws-transform-net-unit-tests",
+            "source": "AWS What's New",
+            "category": "cloud",
+            "tags": [
+                "amazon",
+                "aws",
+                "cloud",
+                "csharp"
+            ],
+            "published_at": "2026-09-10T20:00:00+00:00",
+            "collected_at": "2026-09-11T02:19:19.841853+00:00"
+        },
+        {
+            "id": "f8666b813f39318dde003370fce6d5e10d1f8746e5a133fd9385284124ee6ff8",
+            "title": "Amazon API Gateway now supports 1 MB execution logs with configurable delivery destinations",
+            "description": "Amazon API Gateway now supports configurable delivery destinations and larger log events for REST API execution logs. Previously, execution logs were delivered to a single API Gateway-managed CloudWatch Logs log group with log events truncated at 1 KB, limiting visibility into request and response data. You can now route execution logs up to 1 MB to your own Amazon CloudWatch Logs log groups, Amazon S3 buckets, or Amazon Data Firehose streams, and deliver to multiple destinations simultaneously. For example, you can route execution logs to Amazon S3 in Apache Parquet format for cost-efficient long-term storage and analysis with Amazon Athena, while simultaneously delivering structured JSON logs to CloudWatch Logs for real-time alerting. This feature is available in all AWS Regions where API Gateway REST APIs are available, including the AWS GovCloud (US) Regions. Execution logs delivered through this feature are charged at vended logs rates. For pricing details, see Amazon CloudWatch Pricing . You can set up delivery through the API Gateway console, AWS CLI, or AWS CloudFormation . To get started, see Amazon API Gateway documentation and AWS blog post .",
+            "url": "https://aws.amazon.com/about-aws/whats-new/2026/09/amazon-api-gateway-1-mb-execution-logs/",
+            "source": "AWS What's New",
+            "category": "cloud",
+            "tags": [
+                "amazon",
+                "aws",
+                "cloud"
+            ],
+            "published_at": "2026-09-10T20:00:00+00:00",
+            "collected_at": "2026-09-11T02:19:19.842027+00:00"
         },
         {
             "id": "a16d77baa1f6d3b85451063a85b651afa41a8afe0747a851407f32dc2b84a455",
@@ -295,6 +1176,21 @@
             "collected_at": "2026-09-10T20:17:17.184552+00:00"
         },
         {
+            "id": "ffe91d848f41d8dc65f9f44e1c9d879ed56a0c72894d16092955bd569d8f799b",
+            "title": "Proof of Capture: Apple Reference Image, but open source and using steganography",
+            "description": "Comments",
+            "url": "https://merybenavente.me/blog/proof-of-capture",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-10T19:44:15+00:00",
+            "collected_at": "2026-09-11T02:19:15.918741+00:00"
+        },
+        {
             "id": "de4e01239a54436bc2c53b063116877350386809f2dcb8b8550da2bd242f4728",
             "title": "Spotify extends lifeline to Tailwind as vibe coding erodes web dev platform's bottom line",
             "description": "Shopify acquisition will give open-source CSS framework 'a stable long-term home'",
@@ -308,6 +1204,22 @@
             ],
             "published_at": "2026-09-10T19:43:55+00:00",
             "collected_at": "2026-09-10T20:17:17.603040+00:00"
+        },
+        {
+            "id": "3dffb20e2b3c17eabe90eadb26923fd01ef01fc88b1602c3707eba800a95a5f0",
+            "title": "OpenAI Agents API",
+            "description": "Comments",
+            "url": "https://developers.openai.com/api/docs/guides/agents-api/overview",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "openai",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-10T19:43:22+00:00",
+            "collected_at": "2026-09-11T02:19:15.917695+00:00"
         },
         {
             "id": "8a51732b48f2dcf03fdd9f2539855619a3a6e4e60f1805484b81d1232fba4307",
@@ -354,6 +1266,22 @@
             ],
             "published_at": "2026-09-10T19:35:00+00:00",
             "collected_at": "2026-09-10T20:17:21.786749+00:00"
+        },
+        {
+            "id": "ccdf536e83e544e5c451c9e2830565a0b347c77326e5d88321126416fd8df5ba",
+            "title": "The Deathray: A simple way for an untrusted site to freeze a Mac",
+            "description": "Comments",
+            "url": "https://auberon.xyz/blog/posts/deathray/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "rust",
+                "startup"
+            ],
+            "published_at": "2026-09-10T19:34:20+00:00",
+            "collected_at": "2026-09-11T02:19:15.917744+00:00"
         },
         {
             "id": "1b1eebcbc6b8a9f4773912835b72a36f999f7863d911b3ebb021943c0e095d7d",
@@ -554,6 +1482,21 @@
             ],
             "published_at": "2026-09-10T18:37:03+00:00",
             "collected_at": "2026-09-10T20:18:25.474171+00:00"
+        },
+        {
+            "id": "ba7190af76453d7582b8db08227cfd1caa565bf5236d1fa0341cf89f79397710",
+            "title": "Kubernetes v1.37: Scheduler Preemption for In-Place Pod Resize (Alpha)",
+            "description": "In Kubernetes, resource allocation has historically been a static decision made during a Pod's initial scheduling and placement. With the graduation of the core in-Place Pod resize feature to General Availability in v1.35, application developers and cluster operators gained the powerful ability to dynamically adjust CPU and memory allocations of running containers without incurring disruptive restarts or application downtime. However, in-place resizing introduced a unique resource scheduling gap: if a running Pod requested a resource scale-up that exceeded the host node's allocatable headroom, the Kubelet was forced to mark the request as Deferred . The Pod would remain parked in this state indefinitely, waiting for resources on the node to naturally free up. To bridge this scheduling gap, Kubernetes v1.37 introduces scheduler preemption for in-place Pod resize (Alpha), behind the InPlacePodVerticalScalingSchedulerPreemption feature gate. This feature allows the Kubernetes scheduler to actively free up capacity on a fully-utilized node by preempting lower-priority workloads, enabling the pending in-place resizes of critical, higher-priority applications to succeed. The \"deferred\" resize challenge To understand why this preemption mechanism is needed, it is helpful to look at how Kubernetes handles running Pod resizing. When a user or controller (such as the Vertical Pod Autoscaler ) updates the resource requests of an active container, the Kubelet evaluates whether the underlying node has enough spare allocatable capacity to fulfill the increase. If the node's resources are fully utilized and cannot satisfy the new limits, the Kubelet sets the container's resizeStatus (reported in the Pod's status.containerStatuses[] ) to Deferred . Unlike an Infeasible resize request (which is immediately rejected because it exceeds physical machine boundaries, namespace limit ranges, or admission quotas) a Deferred status indicates that the request is valid but is temporarily unable to be actuated, waiting until node capacity becomes available. Before the introduction of this preemption mechanism, a Pod's in-place resize scale-up request could become permanently blocked if the node was heavily utilized. Even when a critical application (such as an in-memory database or a real-time web server) required more memory to prevent an imminent out-of-memory (OOM) crash, and the node lacked free capacity, the resize remained Deferred . In this scenario, cluster administrators had limited choices: Manually evict lower-priority Pods from the node to clear resource headroom. Rely on the cluster autoscaler to eventually spin up a larger node and reschedule the Pod. However, this is an operation that is highly disruptive and violates the core \"no restart\" value proposition of in-place scaling. Rely on a custom autoscaling solution, for example a cluster autoscaler that can trigger dynamic node resizing operations itself. Because the kube-scheduler was unaware of deferred resizes on running Pods, it could not leverage standard priority-based preemption to evict lower-priority workloads and make room for the higher-priority running Pod's resource growth. Why this matters In production Kubernetes environments, cluster administrators strive to maximize resource utilization and efficiency. A common strategy is to bin-pack unused capacity on not-yet-full nodes with lower-priority workloads, such as batch jobs, background data processing, or best-effort tasks. Without scheduler preemption for in-place resizing, this created a major operational dilemma. If lower-priority workloads consumed the remaining headroom on a node, higher-priority applications running on that same node would become blocked ( Deferred ) when they needed to scale up to handle sudden traffic surges or memory spikes. Operators were forced to choose between running low-utilization clusters with idle buffer capacity or risking that critical workloads could not resize when needed. With scheduler preemption for in-place Pod resize, you can confidently bin-pack unused space across your clusters with lower-priority workloads without worrying about them degrading higher-priority Pods or blocking their scale-up requests. If a high-priority workload requires an in-place resize that exceeds available node capacity, the scheduler automatically preempts the lower-priority Pods to clear headroom. You achieve high cluster utilization and cost efficiency while preserving the responsiveness and reliability of critical services. Architectural mechanics: How it works Scheduler preemption for in-place Pod resize integrates directly into the core scheduling cycle to coordinate resources dynamically and safely. Centralized scheduler tracking The kube-scheduler monitors the cluster for running Pods with a Deferred resize status condition. Normally, Pods with spec.nodeName populated are considered successfully placed and bypass the active scheduling queue. Under this feature gate, the scheduler intercepts Pods carrying the Deferred condition, permitting them to remain in active scheduling evaluations specifically to trigger preemption. The scheduler maintains continuous tracking of these Pods until the Kubelet successfully completes the resize actuation. Single-node preemption boundary Unlike placement preemption, which evaluates all nodes in a cluster to find the best scheduling fit, preemption for in-place resizing is strictly localized to the Pod's currently assigned node. The scheduler identifies eligible lower-priority \"victim\" Pods on the same host and initiates their graceful eviction, freeing up local capacity. Preemption is strictly scoped to the same node where the deferred Pod is running; if a node cannot accommodate the resize even after evicting all eligible lower-priority workloads, the resize remains in the Deferred state. Resource reservation safety To prevent scheduling races and double-allocation, the scheduler treats resources requested for a resize as already consumed . This enables the Kubelet to actuate the resize once the preemption takes effect. Separation of concerns & critical admission When a node is under resource pressure, the Kubelet includes a local mechanism known as the critical Pod admission handler . During initial Pod admission, if a critical system Pod arrives on a node that lacks spare capacity, this local handler can directly evict lower-priority Pods on that node to guarantee admission for the critical workload. A significant architectural benefit of this new feature is the strict separation of concerns between the Kubelet and the scheduler. Under the InPlacePodVerticalScalingSchedulerPreemption feature gate, the Kubelet's critical Pod admission handler does not perform local preemption checks or trigger local evictions for in-place resizing operations. Instead, the Kubelet defers the request and delegates the preemption decision entirely to the scheduler. This guarantees that a single, centralized orchestrator manages all resize-related preemption logic, respecting global priorities, Pod disruption budgets (PDBs), and graceful termination policies. Managing competing updates & races If a competing, higher-priority resize request is submitted for another running Pod on the same node during an active preemption cycle, the Kubelet prioritizes the higher-priority request. The scheduler is designed to observe these updates and will dynamically trigger a new round of preemption if more capacity is required to fulfill the new state. Node-level preemption configuration Administrators and automated controllers (such as a cluster autoscaler) can disable preemption specifically for in-place resizes on particular nodes. This is configured using the new spec.podPreemptionPolicy field in the Node Spec: apiVersion : v1 kind : Node metadata : name : batch-workload-node spec : podPreemptionPolicy : disableResizePreemption : - \"cluster-autoscaler.kubernetes.io/disable-preemption\" - \"operator.example.com/policy-override\" An example use case for this policy is when a controller would prefer to size down other pods or dynamically adjust the node capacity itself when possible, only enabling scheduler preemption as a last resort. Try it out! To utilize scheduler preemption for in-place Pod resize: Your cluster must be running Kubernetes v1.37 or later across both the control plane and all worker nodes. The InPlacePodVerticalScalingSchedulerPreemption feature gate must be enabled across all control plane components ( kube-apiserver , kube-scheduler ) and the kubelet . Mini-tutorial: Observe resize preemption in action To see this feature in action locally, you can test scheduler preemption on a single-node kind cluster with constrained CPU headroom. 1. Create a kind cluster with scheduler resize preemption enabled Create a kind cluster configuration file named kind-config.yaml with the InPlacePodVerticalScalingSchedulerPreemption feature gate enabled: # kind-config.yaml kind : Cluster apiVersion : kind.x-k8s.io/v1alpha4 featureGates : InPlacePodVerticalScalingSchedulerPreemption : true Create the cluster using this configuration, passing the --image flag to ensure the cluster is running Kubernetes v1.37 (or later): kind create cluster --config kind-config.yaml --image kindest/node:v1.37.0 Note: Make sure that the node image you specify corresponds to a Kubernetes v1.37 cluster or later (such as kindest/node:v1.37.0 ). Older Kubernetes releases do not support the InPlacePodVerticalScalingSchedulerPreemption feature gate. Once your cluster is ready, inspect the node to check how many allocatable CPU cores it has: kubectl get nodes -o custom-columns = NAME:.metadata.name,ALLOCATABLE_CPU:.status.allocatable.cpu In a standard local kind environment, the output shows 8 allocatable CPU cores: NAME ALLOCATABLE_CPU kind-control-plane 8 2. Create PriorityClasses and deploy Pods Create two PriorityClasses and deploy a low-priority Pod (requesting 3 CPU) alongside a high-priority Pod (requesting 4 CPU). Together, these workloads consume 7 of the 8 available CPU cores, leaving 1 CPU of free allocatable headroom on the node. # preemption-demo.yaml apiVersion : scheduling.k8s.io/v1 kind : PriorityClass metadata : name : high-priority value : 1000000 globalDefault : false description : \"High priority workload\" --- apiVersion : scheduling.k8s.io/v1 kind : PriorityClass metadata : name : low-priority value : 1000 globalDefault : false description : \"Low priority workload\" --- apiVersion : v1 kind : Pod metadata : name : low-priority-pod spec : priorityClassName : low-priority containers : - name : worker image : nginx resources : requests : cpu : \"3\" memory : \"500Mi\" limits : cpu : \"3\" memory : \"500Mi\" --- apiVersion : v1 kind : Pod metadata : name : high-priority-pod spec : priorityClassName : high-priority containers : - name : app image : nginx resources : requests : cpu : \"4\" memory : \"1Gi\" limits : cpu : \"4\" memory : \"1Gi\" Save this manifest to preemption-demo.yaml and apply it: kubectl apply -f preemption-demo.yaml Wait until both Pods are running on the node: kubectl get pods Output: NAME READY STATUS RESTARTS AGE high-priority-pod 1/1 Running 0 9s low-priority-pod 1/1 Running 0 9s 3. Request an in-place scale-up Patch the high-priority Pod to increase its CPU request from 4 to 6 (+2 CPU delta). Because only 1 CPU of headroom is free on the node, this resize request exceeds remaining allocatable capacity: kubectl patch pod high-priority-pod --subresource resize --patch \\ '{\"spec\":{\"containers\":[{\"name\":\"app\", \"resources\":{\"requests\":{\"cpu\":\"6\"}, \"limits\":{\"cpu\":\"6\"}}}]}}' 4. Inspect the preemption event on the low-priority Pod With InPlacePodVerticalScalingSchedulerPreemption enabled, the scheduler intercepts the Deferred resize condition on high-priority-pod and targets low-priority-pod for preemption. To verify that the scheduler actively preempted the low-priority Pod, inspect its events: kubectl get events --field-selector involvedObject.name = low-priority-pod In the event stream (or via kubectl describe pod low-priority-pod ), you will see a Preempted event emitted by the scheduler: LAST SEEN TYPE REASON OBJECT MESSAGE 5s Normal Preempted pod/low-priority-pod Preempted by pod 97dba925-6b5f-4e2f-99f9-d51c30016586 on node kind-control-plane 5s Normal Killing pod/low-priority-pod Stopping container worker 5. Trace the resize event lifecycle on the high-priority Pod Next, inspect the event history on high-priority-pod to observe how the resize progressed from being deferred to successfully completed: kubectl get events --field-selector involvedObject.name = high-priority-pod You will observe a sequence of events as the Kubelet coordinates with the scheduler: LAST SEEN TYPE REASON OBJECT MESSAGE 33s Warning ResizeDeferred pod/high-priority-pod Pod resize OutOfcpu: { \"containers\" : [{ \"name\" : \"app\" , \"resources\" : { \"limits\" : { \"cpu\" : \"6\" , \"memory\" : \"1Gi\" } , \"requests\" : { \"cpu\" : \"6\" , \"memory\" : \"1Gi\" }}}] , \"generation\" :2, \"error\" : \"Node didn't have enough resource: cpu, requested: 6000, used: 3950, capacity: 8000\" } 32s Normal ResizeStarted pod/high-priority-pod Pod resize started: { \"containers\" : [{ \"name\" : \"app\" , \"resources\" : { \"limits\" : { \"cpu\" : \"6\" , \"memory\" : \"1Gi\" } , \"requests\" : { \"cpu\" : \"6\" , \"memory\" : \"1Gi\" }}}] , \"generation\" :2 } 32s Normal ResizeCompleted pod/high-priority-pod Pod resize completed: { \"containers\" : [{ \"name\" : \"app\" , \"resources\" : { \"limits\" : { \"cpu\" : \"6\" , \"memory\" : \"1Gi\" } , \"requests\" : { \"cpu\" : \"6\" , \"memory\" : \"1Gi\" }}}] , \"generation\" :2 } ResizeDeferred : The Kubelet initially marks the resize request as deferred ( Warning ) due to insufficient CPU headroom on the node ( OutOfcpu ). ResizeStarted : Once the scheduler preempts low-priority-pod and capacity is released, the Kubelet accepts the new allocation and begins actuating the resize. ResizeCompleted : The Kubelet successfully updates container cgroup limits via the container runtime without restarting the Pod. Finally, verify that the allocated CPU on the container reflects the new request (appending {\"\\n\"} to the JSONPath query ensures a trailing newline in your terminal): kubectl get pod high-priority-pod -o jsonpath = '{.status.containerStatuses[0].allocatedResources.cpu}{\"\\n\"}' Output: 6 This confirms that the in-place resize succeeded. Getting involved This feature represents a major step forward for resource scheduling, bringing enterprise-grade density control and workload prioritization to dynamic resource scaling. We invite cluster operators, platform architects, and developers to enable the InPlacePodVerticalScalingSchedulerPreemption feature gate in their testing environments and share feedback. If you want to share your experience with this feature, please get in touch with the community via SIG Scheduling or SIG Node channels!",
+            "url": "https://kubernetes.io/blog/2026/09/10/kubernetes-v1-37-scheduler-preemption-for-in-place-pod-resize-alpha/",
+            "source": "Kubernetes",
+            "category": "hardware",
+            "tags": [
+                "cloud-native",
+                "containers",
+                "kubernetes"
+            ],
+            "published_at": "2026-09-10T18:30:00+00:00",
+            "collected_at": "2026-09-11T02:19:27.139304+00:00"
         },
         {
             "id": "8be1367add05be6f889959cc79bed324711049e5b8221cda85ce9057778f76cf",
@@ -847,6 +1790,21 @@
             "collected_at": "2026-09-10T20:18:23.719860+00:00"
         },
         {
+            "id": "d957d6c999575906f6dc4142f8a1e2fd96217aa937e7b8492944b6fd86966d3a",
+            "title": "Detecting and countering misuse of AI: September 2026",
+            "description": "Comments",
+            "url": "https://www.anthropic.com/threat-intelligence-report-september-2026",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-10T17:23:42+00:00",
+            "collected_at": "2026-09-11T02:19:15.918529+00:00"
+        },
+        {
             "id": "6094b9029a5be643a0eeebcae249f656cb449d68c568c278e21c5ea6bc55beae",
             "title": "Gemini’s new Windows app lets you talk to Google’s AI with a keyboard shortcut",
             "description": "Pressing alt + space is a lot quicker than navigating to Gemini in your browser.",
@@ -1025,6 +1983,21 @@
             ],
             "published_at": "2026-09-10T16:52:11+00:00",
             "collected_at": "2026-09-10T20:17:18.767568+00:00"
+        },
+        {
+            "id": "4be49af9477a3ad34fd49297e2c7d04b2322dae1c04e99e85d939f93e628c9b3",
+            "title": "Amazon ECS expands IAM condition key support for RunTask and StartTask APIs",
+            "description": "Amazon Elastic Container Service (Amazon ECS) now supports the IAM condition keys for CPU and memory resources on the RunTask and StartTask APIs. Administrators can use these keys to enforce consistent CPU and memory limits across all methods of launching ECS tasks. This helps organizations prevent unexpected cost overruns and keep workloads aligned with their resource policies. Previously, the ecs:task-cpu and ecs:task-memory condition keys were available only on the RegisterTaskDefinition, CreateService, and UpdateService APIs. These condition keys are now extended on the RunTask and StartTask APIs. Now, IAM policies that reference these condition keys are evaluated when tasks are launched through RunTask and StartTask as well, giving administrators a single, unified mechanism to control resource allocation across their ECS environments. This enhancement is available in all AWS Regions where Amazon ECS is available, at no additional cost. To learn more about using condition keys with Amazon ECS, refer to our documentation .",
+            "url": "https://aws.amazon.com/about-aws/whats-new/2026/09/amazon-ecs-expands-condition-key-support/",
+            "source": "AWS What's New",
+            "category": "cloud",
+            "tags": [
+                "amazon",
+                "aws",
+                "cloud"
+            ],
+            "published_at": "2026-09-10T16:52:00+00:00",
+            "collected_at": "2026-09-11T02:19:19.843016+00:00"
         },
         {
             "id": "bdb703a37beb8ff91186b2d3c57ce4eb1f7abd7cd28140b2488a5000174ed753",
@@ -1579,6 +2552,21 @@
             ],
             "published_at": "2026-09-10T15:29:30+00:00",
             "collected_at": "2026-09-10T20:17:18.767230+00:00"
+        },
+        {
+            "id": "20a18063144debffec21b3c00a48f44ebb8f22da74f12cf8181e9f04a6ce8edd",
+            "title": "Technique for Manipulating Satellite Photos Now Reveals Ancient Images (2025)",
+            "description": "Comments",
+            "url": "https://spinoff.nasa.gov/Manipulating_Satellite_Photos_Now_Reveals_Ancient_Images",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-10T15:29:30+00:00",
+            "collected_at": "2026-09-11T02:19:15.917926+00:00"
         },
         {
             "id": "fd125d81e655ed07caf154f1b3e0c9c984559ea0a5035f662327f299499d933f",
@@ -4263,6 +5251,21 @@
             "collected_at": "2026-09-10T15:36:40.075997+00:00"
         },
         {
+            "id": "211a7ee82aaf4e9de73a22a9188e50e9a07ebb62c92f8d26389f7580f56ce9e1",
+            "title": "AWS Storage Gateway now supports FIPS-compliant private connectivity for Amazon S3 File Gateway",
+            "description": "AWS Storage Gateway now supports FIPS 140-3 validated endpoints over AWS PrivateLink for Amazon S3 File Gateway. Previously, FIPS endpoints for File Gateway were available only over the public internet. Now you can keep FIPS-compliant traffic on the private AWS network, making it easier to use Storage Gateway for regulated workloads. With this launch, your File Gateway can reach the Storage Gateway service endpoints privately through a FIPS interface VPC endpoint in your VPC. You can also create NFS and SMB file shares that reach Amazon S3 through an S3 FIPS interface endpoint, enabling FIPS-compliant private connectivity for your end-to-end file transfer workloads. To get started, create FIPS interface endpoints for Storage Gateway and Amazon S3 in your VPC, then choose the FIPS VPC endpoint option when activating your gateway and configuring your file shares. To activate a gateway with a FIPS PrivateLink endpoint, your gateway must be running software version 2.1.10 or later. This launch is available in the eight AWS Regions where Storage Gateway offers FIPS endpoints: US East (N. Virginia), US East (Ohio), US West (N. California), US West (Oregon), Canada (Central), Canada West (Calgary), AWS GovCloud (US-East), and AWS GovCloud (US-West). To learn more, visit the AWS Storage Gateway User Guide or the product page .",
+            "url": "https://aws.amazon.com/about-aws/whats-new/2026/09/storage-gateway-fips-privatelink-s3/",
+            "source": "AWS What's New",
+            "category": "cloud",
+            "tags": [
+                "amazon",
+                "aws",
+                "cloud"
+            ],
+            "published_at": "2026-09-10T08:00:00+00:00",
+            "collected_at": "2026-09-11T02:19:19.844453+00:00"
+        },
+        {
             "id": "b8656f4c9f300a8696934f83d825d8aea45350efe4a7623fe2e758b292b4cdae",
             "title": "Apple’s new watches borrow one of Fitbit and Oura’s smartest health features",
             "description": "Older Apple Watches appear set to miss out on smarter recovery guidance.",
@@ -6666,6 +7669,21 @@
             ],
             "published_at": "2026-09-09T18:00:00+00:00",
             "collected_at": "2026-09-09T20:15:29.477598+00:00"
+        },
+        {
+            "id": "fb924f8df28546ea6ba67c4fd83fb627ef35f66e5a803b6e25aaa0fc2bc06ef4",
+            "title": "Two zones or three? A design framework for zone-resilient Azure workloads",
+            "description": "Zone resiliency isn't a single number you apply to a whole workload. The useful question isn't “how many zones?” but “how many zones does each component need to survive the loss of one?” Decide zone patterns component by component, use service-managed zone redundancy wherever it fits, and reserve three-zone designs for the components that genuinely require a third failure domain. The post Two zones or three? A design framework for zone-resilient Azure workloads appeared first on Microsoft Azure Blog .",
+            "url": "https://azure.microsoft.com/en-us/blog/two-zones-or-three-a-design-framework-for-zone-resilient-azure-workloads/",
+            "source": "Microsoft Azure",
+            "category": "cloud",
+            "tags": [
+                "azure",
+                "cloud",
+                "microsoft"
+            ],
+            "published_at": "2026-09-09T18:00:00+00:00",
+            "collected_at": "2026-09-11T02:19:20.241627+00:00"
         },
         {
             "id": "7df98359da26516b31b1e3f0bf5a5ad46a323a21639bed8832581264dd8c281d",
@@ -12234,6 +13252,21 @@
             "collected_at": "2026-09-09T02:24:45.861964+00:00"
         },
         {
+            "id": "c586bf68c033cb10066f123ff38dcc1079dc998471605da31ef151c4de5e1e07",
+            "title": "Embedding a bitmap font in your HyperCard stack",
+            "description": "Comments",
+            "url": "https://www.leadedsolder.com/2026/09/08/hypercard-custom-fonts-in-resources.html",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-08T23:30:11+00:00",
+            "collected_at": "2026-09-11T02:19:15.918624+00:00"
+        },
+        {
             "id": "4d64e58134b09350cfacdc39786b71e089e469c3d23436db720a4e69d873e2fc",
             "title": "White House takes down ‘Build the Wall’ game after the Tetris Company complains",
             "description": "The Trump administration's short-lived arcade game \"Build the Wall\" is now nowhere to be found after the Tetris Company posted that it takes \"copyright infringement very seriously.\"",
@@ -13186,6 +14219,21 @@
             ],
             "published_at": "2026-09-08T19:50:00+00:00",
             "collected_at": "2026-09-08T20:33:02.189731+00:00"
+        },
+        {
+            "id": "c1b111092d2ed152079e434964fe3873e88c891793fc2a133dbee7dcdbce2577",
+            "title": "What happens when a GPU writes memory",
+            "description": "Comments",
+            "url": "https://blog.doubleword.ai/what-happens-when-a-gpu-writes-memory",
+            "source": "Hacker News",
+            "category": "hardware",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-08T19:46:59+00:00",
+            "collected_at": "2026-09-11T02:19:15.918364+00:00"
         },
         {
             "id": "72acbbc6740eaa8590e07a094a8033e1d69c31c468277c68f8d378f0ccc68ec9",
@@ -18332,6 +19380,21 @@
             "collected_at": "2026-09-08T02:21:35.635577+00:00"
         },
         {
+            "id": "37e2a73866ffaef5ce5f602209a5bbac8e7999ba8418802e6ccf55bd4734ac29",
+            "title": "Show HN: Vertumnus – printable posters of farmers' market produce seasonality",
+            "description": "Comments",
+            "url": "https://vertumnus.fyi",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-08T01:08:10+00:00",
+            "collected_at": "2026-09-11T02:19:15.918797+00:00"
+        },
+        {
             "id": "45b14c2dcaa3dbba02cf059619f74759b1b4a9765b6d082edfd564cc92b1795c",
             "title": "Bitcoin Bull Market Setup Mirrors 2015, Willy Woo Says as Debate Grows",
             "description": "A bullish bitcoin setup is emerging as BTC separates from the S&P 500, according to Willy Woo, who compares the divergence with 2015. Another analyst disputes whether the chart shows a meaningful decoupling. Bitcoin-Stock Split Revives the 2015 Comparison Bitcoin market analyst Willy Woo argued Sept. 6 that BTC’s relationship with stocks had reached its […]",
@@ -18775,6 +19838,21 @@
             "collected_at": "2026-09-08T02:21:53.120405+00:00"
         },
         {
+            "id": "de681e0fd1ee6d4440bf488aa8f9c3e4fbbe2a05cf83215a49feea32ac8c5448",
+            "title": "Recursion into madness",
+            "description": "Comments",
+            "url": "https://blog.coredump.cx/p/recursion-into-madness",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-07T21:50:12+00:00",
+            "collected_at": "2026-09-11T02:19:15.918235+00:00"
+        },
+        {
             "id": "4ccce7e507491f711af62c501fd5e75c1052cef951cedfe9879b35dda5a89002",
             "title": "Hardening Container Images",
             "description": "Comments",
@@ -19087,6 +20165,21 @@
             ],
             "published_at": "2026-09-07T17:33:39+00:00",
             "collected_at": "2026-09-08T02:21:44.743640+00:00"
+        },
+        {
+            "id": "8a324b3a1c111c1f869fcc0beeb29ae2798b1d9998039556f911449ea12fd3b9",
+            "title": "Customizing my Compaq MX-11800 keyboard",
+            "description": "Comments",
+            "url": "https://blog.webb.page/WM-102",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-07T17:21:55+00:00",
+            "collected_at": "2026-09-11T02:19:15.918016+00:00"
         },
         {
             "id": "657714570d70215cfe2f33e42f8c98df726e30cb1d5955c4d0c563330739b8b9",
@@ -96653,6 +97746,21 @@
             ],
             "published_at": null,
             "collected_at": "2026-09-10T20:18:20.619707+00:00"
+        },
+        {
+            "id": "baa39032259715dd52d8b4fe9ea8372e90c56a35a9fd0b20a9010a815f6899a4",
+            "title": "Slack can now vibe-code interactive charts and reports inside chats",
+            "description": "A new feature coming to Slack will allow you to build interactive reports, polls, dashboards, presentations, microsites, and other tools directly inside a chat. With Slackforce Surfaces, you can describe to Slackbot what you need, and it will use AI to gather information from relevant conversations and connected apps, like Google Drive or Salesforce, to […]",
+            "url": "https://www.theverge.com/tech/989853/slackforce-surfaces-launch",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-09-11T02:19:14.841093+00:00"
         }
     ]
 }
