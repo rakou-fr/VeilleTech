@@ -1,6 +1,6 @@
 {
-    "updated_at": "2026-09-12T14:44:28.625364+00:00",
-    "count": 6830,
+    "updated_at": "2026-09-12T19:57:50.700588+00:00",
+    "count": 6879,
     "articles": [
         {
             "id": "968c32634dc2a1cb83f007064d0bd309276c504696b107928b2bc3d51ba9601b",
@@ -17,6 +17,644 @@
             ],
             "published_at": "2026-09-14T00:00:00+00:00",
             "collected_at": "2026-09-12T02:26:22.005025+00:00"
+        },
+        {
+            "id": "68468b55d82018f3b6fbd0d6eb3f6db788b0ce9f1186eb01785670511c1c7b14",
+            "title": "Managing Complex Application State with Reactive Data Flows",
+            "description": "Comments",
+            "url": "https://yogthos.net/posts/2026-09-12-reactive-dataflow.html",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-09-12T19:45:31+00:00",
+            "collected_at": "2026-09-12T19:57:33.888199+00:00"
+        },
+        {
+            "id": "a7f8d85b0fe7475b59d66c0b822397d6daad04b76e0921ffe119a79bb831afeb",
+            "title": "Why we moved our Backstage platform from Yarn to pnpm",
+            "description": "What Git worktrees, parallel coding agents, and a cache pointing at the wrong directory taught us about the assumptions hiding inside node_modules . I’m a developer at bol, where we have been building and running our internal developer platform on Backstage for more than five years. After that much time, a Backstage platform becomes more than a collection of plugins. It accumulates its own ways of working: CI conventions, local startup tooling, container images, Git worktree helpers, and shortcuts that make sense inside one engineering organization. One of our most productive choices has been using Git worktrees for parallel development with coding agents. An agent can fix a bug in one worktree while another handles a small improvement elsewhere, without branches fighting over the same working directory. When several small tasks are moving at once, this can multiply the amount of useful work we finish. That workflow also made our package manager part of the architecture. We wanted a more forward-looking setup, and pnpm looked like a better fit: a shared content-addressable store, efficient reuse across checkouts, and a dependency layout managed by the package manager itself. Our goal was simple: let independent worktrees move in parallel, while package content is reused safely from one shared store. So we moved from Yarn 4 to pnpm. I expected the lockfile and commands to be the main work. They were only the entrance to the migration. The migration looked finished until CI ran The visible switch was straightforward: pin pnpm 12.3.0, commit pnpm-lock.yaml , replace the Yarn commands, and update the contributor guides. Then CI ran and downloaded 4,226 packages from scratch. The next run did the same. The log read reused: 0, downloaded: 4226 . The download itself took about 18 seconds, but the native node-gyp builds added several minutes on top. We had changed package managers, and the pipeline was behaving as if no cache existed. It turned out that the cache did exist. It was looking in the wrong place. The store had two addresses Our container image carried a global pnpm configuration that sent the store to /builds/.pnpm-store . GitLab, meanwhile, was trying to archive .pnpm-store inside the project checkout. pnpm wrote outside that directory, the archiver found no matching files, and every job that followed started cold. The fix was small: set the location explicitly inside CI, and print the effective value so the job log can prove it. .gitlab-ci.yml variables : npm_config_store_dir : ' .pnpm-store' before_script : - pnpm config set store-dir \"$CI_PROJECT_DIR/.pnpm-store\" - pnpm store path That was the first real lesson of this migration: never reason about a package-manager cache from configuration files alone. Ask the running job where its store actually is. We also stopped retrying script failures automatically. A dropped connection may deserve a retry. A --frozen-lockfile mismatch will fail six times for exactly the same reason, and bill you for six runners on the way. When a working cache became the slow part Once the store was finally cached, the next problem surfaced. The archive now held the pnpm store and every node_modules tree: 1.42 GB spread across roughly 601,000 files. Four jobs pulled that archive. Saving, transferring, and extracting it became a substantial part of the pipeline. Worse, our installs still rebuilt the dependency layout and the native modules anyway, so those cached node_modules trees were not buying the time we expected. After keeping the pnpm store and dropping node_modules from this cache, its size fell by about 72% and its file count by about 59%. Figures are approximate observations taken during the migration. We removed node_modules , plugins/*/node_modules , and packages/*/node_modules from the cache paths. The archive fell to roughly 400 MB and 244,000 files—about six minutes saved per pipeline, by our estimate. The useful lesson was to measure the dependency phase we actually had: restore, install, native builds, save. pnpm’s own CI documentation warns that caching its store is not guaranteed to make installation faster; the right policy depends on your runner, your network, and your workload. [1] The fastest retry is the one you do not schedule We switched installs to --frozen-lockfile --prefer-offline , made transfer progress visible in the logs, and chose faster cache compression. Each change removed a little uncertainty. That mattered, because the migration was no longer one problem: it was a chain in which every fix exposed the next bottleneck. Then pnpm met our custom worktree machinery The hardest surprise was local development. Our worktree bootstrap contained about 350 lines of custom symlink-farm logic, all of it built around the node_modules structure we had used with Yarn. The helper mirrored third-party dependencies from the main checkout and redirected workspace packages to each worktree’s own source. It was clever, fast when its assumptions held, and deeply coupled to a filesystem layout that the package manager was free to change. pnpm uses a virtual store and links packages into the dependency graph. [2] In our setup, the old mirroring code met pnpm links where it expected ordinary directories, and we began seeing ENOTDIR failures. The optimization that made worktrees convenient had become the thing preventing worktrees from working. The best fix deleted the clever part Instead of teaching our symlink farm every detail of pnpm’s layout, I deleted it. The central helper went from 370 lines to 31, and the whole bootstrap became one command: pnpm install --frozen-lockfile Each checkout gets an installation created by pnpm, while package content can still be reused through the shared store. This was the point where the migration began to feel successful. We had not recreated the previous mechanism under a new name. We had returned ownership of dependency layout to the package manager. There was a tradeoff. Our replacement verifier is much lighter: it checks for node_modules/.pnpm instead of walking dangling links and proving that every workspace package resolves correctly. Less maintenance code is valuable, but I still want an integration check that edits a plugin in a secondary worktree and confirms the running application uses that source. Existing laptops remembered the old world A clean checkout worked. Some existing developer checkouts did not. They still contained the project-local .pnpm-store created by our earlier configuration. Once local development moved to the global store, pnpm detected the mismatch and relinked roughly 4,800 packages on repeated starts—about four minutes, for a change that should not have required a dependency install at all. We added a one-time migration to startup: detect the obsolete local store, remove it together with the root node_modules and the dependency hash, then run one clean install. Later starts with an unchanged lockfile take the existing hash-skip path and return almost immediately. That distinction matters. pnpm did not install 4,800 packages in zero seconds. Our startup code learned when no install was needed. A migration must include yesterday’s state This changed how I think about developer-tool migrations. Testing a fresh clone is necessary, but your colleagues do not all have fresh clones. They have old caches, generated files, global configuration, half-finished branches, and worktrees created before the migration. The cleanup also had to be environment-specific. CI intentionally kept a project-local store so GitLab could archive it. Local development treated that same directory as stale. The name of a folder is not enough context to decide whether it should be deleted. Slow networks exposed another edge On slower office and VPN connections, pnpm’s default request concurrency could lead to timeouts. We time a request for a small artifact in our registry; when a successful request takes more than three seconds, bootstrap adds --network-concurrency=1 , five fetch retries, and a longer maximum retry timeout. The idea helped, but the implementation taught us something as well: a failed probe never reaches the slow-success branch. A production version of this pattern should decide explicitly what a timeout, an authentication failure, and a slow success each mean. The journey improved more than installation Once we were looking closely at the pipeline, we found work that was only loosely related to pnpm but still affected the experience of the migration. Jest coverage was one example. Its cache had grown to 5.2 GB. We switched to the V8 coverage provider and enabled inline source maps for @swc/jest , which brought the cache back to no more than 2 GB. [3] A later change removed Jest-cache transfer entirely and revisited test selection, worker limits, and when coverage runs. These are reported outcomes from the wider CI work. The unit-test change includes test selection, coverage policy, worker, and cache changes, so it is not a pnpm-only benchmark. Unit-test wall time moved from 17 minutes to roughly 10. That result is useful, but I would not present it as “pnpm made our tests 41% faster.” The amount and the kind of test work changed too. We enabled incremental TypeScript compilation and baked the pinned pnpm version into the runtime image. We also had to make our native-build policy explicit: one image gained pkg-config and the libsecret development headers, while our pnpm workspace policy later disabled keytar ’s build. Installing native prerequisites and disabling a build are different choices. If the application needs the native module at runtime, a green install is not sufficient evidence that the decision is safe. The results I would confidently share The dependency cache shrank from 1.42 GB to about 400 MB, and from roughly 601,000 files to 244,000. A worktree bootstrap helper shrank from 370 lines to 31, by replacing custom filesystem logic with pnpm install . Warm installs in the reported CI run reused 4,226 packages and downloaded none, once the store path was corrected. Unchanged local startup can skip dependency installation entirely, after the stale state is cleaned once. Jest cache size and unit-test duration both came down—though several of those causes sit outside the package-manager switch. What I would tell the next team Moving a mature Backstage monorepo to pnpm is not mainly a search-and-replace exercise. The package manager sits underneath a web of assumptions about directories, caches, startup order, native builds, and developer habits. Start with the workflow you want to enable. For us, that was dependable parallel development with Git worktrees and coding agents. Map every place that knows about dependencies: CI jobs, images, bootstrap scripts, worktree tools, docs, generators, and assistant instructions. Print the effective store path inside the real job image. Run the same lockfile twice and capture restore, install, native-build, and save time separately. Benchmark no cache, store-only caching, and your existing strategy. Measure elapsed pipeline time separately from the sum of concurrent job durations. Exercise a clean clone and an old checkout. Test stale stores, unchanged restarts, dependency changes, slow networks, and authentication failures. Change source code inside a secondary worktree and prove the running Backstage instance uses it. Directory existence alone is a weak health check. Prefer deleting compatibility machinery when the new package manager can own the same responsibility. What happened on our journey We began with a productivity idea: parallel agents working safely in separate Git worktrees. We chose pnpm because its shared store and installation model fit that direction. Then the migration forced us to confront every place where our platform still depended on the old world. We fixed a cache that pointed to the wrong directory. We removed hundreds of thousands of unnecessary files from that cache. We deleted a custom symlink farm. We cleaned stale state from existing laptops, adapted to slow connections, and made native build policy explicit. The biggest gain was not one benchmark. Our setup became easier to explain: pnpm manages dependencies, CI caches a deliberate store, and each worktree is an independent place for an engineer or a coding agent to work. That clarity is what lets the productivity benefit survive after the migration project is over. Appendix: the code changes, end to end Everything above is the story. This is the diff. Below are the concrete changes we made, in the order that mattered, so you can lift them into your own repository without repeating the week we spent finding them. Versions and paths are ours—adjust them to your setup. Do step 5 first. If the store lands in the wrong directory, everything else here is wasted: the cache misses on every run, and every number you measure afterward is the wrong number. 1. package.json —declare the package manager Pin the version once, so CI, laptops, and containers cannot disagree about it. { \"packageManager\" : \"pnpm@12.3.0\" } 2. .npmrc —use the global store, prefer offline -store-dir=.pnpm-store +prefer-offline=true +side-effects-cache=true Removing store-dir is the line that matters. A project-local store conflicts with the global one, and it is exactly the leftover that step 11 has to clean up later. 3. tsconfig.json —enable incremental compilation \"compilerOptions\": { + \"incremental\": true, + \"tsBuildInfoFile\": \"build/.tsbuildinfo\" } Add build/.tsbuildinfo to .gitignore . 4. Jest—switch the coverage provider to V8 jest.config.js (or the Jest block in package.json ): -\"sourceMaps\": false +\"sourceMaps\": \"inline\" Inline source maps are what V8 needs to map coverage back to your sources. Then change the CI test command: -pnpm test:all --coverage +pnpm test:all --coverage --coverageProvider=v8 Why: the Babel provider writes duplicate transform-cache entries—one instrumented, one not—which is what took our Jest cache from around 2 GB to over 5 GB. [3] 5. GitLab CI—make the store path win The Docker image’s global pnpm configuration overrides .npmrc , so configuration alone will not win this argument. An environment variable will. Log the effective path in the same breath, so the job can prove where its store is: variables : npm_config_store_dir : ' .pnpm-store' # env var beats global config before_script : - corepack enable pnpm - pnpm config set store-dir \"$CI_PROJECT_DIR/.pnpm-store\" - pnpm store path # log it, so you can verify it 6. GitLab CI—cache the store, not node_modules cache: paths: - '.pnpm-store/' - - 'node_modules/' - - 'plugins/*/node_modules/' - - 'packages/*/node_modules/' pnpm re-links from the store on every install, so caching node_modules adds archive overhead with no install-time benefit. While you are in there, switch cache compression to fast—a large store is network-bound, not CPU-bound: variables : CACHE_COMPRESSION_LEVEL : ' fast' TRANSFER_METER_FREQUENCY : ' 2s' # shows transfer times in the job log 7. GitLab CI—pass --prefer-offline in every job -pnpm install --frozen-lockfile +pnpm install --frozen-lockfile --prefer-offline In every job that installs— install_deps , build , test-and-lint —not only the install job, so the pipeline still behaves when the cache is cold. 8. GitLab CI—stop retrying script failures retry: when: - runner_system_failure - stuck_or_timeout_failure - api_failure - - script_failure # six retries for one deterministic lockfile failure 9. CI image—give keytar what it needs, or turn its build off RUN apt-get install -y \\ python3 g++ build-essential \\ + pkg-config libsecret-1-dev The alternative is adding keytar to allowBuilds: false . These are genuinely different decisions: if the application needs the native module at runtime, a green install is not evidence that skipping the build was safe. 10. Runtime image—bake Corepack in once Dockerfile (base image): ARG PNPM_VERSION=12.3.0 RUN corepack enable && corepack prepare pnpm@ ${ PNPM_VERSION } --activate Dockerfile (application image): -RUN corepack enable && corepack prepare pnpm@12.3.0 Caveat: if your build environment cannot reach a private registry from RUN layers—Cloud Build, in our case—point this one step at the public npm registry. 11. Startup script—clean up the stale local store If store-dir=.pnpm-store was ever in your .npmrc , every existing checkout still has a project-local store. pnpm sees the storeDir mismatch and re-links every package on every install—roughly four minutes, for us. One guard in the start script fixes it for the whole team, once: const staleLocalStore = join ( root , ' .pnpm-store ' ); if ( existsSync ( staleLocalStore )) { rmSync ( staleLocalStore , { recursive : true , force : true }); rmSync ( join ( root , ' node_modules ' ), { recursive : true , force : true }); if ( existsSync ( hashFile )) rmSync ( hashFile ); } Keep this environment-specific. CI deliberately keeps a project-local store so GitLab can archive it; only local development should treat that directory as stale. The name of a folder is not enough context to decide whether it should be deleted. 12. Install scripts—a slow-network guard Time one small request to the registry, and back off the concurrency only when a successful request is slow: _pnpm_extra_flags =() _start_ms = $( date +%s%3N ) curl -fsSo /dev/null --max-time 5 \\ https://registry.npmjs.org/is-odd/-/is-odd-3.0.1.tgz 2>/dev/null && \\ _elapsed = $(( $( date +%s%3N ) - _start_ms )) && \\ (( _elapsed > 3000 )) && \\ _pnpm_extra_flags+ =( --network-concurrency = 1 --fetch-retries = 5 \\ --fetch-retry-maxtimeout = 120000 ) || true pnpm install --frozen-lockfile \" ${ _pnpm_extra_flags [@]+ \" ${ _pnpm_extra_flags [@] } \" } \" Note the edge in our version: a probe that fails outright falls straight through to the normal path. Decide deliberately what a timeout, an authentication failure, and a slow success should each do. 13. Worktrees—do not install in secondary checkouts If you have worktrees or slot-mode checkouts that share the main node_modules , do not run pnpm install in the secondary checkout. In hoisted mode, pnpm 12 hits ENOTDIR when it tries to create symlinks over the real directories the shared farm has already placed there. What the numbers looked like Metric Before After install_deps on a new lockfile ~3.5 min ( reused 0 , downloaded 4226 ) Seconds ( reused 4226 , downloaded 0 ) CI cache size 1.42 GB / 601k files ~400 MB / 244k files Per-pipeline cache overhead (4 jobs) +~12 min Baseline Jest cache size 5.2 GB ≤ 2 GB Unit-test wall time 17 min ~10 min Local startup (executor JIT) 22–26 s silent gap ~2–3 s Local install after a 1-line change ~4 min (stale store) ~0 s (hash skip) CI Corepack setup Every application build Once per runtime image rebuild These are observations from our pipeline, not a controlled benchmark. Several of them—the test numbers in particular—include changes that have nothing to do with the package manager. Measure your own before and after. References pnpm—Continuous Integration pnpm—Symlinked node_modules structure Jest— coverageProvider",
+            "url": "https://dev.to/bogdan_nechyporenko/why-we-moved-our-backstage-platform-from-yarn-to-pnpm-21ap",
+            "source": "DEV Community",
+            "category": "hardware",
+            "tags": [
+                "developpement",
+                "docker",
+                "git",
+                "programmation",
+                "python",
+                "typescript",
+                "web"
+            ],
+            "published_at": "2026-09-12T19:44:23+00:00",
+            "collected_at": "2026-09-12T19:57:34.064597+00:00"
+        },
+        {
+            "id": "f6a9193a79ffeff9ac8b8ed7a144095ce3fb76f826d55eff059e6927179a175b",
+            "title": "Why Static Mock APIs Aren't Enough for Modern Frontend Development",
+            "description": "Every frontend developer has experienced this sequence: You start building an interactive web application. The backend is not yet ready, so you connect to a popular free mock API like JSONPlaceholder or a local static db.json file. You fetch data with a GET request. The cards render nicely on screen. You build a form to create a new user or submit an order. You send a POST request. The API responds with a cheerful { id: 101, status: \"created\" } . You trigger your UI's refresh action to see the new item in the list. Nothing happens. The list is identical to what it was before. Your newly created item has vanished into thin air. For over a decade, developers have accepted this as \"normal\" mock API behavior. But in modern web development, where applications rely heavily on query caching, optimistic UI updates, and reactive state stores, static mock APIs are no longer sufficient. The Illusion of the 200 OK \"Echo\" Static mock servers operate on a simple principle: stateless echo responses . When you send a POST request to a traditional static mock endpoint, the server does not store the data anywhere. It simply inspects the JSON payload you sent, appends a hardcoded fake ID (like id: 101 ), and sends it back to you: [Frontend] --- POST /posts { title: \"Hello World\" } ---> [Static Mock Server] [Frontend] <-- 201 Created { id: 101, title: \"Hello\" } -- [Static Mock Server] (Data discarded immediately) [Frontend] --- GET /posts/101 -------------------------> [Static Mock Server] [Frontend] <-- 404 Not Found --------------------------- [Static Mock Server] This statelessness introduces severe friction in three core areas of modern frontend engineering: 1. TanStack Query / SWR Cache Invalidation Breaks In modern React and Vue applications, libraries like TanStack Query (React Query) manage server state. A standard mutation pattern looks like this: // TanStack Query mutation pattern const mutation = useMutation ({ mutationFn : createPost , onSuccess : () => { // Invalidate and refetch the posts query queryClient . invalidateQueries ({ queryKey : [ ' posts ' ] }); }, }); With a static mock API, when invalidateQueries triggers a background GET request, the server returns the original un-mutated seed list. The UI flickers, and your created item disappears. Developers end up writing artificial client-side hacks just to simulate what a real backend does automatically. 2. Form Edits ( PUT / PATCH ) Cannot Be Verified When you update a user’s profile name or email, you need to verify that subsequent navigation steps (such as going to an Account Settings page or viewing an avatar card) reflect the updated values. Static mock APIs return 200 OK on PATCH , but subsequent GET /users/1 calls still return the original seed name. 3. Deletion and Empty States Cannot Be Tested If your UI has conditional rendering for empty states (\"No items found. Click here to add one\"), you cannot test this flow by deleting records through the UI. The Solution: Stateful Session-Based Mock APIs The solution is not to force frontend developers to build SQLite or Postgres backends for every prototype. The solution is stateful API mocking . A stateful mock API preserves mutations across requests without requiring developers to maintain a database. [User Browser A] (Session A) │ ├── POST /posts {\"title\": \"Post from Tab A\"} │ └── Saved to Overlay Table (Session A) │ └── GET /posts └── Returns: [Seed Posts + \"Post from Tab A\"] How Virtual Overlays Work Under the Hood Instead of mutating a global database that would corrupt data for other developers, tools like Playground API use a virtual per-session overlay architecture : Shared Read-Only Seed Data: Standard resources (users, posts, comments, todos) are loaded from a global, read-only baseline dataset. Session Identification: When a client sends a request, an HTTP-only session cookie (or X-Playground-Identity header) identifies the caller's sandbox. Overlay Interception: When a POST , PUT , PATCH , or DELETE request arrives, the modification is recorded in a temporary session table. Dynamic Merge: When a GET request occurs, the engine merges the baseline seed records with the session's overlays (injecting created records, applying patches, and filtering out deleted IDs). The result? To your frontend application, the API behaves identically to a production database backend . Concrete Comparison: Testing a Mutation Workflow Let's test this in code using fetch : const API_BASE = ' https://playground.nileslabs.com/api/v1 ' ; async function testStatefulBehavior () { console . log ( ' 1. Creating a new post... ' ); const createRes = await fetch ( ` ${ API_BASE } /posts` , { method : ' POST ' , headers : { ' Content-Type ' : ' application/json ' }, body : JSON . stringify ({ title : ' Stateful Mocking in 2026 ' , body : ' Mutations persist across GET requests within your session. ' , user_id : 1 , }), }); const newPost = await createRes . json (); console . log ( ' Created Post ID: ' , newPost . id ); // e.g. ID: 101 console . log ( ' \\n 2. Fetching the created post by its ID... ' ); const getSingleRes = await fetch ( ` ${ API_BASE } /posts/ ${ newPost . id } ` ); console . log ( ' GET Single Status: ' , getSingleRes . status ); // 200 OK! const fetchedPost = await getSingleRes . json (); console . log ( ' Fetched Post Title: ' , fetchedPost . title ); console . log ( ' \\n 3. Fetching the full list to verify list inclusion... ' ); const getListRes = await fetch ( ` ${ API_BASE } /posts?_page=1&_limit=5` ); const list = await getListRes . json (); const exists = list . some ( item => item . id === newPost . id ); console . log ( ' Is new post present in GET /posts list? ' , exists ); // true } testStatefulBehavior (); When Are Static Mocks Still Useful? Static mocks still have their place in development workflows: Unit Component Testing (Storybook / Jest): For isolated UI render tests where a static JSON fixture is sufficient. Static Schema Validation: Verifying TypeScript types against hardcoded sample responses. However, whenever you are testing user interactions , caching lifecycles , form submissions , or end-to-end flows , a stateful mock API is essential. Summary Checklist Requirement Static Mock API (JSONPlaceholder) Stateful Sandbox (Playground API) GET baseline datasets ✅ Supported ✅ Supported POST returns created item ✅ Supported (Echo only) ✅ Supported (Persisted) GET /resource/:id after POST ❌ Returns 404 ✅ Returns created record DELETE removes item from list ❌ Item remains ✅ Item removed TanStack Query Cache Invalidation ❌ Fails / Inaccurate ✅ Works out-of-the-box Session Reset Capability ❌ N/A ✅ DELETE /session/reset Conclusion Frontend development has outgrown stateless dummy endpoints. If your UI handles forms, mutations, deletes, and reactive caching, your mock environment should reflect those real-world operations. Explore persistent sandbox mutations with Playground API by Niles Labs and test your frontend applications against realistic backend behavior.",
+            "url": "https://dev.to/nileslabs/why-static-mock-apis-arent-enough-for-modern-frontend-development-5861",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "programmation",
+                "typescript",
+                "web"
+            ],
+            "published_at": "2026-09-12T19:41:12+00:00",
+            "collected_at": "2026-09-12T19:57:34.065774+00:00"
+        },
+        {
+            "id": "df436f0e0511ba6c33239aee9045cd0db7ffe50b5d9b882948ce4d806ae7baa0",
+            "title": "I Ship Mobile Apps for $0: Vercel + Render + Supabase Free Tier",
+            "description": "TL;DR: My entire mobile stack costs $0 a month. Expo builds the app. Supabase holds data and auth. Render runs background jobs. Vercel hosts the landing page. Free tiers cover all of it. The table below shows every piece, its limit, and the catch. Steal this setup. My infrastructure bill is zero dollars. Not \"free trial\" zero. Not \"first year\" zero. Actual, ongoing, every-month zero. I ship a real mobile app with real users on free tiers. This post is the full receipt. People assume shipping an app costs money. Servers. Databases. Auth. Hosting. It sounds like hundreds a month. It is not. The free tiers in 2026 are absurdly generous. You can go from idea to production without touching a credit card. I know because I did. Here is the whole stack in one table: Piece Service Free tier The catch Mobile app Expo + EAS Free builds, OTA updates Build queues get slow at peak hours Database + Auth Supabase 500MB Postgres, 50k monthly users Project pauses after 7 idle days Background jobs Render 750 free hours monthly Spins down after 15 min idle, slow cold start Landing page Vercel 100GB bandwidth, auto SSL Build minutes capped monthly Code hosting + CI GitHub Unlimited public repos, 2000 CI minutes Private repo minutes burn faster Publishing pipeline This repo $0 forever You write the posts yourself Total: $0. Catches: manageable. Let me walk through each one. Expo first. The app itself. Expo's free tier includes builds and over-the-air updates. OTA updates are the killer feature. I push JavaScript fixes and users get them instantly. No app store review. No waiting three days for Apple to approve a typo fix. Native changes still need a rebuild. JS changes just flow. The catch: EAS build queues. Free builds wait in line. At peak US hours I have waited twenty minutes for a build to start. My solution is scheduling. I kick off builds before lunch. They are done after lunch. Patience is free too. Development builds are the move. Build once to your phone. Then iterate over the local network. Fast refresh works. You only hit the queue for release builds. I do maybe three release builds a week. Totally fine on free. Supabase second. The backend. Postgres database. Auth with GitHub login. Row-level security. Edge functions for webhooks. The free tier gives 500MB of database and 50,000 monthly active users. I have a tiny fraction of that. I could grow a hundred times over and still pay nothing. The catch: idle projects pause. After seven days with no activity, Supabase parks your project. The next request wakes it up. That wake-up takes a few seconds. Users see one slow load. Then everything is fast. My fix is simple. A scheduled ping. This very repo has a weekly cron in its GitHub Action. It hits the API on a schedule. The project never idles. The cron was built for publishing posts. It doubles as a keep-alive. Two birds, zero dollars. Row-level security deserves its own praise. Every query is scoped to the logged-in user at the database level. Not in my code. In Postgres itself. Even if my app code has a bug, users cannot read each other's data. Security enforced below the application layer. Free. Built in. Wonderful. Render third. Background jobs. The GitHub webhooks arrive. The AI summaries get generated. These run on Render's free tier. 750 hours a month covers one always-small service. The math works out. One service running full-time is about 720 hours. Just under the cap. The catch: cold starts. Free Render services spin down after fifteen minutes idle. The next request waits while the service boots. Ten to thirty seconds of nothing. For a background job, nobody cares. The webhook arrives, the service yawns awake, the summary generates a few seconds later. No user is watching a spinner. Do not put user-facing APIs on free Render. That is the rule. Background work only. User-facing reads go straight from the phone to Supabase. That path is always warm. Jobs can be sleepy. Users cannot. If a job ever needs to be instant, the upgrade is seven dollars. Cheapest paid tier in the stack. I have not needed it yet. When I do, one coffee a month is fine. Vercel fourth. The landing page and this blog. Static pages deploy from git pushes. SSL included. Global CDN included. 100GB of bandwidth free. My pages are tiny. I could get on the front page of everything and survive. The catch: build minutes. The free tier caps how long builds can run monthly. Static sites build in under a minute. I deploy maybe ten times a week. I use a fraction of the quota. If you add heavy image processing to builds, watch this number. I keep images pre-sized in the repo instead. The monorepo trick: my landing page and blog live with the app code. One push deploys the site. Same git history. Same workflow. Fewer dashboards to check. I check enough dashboards already. GitHub fifth. Code, CI, and project management. Unlimited public repos. 2,000 CI minutes a month on free. My publishing pipeline runs here. A few minutes a week. The budget barely notices. Everything in this pipeline is public. The app. The site. The publishing scripts. Public repos get full CI minutes and free everything. Keeping the work public is a marketing strategy that pays for its own infrastructure. Funny how that works. Now the honest section. What breaks. What I worry about. Free tiers are borrowed land. Limits change. Companies get acquired. Generosity shrinks. I have a plan for each piece. If Supabase tightens free Postgres, my database is plain Postgres. I can dump it and move anywhere. No proprietary queries. No vendor extensions. Standard SQL in, standard SQL out. Portability is the exit strategy. If Render kills free hours, background jobs move to Supabase Edge Functions. They have their own free allowance. The job code is small and stateless. It runs anywhere that runs JavaScript. Nothing is glued to Render. If Expo ever paywalls builds, the app is React Native. Ejecting is painful but possible. EAS is convenience, not lock-in. The code is mine. The config is text. I could build locally with Xcode and Android Studio. It would hurt. It would work. If Vercel caps bandwidth harder, the site is static files. Any host serves static files. Literally any. I could serve them from a free tier anywhere. Moving takes an afternoon. The principle: own your code and your data, rent the plumbing. Every service here holds nothing irreplaceable. Code lives in git. Data dumps to SQL. Nothing proprietary. I can move any piece in a day. That is what makes free tiers safe to build on. Cost so far, all time: $0. Users served: real ones. PRs reviewed from a bus: eleven. Regrets: none. Start free. Stay free until revenue says otherwise. Then spend money on exactly one thing: the bottleneck. Not before. Premature infrastructure is just a hobby that sends invoices. The demo is live. The repo is public. The pipeline that published this post cost nothing to run. That never gets old. Follow the ok2merge-build-in-public series — next post Tue/Thu. Star github.com/3ni8ma/ok2merge · Try https://ok2merge.vercel.app",
+            "url": "https://dev.to/3ni8ma/i-ship-mobile-apps-for-0-vercel-render-supabase-free-tier-27n5",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "android",
+                "developpement",
+                "git",
+                "java",
+                "javascript",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-12T19:39:35+00:00",
+            "collected_at": "2026-09-12T19:57:34.066769+00:00"
+        },
+        {
+            "id": "fd2910cca5a9a134ffaadb49b0f70e5cf26679c504a3379ceabbce72d468f701",
+            "title": "How I Built an Agentless Self-Hosting Orchestrator with 100+ Tested Stacks & 100% Local AI",
+            "description": "For anyone passionate about digital sovereignty and homelabbing , setting up a private home server on a Single Board Computer (like a Raspberry Pi 5, Orange Pi) or a Proxmox home lab is one of the most rewarding engineering projects. However, anyone who has managed a growing homelab knows the friction that comes with it: Writing and debugging endless docker-compose.yml files with conflicting port mappings, network subnets, and missing environment variables. Heavy all-in-one platforms (CasaOS, Umbrel, Cosmos, etc.) that install bloated background web servers, daemons, and proprietary agents on your target hardware, hogging precious RAM and CPU cycles. Cloud lock-in and AI privacy leaks : Newer DevOps tools often require subscriptions or send internal infrastructure topology and credentials to proprietary US cloud APIs. To solve this, I built NjordDeploy — a lightweight, agentless, metadata-driven deployment orchestrator with 100 tested, production-ready service templates , dual Docker/Rootless Podman support, and a 100% Local AI component generator (Ollama & European sovereign AI). In this article, I want to share the architectural decisions, lessons learned, and why treating container stacks as \"vessels steered into a safe home port\" shaped this open-source project. ⛵ Why the Name \"Njord\"? In Norse mythology, Njörðr (Njord) is the god of the sea, seafaring, wind, and calm, safe harbors (from his mythological haven Nóatún , \"haven of ships\"). In modern DevOps, nautical metaphors are everywhere: Docker represents the shipping container and dock worker. Kubernetes ( κυβερνήτης ) is Greek for the helmsman or steersman . Helm is the ship's wheel. Portainer is the harbor master. NjordDeploy carries this tradition forward: it acts as your sovereign navigator, steering your container stacks, storage volumes, and reverse proxies safely through turbulent technical waters and docking them cleanly into the calm harbor of your own private server. NjordDeploy is the continuation of the PiSelfhosting project I started more than a year ago. I also started the Sovereign Stack Project, also on Github as a testing environment for PiSelfhosting. As the project got bigger and bigger, I needed another name as the project is not only for the Rasberry Pi. 🏗️ 1. Architecture: The \"Zero-Agent, No-Python-on-Target\" Philosophy One of the most important architectural rules of NjordDeploy is Target Purity : +-------------------------------------------------------------+ | Control Machine (Laptop / PC / Workstation) | | - NjordDeploy 3-in-1 Suite (Configurator, Editor, Web UI) | | - Local AI Engine (Ollama: Llama 3 / Mistral / Loes.ai) | | - Deterministic Jinja2 Macro Renderer & Port Manager | +-------------------------------------------------------------+ | [Agentless SSH Tunnel] | +-------------------------------------------------------------+ | Target Server (Raspberry Pi / Orange Pi / Proxmox VM / LXC) | | - NO background agents / NO custom background daemons | | - NO Python runtime requirements on host | | - Pure Docker CE or Rootless Podman Engine | | - Standard Docker Compose / Podman Compose stacks | +-------------------------------------------------------------+ Why this matters: No Background Overhead: When you deploy a stack to a Raspberry Pi or low-power mini-PC, 100% of your system resources remain dedicated to your applications (Nextcloud, Home Assistant, Immich, Jellyfin), not to a management control plane. No Lock-In: All configurations are rendered as standard, industry-standard docker-compose.yml stacks. If you ever close NjordDeploy, your containers keep running natively with standard docker compose up -d commands. Security: Zero open management ports exposed on the target server. All communication happens over encrypted SSH key authentication. 📦 2. Scaling to 100 Tested & Curated Service Stacks Starting from a small set of basic utilities, the NjordDeploy catalog recently expanded to 100 fully verified and tested service templates across 8 core domains: Category Popular Examples Included Media & Entertainment Jellyfin, Audiobookshelf, Immich, Navidrome, Radarr, Sonarr, Prowlarr, SABnzbd, Calibre-Web Smart Home & IoT Home Assistant, Zigbee2MQTT, Frigate (AI NVR), Scrypted, ESPHome, Node-RED, UniFi Controller Productivity & Cloud Nextcloud, Paperless-ngx, Stirling PDF, Actual Budget, Vikunja, Focalboard, Flatnotes, Mealie AI & LLM Services Open WebUI, Ollama LLM Engine, LiteLLM AI Gateway, LibreChat, Voicebox TTS/STT, n8n Privacy & DNS AdGuard Home, Pi-hole, Technitium DNS, Unbound DNS, Vaultwarden Monitoring & System Uptime Kuma, Netdata, Beszel, Grafana Stack, Prometheus, Portainer, Dockge, Semaphore UI Reverse Proxies Traefik, Caddy, Nginx Proxy Manager Utilities & Storage MinIO S3, Syncthing, Headscale, Changedetection.io, CyberChef, IT-Tools, SearXNG, Gotify Every component includes automated volume path resolution ( /var/njorddeploy/volumes ), deterministic port conflict avoidance, healthchecks, and optional reverse proxy domain binding with automated Let's Encrypt certificates. 🤖 3. 100% Local AI Meets Zero-Cloud Component Generation What happens when you want to self-host a brand new open-source repository that isn't in any template catalog yet? Traditionally, you'd have to read the repo's README, hunt down container image tags on Docker Hub, figure out environment variables, port conflicts, volume permissions, and write YAML by hand. NjordDeploy solves this with an AI-Assisted Component Generator designed for strict data sovereignty : [ Git URL (GitHub / GitLab / Gitea / Forgejo) ] │ ▼ [ Deep Context Ingestion (README, Compose, OCI Tags) ] │ ▼ [ Strict \"Air Traffic Control\" Validation Prompt ] │ ▼ [ Local LLM: Ollama (Llama 3, Mistral, Qwen) OR Loes.ai (EU) ] │ ▼ [ Automated OCI Registry Verification & Jinja2 Template Output ] The Key Innovations: Universal Git Ingestion: Paste any URL from GitHub, GitLab (including nested subgroups), Codeberg, Gitea, Forgejo, or private self-hosted Git instances. \"Air Traffic Control\" Mathematical Constraints: AI models often hallucinate YAML keys. We created a deterministic schema contract and linter loop that forces the model to generate syntactically exact Jinja2 macros, verified ports, and OCI image tags. Total Privacy (Ollama & Loes.ai): You can run the entire pipeline locally on your workstation using Ollama (tested with Llama 3, Mistral, and Qwen) or via European sovereign cloud endpoints like Loes.ai / HostYourAI . Zero telemetry, zero subscriptions, and zero infrastructure metadata leaving your private network. 🧪 4. Rigorous Quality: The 4-Way Proxmox VE Cross-Validation Matrix To ensure that service templates work reliably across different operating environments, we built an automated 4-Way Cross-Validation Testing Matrix on Proxmox VE: ┌───────────────────────┬────────────────────────┐ │ Docker CE Engine │ Rootless Podman Engine │ ┌─────────────────┼───────────────────────┼────────────────────────┤ │ Debian 12 LXC │ Run 1: Docker on LXC │ Run 2: Podman on LXC │ ├─────────────────┼───────────────────────┼────────────────────────┤ │ QEMU Linux VM │ Run 3: Docker on VM │ Run 4: Podman on VM │ └─────────────────┴───────────────────────┴────────────────────────┘ Each of the 100 templates undergoes automated lifecycle testing: Clean Provisioning: Automated container/VM deployment via SSH. Port Conflict & Volume Auditing: Verifying permissions under both root Docker and unprivileged (rootless) Podman namespaces. HTTP Healthcheck Verification: Polling web endpoints and API responses until steady-state is confirmed. Teardown & Volume Retention Tests: Ensuring upgrades and rebuilds do not destroy persistent data. 🚀 Getting Started NjordDeploy is free for self-hosting and homelabs (BSL-1.1 licensed) and available as a portable standalone application for Linux, macOS, and Windows. Download & Launch: Grab the latest release package from GitHub Releases . Scan Your Subnet: The 5-step visual wizard auto-detects your Raspberry Pi, server, or Proxmox node via agentless SSH. Pick Your Services: Select from the 100+ catalog templates or paste a Git repository URL into the AI generator. Deploy: Watch real-time streaming logs as your stack is configured, secured, and launched. Check also my other project Sovereign-Stack 🔗 Links & Resources 🌐 Official Website & Interactive Catalog: njorddeploy.com 🐙 GitHub Core Repository: HenkVanHoek/njord-deploy 📦 Component Templates Repository: HenkVanHoek/njord-deploy-components 📖 Full Architecture & User Guides: Documentation & FAQ I would love to hear your thoughts and feedback! What self-hosted services are you running in your homelab, and what templates would you like to see added next?",
+            "url": "https://dev.to/henk_van_hoek/how-i-built-an-agentless-self-hosting-orchestrator-with-100-tested-stacks-100-local-ai-1cbo",
+            "source": "DEV Community",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "developpement",
+                "docker",
+                "git",
+                "kubernetes",
+                "linux",
+                "llm",
+                "macos",
+                "programmation",
+                "python",
+                "web",
+                "windows"
+            ],
+            "published_at": "2026-09-12T19:38:58+00:00",
+            "collected_at": "2026-09-12T19:57:34.067829+00:00"
+        },
+        {
+            "id": "e8d086d64480d8fd7a27a3f489be924f0e4a1b96a9d1111276ac7dfd8e6248a3",
+            "title": "Expo + Supabase GitHub Auth Broke 3 Times — Here's the Fix",
+            "description": "TL;DR: GitHub login in my Expo app broke three separate times. A deep link that went nowhere. A PKCE flow I wired backwards. A redirect URL with a typo. Each fix is copy-pasteable below. Total auth code is under a hundred lines. Steal it. Auth is the worst part of every app. Nobody downloads your app for the login screen. They tolerate it. Every minute you spend on OAuth is a minute nobody will ever thank you for. I spent three days on it. Here are all three failures, so you spend thirty minutes. The setup: Expo app, Supabase backend, GitHub as the login provider. Users tap \"Sign in with GitHub.\" GitHub approves. Supabase mints a session. The app stores it. Standard stuff. Documented stuff. Stuff that still broke three times. Failure one: the deep link went nowhere. OAuth on mobile works like this. Your app opens a browser. The user approves on GitHub. GitHub redirects to a URL. That URL must reopen your app. That reopening is the deep link. If the link is wrong, the user approves your app and then stares at a browser tab. Approved. Stranded. Confused. That is exactly what happened. Login looked successful on GitHub's side. My app sat there waiting. Forever. The approve button worked. The return trip did not exist. The cause was my redirect URL. In Supabase, you register where OAuth is allowed to return. I registered the web URL of my landing page. On desktop that would be fine. On a phone, the browser does not know your app exists. The session landed on a web page. The app never heard about it. The fix: use your app scheme as the redirect. My scheme is ok2merge:// . So the redirect URL becomes ok2merge://auth/callback . Register that exact string in two places. First, in the Supabase dashboard under Authentication, URL Configuration, Redirect URLs. Second, in your GitHub OAuth app settings as the authorization callback URL. Both must match. Character for character. In Expo, declare the scheme in your app config: { \"expo\" : { \"scheme\" : \"ok2merge\" , \"ios\" : { \"bundleIdentifier\" : \"app.ok2merge.mobile\" }, \"android\" : { \"package\" : \"app.ok2merge.mobile\" } } } Then handle the return with expo-web-browser and expo-linking . Open the OAuth URL in a session. Wait for the redirect. Dismiss the browser when your scheme fires: import * as WebBrowser from \" expo-web-browser \" ; import * as Linking from \" expo-linking \" ; WebBrowser . maybeCompleteAuthSession (); const redirectTo = Linking . createURL ( \" auth/callback \" ); const { data } = await supabase . auth . signInWithOAuth ({ provider : \" github \" , options : { redirectTo , skipBrowserRedirect : true }, }); if ( data ?. url ) { const result = await WebBrowser . openAuthSessionAsync ( data . url , redirectTo ); if ( result . type === \" success \" && result . url ) { const params = Linking . parse ( result . url ); // exchange the code for a session below } } The skipBrowserRedirect: true part matters. You want the OAuth URL back as data, not an automatic redirect. You open it yourself in the auth session. That way you control the return. Failure two: I wired PKCE backwards. Supabase uses PKCE for mobile OAuth. The short version: your app creates a secret verifier. It sends a challenge derived from it. GitHub holds the challenge. When the callback returns a code, your app sends the code plus the original verifier. Supabase checks they match. This proves the app that started the login is the app that finished it. No stolen codes. My bug: I generated the verifier, then threw it away. I treated the flow like web OAuth, where the server holds state. On mobile there is no server holding state. There is just your app. I launched the browser, got the code back, and tried to exchange it with no verifier. Supabase said no. Correctly. The fix is to let the Supabase client own the whole flow. Do not hand-roll the code exchange. When the deep link returns, pull the code param out of the URL and call exchangeCodeForSession : import { makeRedirectUri } from \" expo-auth-session \" ; const params = new URLSearchParams ( result . url . split ( \" ? \" )[ 1 ] ?? \"\" ); const code = params . get ( \" code \" ); if ( code ) { const { error } = await supabase . auth . exchangeCodeForSession ( code ); if ( error ) throw error ; } One call. The client kept the verifier in storage from signInWithOAuth . It attaches it automatically. My hand-rolled exchange was the entire bug. Deleting code fixed auth. My favorite kind of fix. Lesson: never split an OAuth flow across two libraries. One library starts it, the same library finishes it. The moment two libraries share custody of a code verifier, you will lose it. I lost it. In production. In front of a user. That user was me, but still. Failure three: one dumb redirect URL typo. After fixing one and two, login worked on my phone. Then I built the Android APK. Login broke again. Same code. Same backend. Different platform, different failure. Classic. Android needs the redirect registered in its own way. The scheme works, but Android verifies app links against your package name. I had renamed the package halfway through the project. The config said one thing. The Supabase redirect list said another. Off by a suffix. A typo I introduced myself, weeks earlier, that only detonated on Android. Debugging this took an hour. The fix took ten seconds. Add the exact redirect string to Supabase. Rebuild. Done. Here is my checklist so you skip all three failures: One, use your app scheme as the redirect everywhere. yourapp://auth/callback . In Supabase redirect URLs. In the GitHub OAuth app callback. In your code. All three identical. Two, one library owns the flow. signInWithOAuth starts it. exchangeCodeForSession finishes it. Nothing custom in between except opening the browser. Three, after renaming anything, grep the whole project for the old name. Package names. Bundle IDs. Schemes. Redirect URLs. Renames are where typos hide. They wait for the worst moment. Four, test on a real device early. The iOS simulator and Android emulator handle deep links differently from real phones. My failure one passed in the simulator. It failed on hardware. Simulators lie about links. Phones do not. Here is the full login function, all together, under a hundred lines with imports: import * as WebBrowser from \" expo-web-browser \" ; import * as Linking from \" expo-linking \" ; import { supabase } from \" ./supabase \" ; WebBrowser . maybeCompleteAuthSession (); export async function signInWithGitHub () { const redirectTo = Linking . createURL ( \" auth/callback \" ); const { data , error } = await supabase . auth . signInWithOAuth ({ provider : \" github \" , options : { redirectTo , skipBrowserRedirect : true }, }); if ( error ) throw error ; const result = await WebBrowser . openAuthSessionAsync ( data . url , redirectTo ); if ( result . type !== \" success \" || ! result . url ) return null ; const code = new URLSearchParams ( result . url . split ( \" ? \" )[ 1 ] ?? \"\" ). get ( \" code \" ); if ( ! code ) throw new Error ( \" No auth code in callback \" ); const { error : exError } = await supabase . auth . exchangeCodeForSession ( code ); if ( exError ) throw exError ; return true ; } Sign out is one line. Do not forget to test it. Untested sign-out is how you get a user permanently logged in as someone else on a shared device. Ask me how I know. Actually do not. Moving on. await supabase . auth . signOut (); Auth broke three times. Each break taught me the same lesson. Mobile OAuth is a chain of exact strings. Scheme. Redirect. Package. Verifier. One wrong character anywhere breaks everything silently. The fix is always the same: line up every string, let one library hold the secrets, test on hardware. Total auth code: under a hundred lines. Total debugging: three days. Ratio is bad. Hopefully this post fixes your ratio. Next post in the series: the full $0 stack. Vercel, Render, Supabase free tiers. With a table. Everyone loves a table. Follow the ok2merge-build-in-public series — next post Tue/Thu. Star github.com/3ni8ma/ok2merge · Try https://ok2merge.vercel.app",
+            "url": "https://dev.to/3ni8ma/expo-supabase-github-auth-broke-3-times-heres-the-fix-ijp",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "android",
+                "developpement",
+                "git",
+                "ios",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-12T19:38:31+00:00",
+            "collected_at": "2026-09-12T19:57:34.069191+00:00"
+        },
+        {
+            "id": "fd11922f2317785947244706f93a64ac41016fe328a34922447381b938619de2",
+            "title": "I Built a PR Inbox for My Phone So I Stop Being the Bottleneck",
+            "description": "TL;DR: I was the bottleneck on every pull request. Reviews waited days for me. So I built a PR inbox for my phone. AI summarizes each diff. I swipe right to approve. Built with Expo and Supabase. Costs $0. This is post one of the build-in-public series. I am the problem. Let me say that first. Every PR on my projects waited for me. Contributors opened good work. Then silence. For days. Not because the code was bad. Because reviewing code on a laptop feels like homework. And I kept not doing my homework. The pattern was embarrassing. Someone opens a PR on Monday. I tell myself I will review it after dinner. Dinner becomes a show. The show becomes sleep. Tuesday looks exactly like Monday. By Friday the contributor has moved on with their life. The PR has merge conflicts. Everyone loses. I tried to fix this with discipline. That lasted four days. Discipline is a terrible dependency. It has no SLA. It goes down on weekends. So I fixed it with software instead. I built a PR inbox for my phone. The idea is stupidly simple. Your email has an inbox. Your texts have an inbox. Your code reviews deserve one too. Open the app. See every PR waiting on you. Swipe right to approve. Swipe left to request changes. Done from the couch. The trick is the summary. Nobody wants to read a raw diff on a phone. Raw diffs on a five-inch screen are a punishment. So each PR gets a plain-language summary. What changed. Why it changed. What could break. You read three sentences instead of three hundred lines. Then you decide. AI writes the summary. You make the call. That division of labor matters to me. The model explains. The human decides. I never wanted auto-merge. Auto-merge is how you deploy a disaster at 2am. I wanted faster understanding, not zero judgment. Here is how a review goes now. Phone buzzes. New PR from a contributor. I open it while waiting for coffee. The summary says it refactors the auth callback and touches two files. Risk looks low. I glance at the actual diff for the risky hunk. Looks fine. Swipe right. Merged before my coffee is ready. Total time: ninety seconds. Old way: three days of guilt plus twenty minutes of context-switching. This is not a small improvement. This is a different life. Let me talk about the stack. Because the stack is the other point of this post. The whole thing costs zero dollars. Expo for the app. Supabase for auth and database. GitHub webhooks for PR events. Vercel for the landing page. Every tier is free. My monthly infrastructure bill is the price of nothing. Expo gets mocked a lot. I used to mock it. Then I shipped with it. Over-the-air updates alone are worth it. I push a fix and users get it without an app store review. When your QA team is you, that speed is everything. Supabase handles the boring parts. Auth. Postgres. Row-level security. I did not want to run a server. I have run servers before. They page you at night. Supabase pages someone else. That someone else is not me. Perfect arrangement. The architecture is boring on purpose. GitHub sends a webhook when a PR opens. A small function stores the PR metadata in Supabase. Another function asks a model to summarize the diff. The phone app reads from Supabase and shows the inbox. Approve or request-changes goes back through the GitHub API. No magic. Just plumbing. Boring architecture is a feature. Every clever system I have ever built became a second job. This one has been running for weeks. I barely think about it. It just buzzes when someone needs me. The hardest part was not the code. It was the summary quality. Early summaries were useless. They said things like \"this PR modifies code to improve functionality.\" Thanks. Very helpful. I could have guessed that. I fixed it with structure. The summarizer now answers four questions. What changed. Why it probably changed. Riskiest hunk. What to check before approving. Forcing that shape killed the vague filler. A summary that names the riskiest file is worth ten generic ones. The second hardest part was auth. GitHub OAuth on mobile broke three times. That story is its own post. It is literally the next post in this series. Spoiler: deep links, PKCE, and one very dumb redirect URL. Let me share the numbers. Since I started using the inbox, my median review time went from three days to under four hours. Most of that is still me being slow. The app did its part instantly. I merged eleven PRs from a bus. I merged one from a wedding. Do not tell the bride. Contributors noticed. One told me reviews got \"weirdly fast.\" That is the best review my review tool ever got. Weirdly fast. I want that on a sticker. There is a real lesson here. Bottlenecks are usually interface problems. I did not review PRs because the interface for reviewing was a laptop, a quiet room, and forty free minutes. I never have all three at once. The phone interface needs ninety seconds and a couch. Same human. Same brain. Different friction. Find your friction. That is the whole post, really. Where is the task you keep avoiding? What does it demand from you? A desk? An hour? Silence? Shrink the demand. The motivation was never the problem. The setup cost was. What is next. The inbox works for my repos. Now I am opening it up. Multi-repo support. Team inboxes. Smarter risk scoring. A demo is live at the link below. Star the repo if you want to follow along. Real code, real bugs, real numbers. Every Tuesday and Thursday. I built this so I stop being the bottleneck. It worked. Now help me break it in new and interesting ways. Follow the ok2merge-build-in-public series — next post Tue/Thu. Star github.com/3ni8ma/ok2merge · Try https://ok2merge.vercel.app",
+            "url": "https://dev.to/3ni8ma/i-built-a-pr-inbox-for-my-phone-so-i-stop-being-the-bottleneck-i1l",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "git",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-12T19:38:30+00:00",
+            "collected_at": "2026-09-12T19:57:34.070038+00:00"
+        },
+        {
+            "id": "b7b4c6f0444c06e529c6f6ef819cdbccbe69a36f5715b369c89908385d06550c",
+            "title": "Anthropic CEO outlines plan to slow AI development",
+            "description": "Anthropic's Dario Amodei and OpenAI's Sam Altman seem to agree that it's time to \"pace the frontier.\" What would that actually look like?",
+            "url": "https://techcrunch.com/2026/09/12/anthropic-ceo-outlines-plan-to-pace-the-frontier/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "anthropic",
+                "innovation",
+                "openai",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-09-12T19:34:44+00:00",
+            "collected_at": "2026-09-12T19:57:31.364261+00:00"
+        },
+        {
+            "id": "d404f6db8c389b557b1736c358ae874766ddf9959c7ee26588ea296f312ed135",
+            "title": "I added three new checks and ten unrelated tests went red. That was the system working.",
+            "description": "I added three new checks to a build. Nothing about the code under test changed. Ten tests that had nothing to do with any of them went red, and a separate, unrelated block of work was refused outright. Both of those were correct. FAIL_ORACLE reason=row_without_its_oracle_or_fault_cells rows=OK_BRIDGE, OK_COST, OK_MUTATION (10 tests red with it) REFUSED reason=line_outside_the_layer_vocabulary What I had actually done I wrote the checks. I did not declare them. In this build a check is not just code that prints a line. A print is a thing the system knows about, and knowing about it means three separate declarations exist: declaration what it says what goes wrong without it shape the print's row, with its oracle (what makes it pass) and faults (what makes it fail) nothing can tell a pass from a silence vocabulary the record's list of print names it accepts the record refuses a line it has no word for the requirement row which spec obligation this print discharges the check is unattached work I had written one of the three. The code ran. It printed. And the machinery that exists to stop exactly that went red. Concretely, what I wrote versus what a complete row looks like: [[prints]] name = \"OK_COST\" + oracle = \"every declared operation has a measured cost\" + faults = [\"cost_missing\", \"cost_not_numeric\", \"operation_undeclared\"] Without faults , there is no enumerated way for the row to fail, and a row that cannot name a failure cannot be shown to detect one. Why the ten reds are the good part The ten failing tests are not about my three checks. They assert a property of the whole set of prints: every row has an oracle and a fault list. Adding three rows without those cells broke that property, so they failed. That is what a structural invariant is for. It fails at the place the rule lives rather than at the place the rule was broken, which feels like noise for about a minute and is the reason the gap cannot be shipped. The alternative is the version I have written before without noticing: a new check that prints a plausible-looking line, has no declared failure mode, and is therefore incapable of going red. It would have joined the build green, and it would have been counted in every \"all checks passing\" summary from then on. The refusal is the same mechanism, one layer up The second line is a different piece of work being rejected because it names prints that the record's vocabulary does not contain. REFUSED reason=line_outside_the_layer_vocabulary Not \"warned\". Not \"accepted with an unknown tag\". The record has a closed set of names it accepts, and a line outside it does not get written. An open vocabulary would have taken the line, and then the count of known prints and the count of written prints would have diverged quietly, which is the failure that has no symptom. The part I keep having to relearn A run that fails is a line in the record. A run that never happened is a silence. Those two are not the same and only one of them is visible later. The red block above got written down, with its reason, as a permanent entry. That is the record doing its job on its owner: I cannot quietly fix this and have it never have happened. When I first saw ten reds from a three-line addition my instinct was that the checker was overreacting. It was not. It was telling me the three declarations are a set, and I had treated them as one thing plus some paperwork. What to take from it If you are adding a check to a system that has any notion of a registry, ask what a complete addition consists of before writing the first line. In mine it is three rows. In yours it might be the assertion plus a fixture plus an entry in whatever enumerates your checks. And the test worth writing first, regardless of the stack: can this new check go red? Not \"does it pass\" — plant the failure it exists to catch and watch it fail, before you let it count toward anything. A check with no demonstrated red is a line of output, not a check.",
+            "url": "https://dev.to/mahirhir/i-added-three-new-checks-and-ten-unrelated-tests-went-red-that-was-the-system-working-330d",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-12T19:32:40+00:00",
+            "collected_at": "2026-09-12T19:57:34.070692+00:00"
+        },
+        {
+            "id": "e2b752eedfa3404839652cf8ed9c07ef2b060d2724b2778dc92c152b975a588e",
+            "title": "Postman Collection to MCP: From Requests to MCP Tools",
+            "description": "A Postman collection can be a surprisingly useful starting point for an MCP server. Many teams have Postman collections before they have polished OpenAPI documentation. The collection already contains working requests, paths, query parameters, headers, bodies, example responses, and authentication notes. That is enough to begin thinking about MCP tools. But there is a catch. A Postman request is still a developer artifact. An MCP tool is an AI-facing capability. Converting one into the other takes review, naming, schema cleanup, authentication decisions, testing, and production preparation. This article walks through the practical path from Postman requests to MCP tools. Start by cleaning the collection Before importing a Postman collection anywhere, clean it. A real collection often contains more than production-ready API requests: experiments duplicate requests old API versions internal debug endpoints local host URLs temporary headers personal API keys copied Bearer tokens test-only request bodies admin or destructive operations Do not treat the collection as safe because it works in Postman. Before using it for MCP, check: Is this the current collection? Does it point to the intended API environment? Are request names clear? Are variables understandable? Are secrets removed? Are test-only requests removed? Are old endpoints removed or marked as legacy? Are destructive requests separated for review? This cleanup step matters because the MCP tool list will inherit a lot of meaning from the collection. If the collection is messy, the MCP server will probably be messy too. Understand what maps from Postman to MCP At a high level, each useful Postman request can become a candidate MCP tool. A request like this: GET {{baseUrl}}/v1/customers/{{customer_id}}/tickets?status=open Authorization: Bearer {{token}} Can become a tool like: { \"name\" : \"list_open_customer_tickets\" , \"description\" : \"List open support tickets for one customer.\" , \"inputSchema\" : { \"type\" : \"object\" , \"properties\" : { \"customer_id\" : { \"type\" : \"string\" , \"description\" : \"The customer ID to search tickets for.\" }, \"limit\" : { \"type\" : \"integer\" , \"description\" : \"Maximum number of tickets to return.\" } }, \"required\" : [ \"customer_id\" ] } } The mapping includes more than method and URL. You need to review: request name folder name HTTP method path variables query parameters headers request body authentication example response expected error behavior Postman gives you the raw request shape. MCP needs a clear tool contract. Map path variables into required inputs Path variables usually become required tool inputs. For example: GET /v1/customers/{{customer_id}} Should map to: { \"customer_id\" : { \"type\" : \"string\" , \"description\" : \"The unique ID of the customer to retrieve.\" } } If the endpoint cannot run without customer_id , the MCP schema should mark it as required. Bad schema: { \"customer_id\" : { \"type\" : \"string\" } } Better schema: { \"customer_id\" : { \"type\" : \"string\" , \"description\" : \"The customer ID from your application.\" } } Path variables deserve clear descriptions because the AI client may have several IDs in context. customer_id , workspace_id , ticket_id , and invoice_id should not be blurred into a generic id . Map query parameters into optional filters Query parameters often become optional tool inputs. Example: GET /v1/tickets?customer_id={{customer_id}}&status={{status}}&limit={{limit}} Candidate schema: { \"type\" : \"object\" , \"properties\" : { \"customer_id\" : { \"type\" : \"string\" , \"description\" : \"Return tickets for this customer.\" }, \"status\" : { \"type\" : \"string\" , \"enum\" : [ \"open\" , \"pending\" , \"resolved\" ], \"description\" : \"Optional ticket status filter.\" }, \"limit\" : { \"type\" : \"integer\" , \"minimum\" : 1 , \"maximum\" : 50 , \"description\" : \"Maximum number of tickets to return.\" } }, \"required\" : [ \"customer_id\" ] } Good query-parameter mapping should answer: Which filters are required for safe use? Which filters are optional? Are enum values documented? Are default limits safe? Can the request return too much data? Is pagination clear? For AI clients, unbounded list endpoints are risky. If your API supports limit , cursor , page , or offset , make those fields clear. Handle request bodies carefully Postman bodies often contain example payloads. That does not automatically mean the MCP tool should accept the same raw JSON blob. A request like: POST /v1/tickets Content-Type: application/json { \"customer_id\": \"{{customer_id}}\", \"subject\": \"{{subject}}\", \"priority\": \"{{priority}}\", \"message\": \"{{message}}\" } Can become: { \"name\" : \"create_support_ticket\" , \"description\" : \"Create a support ticket for a customer.\" , \"inputSchema\" : { \"type\" : \"object\" , \"properties\" : { \"customer_id\" : { \"type\" : \"string\" , \"description\" : \"The customer the ticket belongs to.\" }, \"subject\" : { \"type\" : \"string\" , \"description\" : \"Short ticket subject.\" }, \"priority\" : { \"type\" : \"string\" , \"enum\" : [ \"low\" , \"normal\" , \"high\" ], \"description\" : \"Ticket priority.\" }, \"message\" : { \"type\" : \"string\" , \"description\" : \"Initial support message.\" } }, \"required\" : [ \"customer_id\" , \"subject\" , \"message\" ] } } Avoid schemas that accept one giant payload object unless the API genuinely needs arbitrary JSON. A specific schema gives the AI client better boundaries and gives your team better validation tests. For write operations, the description should also say what changes. Do not turn auth requests into normal tools Many Postman collections contain requests like: POST /login POST /oauth/token POST /refresh-token GET /api-keys Those are usually not good MCP tools. Authentication should be part of the runtime connection and request flow. The model should not need to call login before using product capabilities. For API-backed MCP tools, the safer pattern is: the user or client provides credentials through the client flow the MCP server receives a tool call the MCP server passes the credential to the original API the original API enforces identity, scopes, tenant access, and record permissions When reviewing a Postman collection, remove personal tokens and secrets from the export. Keep variables like {{token}} or {{apiKey}} as placeholders, not real credentials. Then test: missing API key invalid API key expired Bearer token revoked OAuth access insufficient scope wrong tenant Authentication that works in Postman with your personal token may fail in MCP for a customer credential. Test that before production. Select useful operations, not every request A Postman collection can contain a lot of requests that are useful for developers and bad for AI agents. Start with a small workflow. For example: \"Let an AI support assistant look up customer context and create ticket notes.\" Useful requests might be: GET /customers/{customer_id} GET /tickets?customer_id={customer_id} GET /tickets/{ticket_id} POST /tickets/{ticket_id}/notes Requests to exclude from the first release might be: DELETE /customers/{customer_id} POST /admin/reindex PATCH /users/{user_id}/role GET /internal/debug POST /oauth/token This is the core selection rule: A request should become an MCP tool only when it maps to a clear, useful, authorized AI capability. The tool list is an allowlist. Treat it like a product and security decision. Rename tools for the AI client Postman request names are often written for humans browsing a collection. Examples: Get Customer Create Update v2 List Old invoice route Test request Those names are weak MCP tool names. Prefer names that are stable, specific, and action-oriented: get_customer list_customer_tickets create_ticket_note get_customer_subscription list_unpaid_invoices Tool descriptions should add the missing context: List unpaid invoices for one customer. Use this when the user asks about outstanding billing or payment status. The AI client should be able to choose the tool without reading your Postman folder structure. If two tools sound the same, fix the names before adding more tools. Test the imported tools After importing and selecting operations, test the tool set before connecting a real client workflow. For each tool, test: valid minimum input valid full input missing required path variable invalid query value invalid enum empty response missing record unauthorized request wrong tenant rate limit timeout unexpected upstream error For write tools, also test: duplicate submission invalid state transition insufficient permission payload with extra fields payload missing required business fields behavior in a safe test environment Then test discovery: Are only the intended tools visible? Are tool names unique? Are descriptions specific? Are required inputs obvious? Are removed or sensitive requests absent? Are resources and prompts visible only if intended? This is where Postman-derived tools either become reliable or stay as \"requests that worked once on my machine.\" Prepare the hosted server for production A hosted MCP server needs more than a successful import. Before production, confirm: the hosted endpoint is stable the server uses the expected transport HTTPS works authentication is tested with real runtime credential paths the upstream API environment is correct logs show enough detail to debug calls analytics can show request volume, error rate, latency, and capability usage selected tools are versioned rollback or restore is possible after a bad change the original API still enforces tenant, role, record, and action permissions With 0mcp , teams can import Postman collections, review detected requests, select useful API operations, refine tools, test in the Playground, and host the MCP server over Streamable HTTP. Existing API authentication continues to be used through API key, Bearer token, or OAuth pass-through, and customer credentials are passed through during requests rather than stored by 0mcp. 0mcp currently supports hosted Streamable HTTP servers, not local stdio servers. The original API remains responsible for business logic, authorization, pagination, rate limits, tenant boundaries, and validation. For the website version of this workflow, see Postman to MCP .",
+            "url": "https://dev.to/bhavyshekhaliya/postman-collection-to-mcp-from-requests-to-mcp-tools-4b5d",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-12T19:29:57+00:00",
+            "collected_at": "2026-09-12T19:57:34.072085+00:00"
+        },
+        {
+            "id": "90cb89faa8950886c006455bb436b4139707b2d688f0574b0a8daf18a353d319",
+            "title": "Tesla says it will finally unveil the second generation Roadster on October 1",
+            "description": "Tesla’s halo sports car was first announced in November 2017.",
+            "url": "https://techcrunch.com/2026/09/12/tesla-says-it-will-finally-unveil-the-second-generation-roadster-on-october-1/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-09-12T19:21:19+00:00",
+            "collected_at": "2026-09-12T19:57:31.364372+00:00"
+        },
+        {
+            "id": "661297db2bd9e5f26401e0b154d01c0957ea3dfa6041aa61f45f970d6f302845",
+            "title": "Inside Solana’s Staking Giants and the Mystery Whales With Billions",
+            "description": "Solana has been trading above the $100 mark since the end of August, but the more interesting action may be happening far away from the price chart. Tens of millions of SOL are sitting in enormous staking positions controlled by exchanges, institutional operators, liquid staking pools and, further down the list, a handful of entities […]",
+            "url": "https://news.bitcoin.com/featured/inside-solanas-staking-giants-and-the-mystery-whales-with-billions/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-12T19:21:00+00:00",
+            "collected_at": "2026-09-12T19:57:49.331120+00:00"
+        },
+        {
+            "id": "1ebf54d223217d8189d38e739d62e187c39c2b9eb8ac659086ee1232a1679f73",
+            "title": "How I built a semantic layer over Brazil’s official economic data, and why the hardest part wasn’t the API",
+            "description": "Brazil has a huge amount of high-quality official economic data. The problem is that using it programmatically is much harder than it should be. The Brazilian Central Bank has one API and data model. IBGE has another. Tesouro has another. SICONFI, Comex Stat, Novo Caged, ANP, EPE and CVM all expose data differently. At first, I thought the solution was straightforward: Put all of these sources behind one API. While building it, I realized that API normalization was not actually the hardest problem. The hardest problem was preserving economic meaning . A correct number can still be the wrong answer Suppose someone asks: What is the current Selic rate? There are several legitimate official series related to Selic. For example: the Selic target defined by Copom; the effective Selic rate; accumulated monthly Selic; annualized variants. All of them are real official data. But returning the wrong one still produces an incorrect answer. This became one of the core design principles behind Open Economics . Instead of treating search and availability as the same problem, I separated them. 1. Semantic resolution First, determine what economic concept the user is actually asking for. For example: current Selic target rate can resolve to: selic-target 2. Data availability Then determine which official datasets actually represent that concept and whether Open Economics can query them correctly. For the Selic target, that leads to: bcb-sgs:432 which is the official BCB series: Taxa de juros - Meta Selic definida pelo Copom If the right concept is not currently supported, the system should say so. It should not silently return a similar-looking series just because it happens to contain the same keywords. Provenance became part of the data model Once multiple sources sit behind the same API, abstraction creates another problem. You can easily lose answers to basic questions: Who published this number? Which official dataset did it come from? What unit does it use? What date or period does it represent? Was anything transformed? Where can I inspect the original source? So Open Economics keeps provenance attached to the result. A response can preserve things such as: official institution; dataset identity; source URL; metadata URL; unit; frequency; observation date; transformations; retrieval metadata. The goal is not to build another database of copied economic numbers. The goal is to provide a consistent interface over official sources without hiding where the data came from. Then I tried making the same layer usable by AI agents I also wanted agents to query the data directly. So I built a remote MCP server. It currently exposes 19 tools covering semantic discovery, dataset inspection, metadata and data retrieval. During testing, I found an interoperability bug that I did not expect. The MCP tools worked. The client could discover them. The calls succeeded. But an agent using Cline still couldn't answer something as simple as the current Selic rate. Why? The complete result was being returned in: structuredContent while the normal textual MCP content contained little more than: Retrieved official BCB observations for bcb-sgs:432. So technically the MCP call had succeeded. But that particular client wasn't exposing the structured result to the model. The agent knew that data had been retrieved, but couldn't actually see the values. Supporting the protocol wasn't enough The fix wasn't to remove structured output. structuredContent is still the canonical machine-readable result. Instead, I added a bounded textual representation containing enough information for a model to actually use the result: values; dates; units; dataset identity; official institution; provenance; official source URL. Small results can be represented completely. Larger results include a limited number of rows and explain that the complete machine-readable result remains available in structuredContent . After deploying the change, I repeated the Cline test with an important constraint: Use only Open Economics. No web search, curl, terminal, direct BCB API calls, or external sources. The agent successfully: resolved the query semantically; identified bcb-sgs:432 ; inspected the official metadata; retrieved the observations; read the actual value and date; answered using only Open Economics. That was a useful reminder that protocol compliance and real-world interoperability are not always the same thing. What Open Economics looks like today Open Economics is now a free and open-source layer for Brazilian official economic data. There is: REST API For example, the latest Selic target observation: curl \"https://open-economics-data.knbf982hkn.chatgpt.site/api/v1/indicators/br-selic-target/latest\" Interactive interface You can try queries without writing code: https://open-economics-data.knbf982hkn.chatgpt.site/en/ask?utm_source=devto&utm_medium=community&utm_campaign=launch MCP Agents can connect directly to: https://open-economics-data.knbf982hkn.chatgpt.site/api/mcp The remote MCP server currently exposes 19 tools. No API key is required. No signup is required. Everything is read-only. Current sources The project currently integrates data from Brazilian official sources including BCB, IBGE, Tesouro, SICONFI, MDIC / Comex Stat, MTE / Novo Caged, ANP, EPE and CVM. It is not intended to pretend every possible Brazilian economic dataset is already normalized. One of the design goals is precisely to make missing coverage explicit instead of silently substituting something else. Open source The code is here: https://github.com/felipegambettadesouza6-jpg/open-economics There is also a public Postman workspace: https://www.postman.com/open-economics/open-economics And the MCP server is published through the official MCP Registry. What I want to test next At this point, I am less interested in hearing that the project \"looks cool\" and more interested in finding the cases where the abstraction breaks. Especially: revisions; tricky date semantics; inconsistent units; multidimensional datasets; similarly named economic series; methodology changes; provenance; queries requiring multiple official sources. If you work with Brazilian economic data, APIs, data engineering or AI agents: What official-data query is still unnecessarily painful for you today? Give me a concrete example. I want to run it against Open Economics and find where the system still fails.",
+            "url": "https://dev.to/felipegambettadesouza6jpg/how-i-built-a-semantic-layer-over-brazils-official-economic-data-and-why-the-hardest-part-wasnt-16j",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "git",
+                "openai",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-12T19:19:50+00:00",
+            "collected_at": "2026-09-12T19:57:34.073045+00:00"
+        },
+        {
+            "id": "b3f0e1aa97e94add61696ce24d22ef11ee44d71160d69243e46f3f67e594421d",
+            "title": "Full Disk Access Was On, and macOS Still Refused the App",
+            "description": "A Mac app I maintain needs Full Disk Access. It measures disk usage, and most of what is worth measuring sits behind that permission. I switched it on in System Settings ▸ Privacy & Security ▸ Full Disk Access, and the app went on reporting limited access. Its banner said what these banners say: already granted? Relaunch. Relaunching changed nothing, and never could have. The app did not validate A permission is granted to an app, and to macOS \"the app\" is not a name. So the first question is whether macOS can tell what the app is: $ codesign --verify --deep --strict --verbose = 2 /Applications/Helm.app /Applications/Helm.app: nested code is modified or invalid file modified: /Applications/Helm.app/Contents/Frameworks/App.framework App.framework is where Flutter puts the compiled Dart. Verified on its own it was fine, and so were the other four frameworks in the bundle. What failed was the app around them. An app's signature seals its contents. Contents/_CodeSignature/CodeResources records, for every nested framework, the hash of the code that should be there. It recorded one App.framework , and the bundle held another: seal records Frameworks/App.framework 4ba5cc60… actually there Frameworks/App.framework c7a45621… Contents/_CodeSignature/CodeResources 15:08:47 Contents/MacOS/Helm 15:08:47 Contents/Frameworks/App.framework/…/App 15:30:38 The seal and the executable came from one build. The framework came from a build twenty-two minutes later, which put a new App.framework in place and never re-sealed the app around it. Why a stale seal turns the switch into decoration TCC, the part of macOS behind every Privacy & Security switch, does not store \"this app is allowed\". It stores a code requirement and checks the running app against it. For an app signed with a Developer ID, that requirement names the developer's team. For an ad-hoc signature, which is what you have without one, it is effectively the hash of the code. A bundle whose nested code does not match its own seal does not validate, and code that does not validate cannot satisfy a requirement. The grant attaches to nothing. The switch reads ON, every protected path stays refused, and no relaunch touches any of it. Re-signing the bundle and granting access again fixed it: the app reported Full Disk Access on, and kept it through a restart. How the seal went stale Two things write a Flutter macOS bundle. A script phase runs macos_assemble.sh embed , which hands off to Flutter's xcode_backend.dart : it copies the freshly compiled App.framework into Contents/Frameworks and signs it. Then Xcode signs the app, which writes the seal. In a good build the timestamps land a second apart, framework first: build 1 clean verify ok seal 23:19:32 App.framework 23:19:31 build 2 one Dart change verify ok seal 23:20:06 App.framework 23:20:05 So it is not simply what an incremental build does, which is what I assumed at first and wrote into a changelog. A clean build seals correctly, and so does a Dart-only rebuild straight after it. What reproduced it, once, was a crash. On a copy of the project, a Swift change built fine. The next build, a one-line Dart change, died: error: unexpected service error: The Xcode build system has crashed. Build again to continue. Doing as told, with another Dart-only change: ✓ Built build/macos/Build/Products/Release/Helm.app (47.1MB) $ codesign --verify --strict Helm.app Helm.app: nested code is modified or invalid seal records App.framework dda6dabc96dd actual afaf15310e15 Contents/_CodeSignature/CodeResources 23:22:42 Contents/MacOS/Helm 23:22:42 Contents/Frameworks/App.framework/…/App 23:23:28 The build after the crash ran Flutter's embed step, skipped the app's signing, and reported success. Same fingerprint as the build that shipped: seal and executable from one build, framework from a later one. I can't prove the shipped build went through a crash. I had kept only the last few lines of each build, and a crash in an earlier one is exactly what that throws away. Nor do I know which other failures leave the same state. An interrupted build is the obvious suspect, and I haven't tested it. That uncertainty is the argument for the next two sections. (Reproduced on Flutter 3.47.3, Xcode 26.6, macOS 26.6.2. The shipped build was on Flutter 3.47.1, and none of the patch-release changes in between are about signing.) Why nothing caught it Not because the check is subtle. My first theory was that only --deep compares nested code with the outer seal, so a check without it would have waved this bundle through. It was wrong. On a copy with App.framework swapped out: codesign --verify App.framework exit 0 valid on its own codesign --verify Helm.app exit 1 nested code is modified or invalid SecStaticCodeCheckValidity, flags 0 -67021 nested code is modified or invalid No flags needed. Any verification of the app fails it. The release script did not verify at all. Its signing and its verification lived in the same branch: if [[ -n \" $SIGN_ID \" ]] ; then # a Developer ID certificate was found # ...sign every framework, then the app... codesign --verify --strict \" $BUILD_APP \" fi The app is free and deliberately has no $99-a-year Developer ID, so that branch never ran. The path that always ran signed nothing and checked nothing, and the DMG shipped whatever flutter build had left behind. The fix Sign and verify on every path, and let a failed verification fail the release: if [[ -n \" $SIGN_ID \" ]] ; then SIGN =( --force --timestamp --options runtime --sign \" $SIGN_ID \" ) else SIGN =( --force --sign - ) # ad-hoc: never notarised, so no runtime or timestamp fi # Inside-out: nested code first, then the bundle that holds it. for fw in \" $APP \" /Contents/Frameworks/ * .framework ; do codesign \" ${ SIGN [@] } \" \" $fw \" done codesign \" ${ SIGN [@] } \" --entitlements macos/Runner/Release.entitlements \" $APP \" codesign --verify --deep --strict \" $APP \" || { echo \"signature broken\" > &2 ; exit 1 ; } Sign with a loop rather than codesign --deep , which Apple advises against for signing. For verifying, --deep is fine, and with --verbose it names the file that changed. And the app now checks itself before telling anyone to relaunch. This goes through the Security framework rather than running /usr/bin/codesign , which does ship with macOS, because it is a yes-or-no question with a status code for an answer: import Security func bundleValidates () -> Bool { var code : SecStaticCode ? guard SecStaticCodeCreateWithPath ( Bundle . main . bundleURL as CFURL , [], & code ) == errSecSuccess , let code else { return true } // couldn't ask: don't accuse let flags = SecCSFlags ( rawValue : kSecCSCheckNestedCode | kSecCSStrictValidate ) return SecStaticCodeCheckValidity ( code , flags , nil ) == errSecSuccess } When access reads as denied and that returns false, the banner stops saying \"relaunch\" and says the true thing: this copy cannot hold the permission, so reinstall it and grant access again. When the check cannot run at all, it answers true. Telling someone a working app is broken is worse than saying nothing. The part that is not a bug An ad-hoc requirement is the hash of the code, so to TCC every build is a different app. Every update loses Full Disk Access and needs granting again. No release script fixes that. It is the cost of not having a Developer ID, whose requirement names the team instead of the bytes and so survives an update. For a free app, the honest move is to say so at the top of the release notes rather than let people find out. Three rules Verify the bundle you ship, on every path. Plain codesign --verify is enough. Never gate the check behind having a certificate: the path without one is the path that always runs. Don't trust ✓ Built after a build that crashed. Build clean, or verify. The build after a crash can succeed at everything except sealing the app. If your app needs a privacy permission, check its own signature before blaming the user. \"Relaunch\" is sometimes a loop with no exit. The app is Helm , a free Mac utility built with Flutter. Its release script and self-check are in the repository. Originally published at devshakib.jumyn.com . I write about Flutter, Dart and the parts of shipping that are genuinely awkward — and publish the packages that came out of them at pub.dev/publishers/jumyn.com .",
+            "url": "https://dev.to/devshakib/full-disk-access-was-on-and-macos-still-refused-the-app-55i9",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "macos",
+                "programmation",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-09-12T19:16:35+00:00",
+            "collected_at": "2026-09-12T19:57:34.074322+00:00"
+        },
+        {
+            "id": "62c163b29545bb461b0c27426e99376ee58787566dd88a9cb74a667c039f45a4",
+            "title": "An open letter to Dario: if you mean it, open the weights",
+            "description": "Comments",
+            "url": "https://jacob.gold/posts/open-letter-to-dario-amodei-about-open-weights/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-12T19:15:32+00:00",
+            "collected_at": "2026-09-12T19:57:33.626758+00:00"
+        },
+        {
+            "id": "f42335c128839975e3815a5454c092ad8e601318689efce78e4ad24f327c21c7",
+            "title": "A Screenshot Is Not an Agent Failure Artifact",
+            "description": "A screenshot of an execution tree looks useful in a pull request. It is also missing almost everything a skeptical reviewer should ask: Which trace produced it? Was the trace changed after capture? Which redaction policy was applied? Did the crop remove a warning? Can I inspect the failing step without asking the author to reproduce it? Raw JSONL answers some of those questions and creates another problem: it may contain identifiers, attributes, or bounded previews that should not leave the developer's machine. The practical handoff unit is neither screenshot nor raw trace. It is a derived, reviewable evidence artifact . A picture is a view, not the evidence chain A screenshot preserves pixels. It does not preserve provenance. Reviewer question Screenshot Evidence package What path ran? Sometimes Yes Which source produced it? No Source run IDs and hashes What was redacted? No Redaction report and policy Did a file change later? No Packaged-file hashes Can I inspect offline? Only the crop HTML, JSON, summary, trace copy This is the model I want instead: private source trace | | derive + redact v reviewable package ├─ evidence.html ├─ summary.md ├─ redacted trace ├─ check results ├─ redaction report └─ evidence.json ----> hashes + provenance | v offline verification The source remains private. The reviewer gets a bounded object with enough context to question the result. Build a bundle from one run or a session AgentInspect's Evidence v2 bundle is one implementation of this pattern. These commands were verified against agent-inspect@6.17.6 . Create a package for one local run: npx agent-inspect bundle <run-id> \\ --dir .agent-inspect \\ --profile share \\ --out ./agent-evidence Or package a multi-run session with stricter redaction: npx agent-inspect bundle \\ --session sess-support-042 \\ --dir .agent-inspect \\ --profile strict \\ --out ./agent-evidence The source traces are read-only. The output contains derived copies and review surfaces such as: agent-evidence/ ├─ evidence.html ├─ evidence.json ├─ trace.html ├─ trace.jsonl ├─ summary.md ├─ metadata.json ├─ check-results.json ├─ redaction-report.json ├─ eval-results.json ├─ performance-summary.json └─ assets/runs/... evidence.html is the convenient entry point. evidence.json is what makes the folder inspectable as a package. What the manifest records The Evidence v2 manifest separates four facts: { \"evidenceFormatVersion\" : \"1.0\" , \"generator\" : { \"name\" : \"agent-inspect\" , \"version\" : \"6.17.6\" }, \"source\" : { \"runIds\" : [ \"run_example\" ], \"traceSchemaVersions\" : [ \"1.0\" ], \"sourceHashes\" : [ { \"runId\" : \"run_example\" , \"algorithm\" : \"sha256\" , \"hash\" : \"...\" } ] }, \"policy\" : { \"redactionProfile\" : \"share\" , \"verificationPolicy\" : \"share\" }, \"files\" : [ { \"path\" : \"trace.jsonl\" , \"sha256\" : \"...\" , \"role\" : \"redacted-trace\" } ] } The important separation is between sourceHashes and files[].sha256 : source hashes identify the pre-redaction bytes used to derive the artifact; file hashes protect the exact bytes inside the finalized package. The source hash does not reveal the redacted content. It also does not preserve the original for you; retention remains a separate policy decision. Verify before review Run the offline verifier: npx agent-inspect bundle verify ./agent-evidence It checks: the Evidence manifest shape; required listed files; SHA-256 hashes for packaged files; unexpected files, which fail by default; the recorded assessment; and generator and source provenance. If someone edits summary.md , replaces the redacted trace, or drops an unlisted file into the finalized directory, verification should stop passing. That makes a precise claim: the finalized package is internally consistent with its manifest. Imagine a reviewer receives two folders named agent-evidence . One contains the original bundle. In the other, someone corrected a sentence in summary.md after generation because the explanation was unclear. The edit may be innocent, but the artifact now describes bytes different from the ones recorded in the manifest. The correct workflow is to fix the source or approved summary input, regenerate the bundle, and verify again. Hash failure does not tell you whether a change was malicious. It tells you that the finalized review object is no longer the same object. Integrity is not authenticity This boundary is easy to overstate, so it deserves blunt language. bundle verify is an integrity check. Evidence v2 is not cryptographically signed by a trusted identity . Anyone who can replace the entire folder could create a different valid bundle. It is also not: a live hash-chained write-ahead log; proof that every event was durable before a side effect; proof of replayability or exactly-once execution; nonrepudiation; or a compliance or audit certification. If authorship or trusted delivery matters, add signing, access control, and trusted storage in your approved pipeline. Do not rename a local hash check into a stronger security property. “Share-checked” still means “review it” The default share profile is intended for pull requests and internal support. strict is a better starting point for public or external sharing. The bundle command assesses the redacted artifact and refuses UNSAFE or UNKNOWN output unless --allow-unsafe is explicitly supplied. That is a useful fail-closed guard. It is not a guarantee that arbitrary free text contains no sensitive information. Before attaching a package: open evidence.html and summary.md ; review redaction-report.json and check-results.json ; run bundle verify ; confirm the destination is approved; and apply your organization's data-retention and sharing policy. Capture less in the first place. Redaction should not be the only protection between a raw customer payload and a public issue. For pull requests, I would also record the verified bundle path or CI artifact name in a small behavior-evidence section. That gives reviewers one canonical object instead of a screenshot in Slack, a trace in local storage, and a summary pasted into the PR with no durable relationship among them. Better evidence changes the review conversation A good artifact does not decide whether an agent change is acceptable. It lets everyone inspect the same bounded object: the first explicit failure; the observed outcome; the contract finding; the sanitized execution path; the applied policy; and the package's integrity status. That moves the discussion from “trust my screenshot” to “here is the evidence, here is what was removed, and here is what the verifier can—and cannot—prove.” The pinned bundle documentation and Evidence format document the current layout and trust boundaries. What would your reviewer need before they could safely inspect—and challenge—an agent failure artifact?",
+            "url": "https://dev.to/raju_dandigam/a-screenshot-is-not-an-agent-failure-artifact-4phi",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "programmation",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-09-12T19:13:05+00:00",
+            "collected_at": "2026-09-12T19:57:34.075389+00:00"
+        },
+        {
+            "id": "ca5f22ac6440ceb854bdb96891d2d2d18e22bfcc361802e4915f40ba8982590a",
+            "title": "AI-generated websites are the Word Art era all over again",
+            "description": "Do you recall Word Art? That rainbow gradient, arched text monster on every 90s school flyer. We are currently experiencing a resurgence of this technology, but this time it is used to create complete websites. ## The tell is already showing Frontend developers argue that when AI generates design, users can immediately tell that design was made with \"sloppy\" AI. There's no list of reasons, they can just sense that it looks cheap. This is not a new instinct. We've been detecting generic clip art images in the same way. The stock handshake photo. The generic swoosh logo. Your brain automatically categorizes them as \"low budget\" before you even realize it. Many people on a developer forum are making a direct comparison to the 90s Word Art era. And you know what? It's more accurate than I'd like to admit. ## Why everything looks the same Here's why the mess looks messy. A study from 2025, cited in a January 2026 article on Medium, showed that more than 80% of AI-generated websites had almost the same underlying structure. These tools replicate what already exists on the internet and reproduce the same trends. Framer's \"Wireframer\" was put through its paces by The Designer Review in June 2026. It certainly is an impressive tool, that spits out a responsive layout in under 60 seconds. While it can indeed generate \"a typical SaaS product homepage,\" the problem with it is that if you feed it that prompt, you get an output that looks \"assembled from a mood board of every SaaS homepage from 2021.\" According to an agency with 200+ sites like Goodspeed Studio in a review from May 2026, \"AI gets the shape right and the detail wrong.\" It's ok for a first draft. It's not a client launch without rework. ## Cheap solutions have always existed This is what the panic crowd fails to understand. Affordable design tools did not destroy the art of design. They simply provided a low-cost solution for low-cost demands. An experienced designer commented in a thread from August 2025, \"AI is the new clip art. It satisfies the same low budget demand with a cheap solution... Half the food trucks were using clip art shit for their marketing / logos so it makes sense.\" Nobody was hiring a $10k designer for a taco truck logo in 2005. The clip art tier and the craft tier were never in competition for the same money. Sophie Davies from Your Marketing Department actually made the shrewdest prediction back in March 2025. AI web design \"might kill\" the ThemeForest theme market. That makes sense. What AI truly endangers is not the skilled labor but the mid-level of pre-existing templates which were halfway to the slop. 💀 The bill comes later BlakSheep Creative rang the alarm on \"AI jockeys\" back in January 2026, and it's stayed with me. Sure, AI can write text but what about developing a strategy, building a brand, or creating a solid measurement and SEO framework? Most DIY AI websites lack all of these essential components. So the site ships. Then it doesn't convert. Then someone gets hired to fix it. BlakSheep's takeaway is the quiet punchline of this whole thing. → The rebuild cycles to un-slop a generic AI site often cost more than hiring a pro to build it right the first time. Buying cheap products may seem like a good deal initially, but if they don't last long and you have to buy them again, in the end it's not really a bargain. ## So what's actually happening Artificial intelligence hasn't turned design into a commodity; it has turned the appearance of design into a commodity. Those two things are not equivalent. The thing AI actually threatens isn't skilled work; it's the low end that simply saturates the market, imitating a style that the general public will eventually notice without pinpointing. We already learned this lesson in the 90s. Word Art didn't kill off typography. It just made \"made in Word Art\" a thing you could read off a page in half a second. We are currently in the process of building that same reflex, one SaaS hero section at a time. Therefore, I would like to ask this: if the appearance of being AI-generated indicates an inferior product, does this ultimately increase the perceived value of human input, or will it simply result in more efforts to disguise this indicator?",
+            "url": "https://dev.to/adioof/ai-generated-websites-are-the-word-art-era-all-over-again-42j0",
+            "source": "DEV Community",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "ai_act",
+                "developpement",
+                "intel",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-12T19:11:50+00:00",
+            "collected_at": "2026-09-12T19:57:34.075911+00:00"
+        },
+        {
+            "id": "e2734ba1c171e19812b0c47c350b0b17b8b5aed9e0a976a38e8877862d7404f5",
+            "title": "js65 - Advanced 6502 assembler with patching support based on ca65 syntax",
+            "description": "Comments",
+            "url": "https://jsnesx.github.io/js65/",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-09-12T19:04:33+00:00",
+            "collected_at": "2026-09-12T19:57:33.888652+00:00"
+        },
+        {
+            "id": "1186480ee376980a1fa37156c2704e6b64bcbe8512f673945903fec6fc2ddc0d",
+            "title": "Nigel Farage’s Reform UK lands $97 million donations from two crypto billionaires in 24 hours",
+            "description": "",
+            "url": "https://www.coindesk.com/business/2026/09/12/nigel-farage-s-reform-uk-lands-usd97-million-donations-from-two-crypto-billionaires-in-24-hours",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-12T18:51:04+00:00",
+            "collected_at": "2026-09-12T19:57:49.181176+00:00"
+        },
+        {
+            "id": "ec56c0480af259bf895968bc310766906018e6a23e68e270c2aeeb664be66aa3",
+            "title": "Anthropic CEO calls for AI race to slow down. Musk and OpenAI's Altman agrees",
+            "description": "",
+            "url": "https://www.coindesk.com/tech/2026/09/12/anthropic-ceo-calls-for-ai-race-to-slow-down-musk-and-openai-s-altman-agrees",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "anthropic",
+                "bitcoin",
+                "blockchain",
+                "crypto",
+                "openai"
+            ],
+            "published_at": "2026-09-12T18:43:33+00:00",
+            "collected_at": "2026-09-12T19:57:49.181237+00:00"
+        },
+        {
+            "id": "e744c7926a9e0efeebfb503c12a231419da11281d342f19aad00b0183f93812f",
+            "title": "Diablo 5 Is Coming In Spring 2029, Here's The First Teaser Trailer",
+            "description": "\"Sanctuary falls\". Following the reveal of Diablo IV for the Switch 2 at BlizzCon's opening ceremony this weekend, Blizzard ended its Diablo 30th anniversary segment with the official announcement of Diablo V . The next major entry in the action role-playing series will be arriving in Spring 2029 . Platforms and a specific release date have not been announced at this stage, but you can sign up to Blizzard's Diablo website for future updates. Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/news/2026/09/diablo-5-is-coming-in-spring-2029-heres-the-first-teaser-trailer",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-09-12T18:25:00+00:00",
+            "collected_at": "2026-09-12T19:57:47.606339+00:00"
+        },
+        {
+            "id": "76c8565b22cb45d9bbded0169d00d25c59b842c2739a28cbe518acfa6944a7ed",
+            "title": "Goldman Sachs Flips to a Rate Hike as Bitcoin’s Price Stalls Under $80,000",
+            "description": "Goldman Sachs abandoned its forecast that the Federal Reserve would hold rates through 2026 and now expects a 25-basis-point increase next week, days after a hotter-than-expected inflation print pushed hike odds above 86%. The Reversal As recently as July 31, Goldman Sachs was the loudest institutional voice arguing the Fed would sit still. The bank […]",
+            "url": "https://news.bitcoin.com/crypto-news/goldman-fed-rate-hike-september-bitcoin-golden-cross/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-12T18:15:34+00:00",
+            "collected_at": "2026-09-12T19:57:49.331238+00:00"
+        },
+        {
+            "id": "05b380cf37a9de5cbcec8acc5a6078c5f2a27a582efaa145da6ad59c059984c7",
+            "title": "It's Official, Diablo 4: Age Of Hatred Collection Brings Hell To Switch 2 Next Week",
+            "description": "And it's already been spotted in stores. After ongoing rumours and even some ratings , Blizzard has finally lifted the lid on Diablo 4 for Switch 2 at BlizzCon 2026 this weekend. Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/news/2026/09/its-official-diablo-4-age-of-hatred-collection-brings-hell-to-switch-2-next-week",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-09-12T18:15:00+00:00",
+            "collected_at": "2026-09-12T19:57:47.606431+00:00"
+        },
+        {
+            "id": "364ba2851ac5f4152dc37544603c2e3e93d30b37ccafc947fd82e6c3642ced99",
+            "title": "Diablo Is Getting An Animated Netflix Series",
+            "description": "Now in development. At BlizzCon 2026 this weekend, Blizzard has announced Diablo is getting an animated Netflix series. Blizzard: \"We are thrilled to share that we are in development on a new animated series for Diablo with Netflix.\" Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/news/2026/09/diablo-is-getting-an-animated-netflix-series",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-09-12T17:45:00+00:00",
+            "collected_at": "2026-09-12T19:57:47.606515+00:00"
+        },
+        {
+            "id": "4d0d9340449db07e04bd9e1396d9db9e7e6eb0c3a75c1ffdd882336b3922bd26",
+            "title": "The gpg.fail aftermath: On responsible disclosure, GPG, and the state of security in 2026 [32:37]",
+            "description": "slides In 2025, I [the speaker] found and disclosed a bunch of vulnerabilities in GPG, the most used PGP implementation, and held a talk at 39c3 about it. Some of the bugs ended up getting fixed. This talk describes the adventure and aftermath of getting there, shows some novel ones, and talks about the state of security in 2026. May contain zero-days =) Until May 2025, I liked PGP, and the GNU Privacy Guard. I poked at it in my free time a lot. One day, that suddenly changed, when I flew too close to the sun and ended up uncovering a vulnerability that allows you to easily spoof a PGP signature when opened naively with the GPG tool. Fast-forward a couple of months, the one vulnerability turned into several independent ones, up to memory corruption in the basic PGP message parser, affecting almost all PGP-related workflows. I disclosed these a few weeks before 39c3 in December 2025. And while some of the vulnerabilities - like the memory corruption in the message parser - got addressed properly, this was not the case for all of them. For example, one of the first vulnerabilities I found, that was used for the introduction hook in the 39c3 talk, remains unpatched to this day. Instead of being fixed with code, Werner Koch - the main developer of GnuPG - published a blog post declaring the widely-used feature being \"harmful\"; while they had weeks in advance, they published this on day one of 39c3, not even giving us time to respond. Several disgruntled comments followed, but a good portion of the flaws are still not addressed, as I will demonstrate live in the talk. This specific demonstration will not utilize any zero-day vulnerabilities (those come next); we will be showing how much of an issue the footguns (that they refuse to address) at hand really are. Additionally, I will present a few novel vulnerabilities on GPG. Not quite the bombshells as last time, but some nifty bugs that should never have made it into production in the first place, but to demonstrate the state of the GnuPG codebase. The talk closes with some general commentary about the state of security and responsible disclosure, and touch on the topic of AI/LLMs in security (with some of the gpg.fail vulnerabilities as examples); what this means for security researchers, ordinary people and software developers (spoiler: neither end users nor security researchers are doomed). Comments",
+            "url": "https://media.ccc.de/v/2026-728-the-gpg-fail-aftermath-on-responsible-disclosure-gpg-and-the-state-of-security-in-2026",
+            "source": "Lobsters",
+            "category": "cybersecurite",
+            "tags": [
+                "aws",
+                "developpement",
+                "llm",
+                "open-source",
+                "programmation",
+                "zero_day"
+            ],
+            "published_at": "2026-09-12T17:24:59+00:00",
+            "collected_at": "2026-09-12T19:57:33.888066+00:00"
+        },
+        {
+            "id": "138f321247425e2a5e713ffcc3a4da8963bb6fdb483ab4fdeb2281d893c7a76b",
+            "title": "Will There Be a 7G?",
+            "description": "Comments",
+            "url": "https://arxiv.org/abs/2609.01877",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-12T17:05:31+00:00",
+            "collected_at": "2026-09-12T19:57:33.626800+00:00"
+        },
+        {
+            "id": "a9e977dc0732d90f3474673d25d619e3e022f3824c170a49c19d9616b15f832e",
+            "title": "Deep in Mexico’s Jungle, Police Found 300 Crypto Miners Humming",
+            "description": "According to reports, Mexican law enforcement authorities discovered a cryptocurrency mining farm located deep in the remote Sierra Norte mountains of Puebla. Officials believe the GPU farm was financed via organized crime syndicates, and it’s the fourth hidden crypto mining operation discovered in the area since 2025. 300 GPU Miners Found Deep in the Puebla […]",
+            "url": "https://news.bitcoin.com/mining/deep-in-mexicos-jungle-police-found-300-crypto-miners-humming/",
+            "source": "Bitcoin.com News",
+            "category": "hardware",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-12T16:50:28+00:00",
+            "collected_at": "2026-09-12T19:57:49.331366+00:00"
+        },
+        {
+            "id": "64f575e9b4f6fe6499f9441f7ec7f9cea2f1fb7a4564bf09b9b0ff1237113695",
+            "title": "Make your first edit to OpenStreetMap",
+            "description": "Comments",
+            "url": "https://high5apps.github.io/josm-plugin-website-wizard/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-12T16:25:08+00:00",
+            "collected_at": "2026-09-12T19:57:33.626662+00:00"
+        },
+        {
+            "id": "3cfaa52790c4b2c0ff236a226de26d26002fd3cc47bd2bd7f695ff8ef02e9afa",
+            "title": "Ether ETFs Gain $216M as Bitcoin ETFs Extend 4-Day Outflow Streak",
+            "description": "U.S. bitcoin ETFs posted a fourth straight day of outflows on Friday, losing $13.29 million. In contrast, ether funds moved sharply in the opposite direction, attracting $216.41 million and closing a fourth consecutive week with net inflows. Bitcoin ETFs Stay Negative With Bitcoin’s Price Stuck at $77K Friday brought a striking split across the crypto […]",
+            "url": "https://news.bitcoin.com/bitcoin-etf/ether-etfs-gain-216m-as-bitcoin-etfs-extend-4-day-outflow-streak/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-12T16:17:00+00:00",
+            "collected_at": "2026-09-12T19:57:49.331478+00:00"
+        },
+        {
+            "id": "1521434d3d175c68a712cc00a3adef1223507d779bd21cbc17de360472be282c",
+            "title": "Ripple stablecoin chief sees $13 trillion corporate treasury opportunity for RLUSD",
+            "description": "",
+            "url": "https://www.coindesk.com/business/2026/09/12/ripple-stablecoin-chief-sees-usd13-trillion-corporate-treasury-opportunity-for-rlusd",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-12T16:00:00+00:00",
+            "collected_at": "2026-09-12T19:57:49.181304+00:00"
+        },
+        {
+            "id": "ecb0e5966d62d16190c118c6c72e65472e7493fbf19cc94dc4e9f9bcd323bfb5",
+            "title": "Ditching bonds for bitcoin: How crypto can tackle the AI-heavy portfolio dilemma",
+            "description": "",
+            "url": "https://www.coindesk.com/business/2026/09/12/ditching-bonds-for-bitcoin-how-crypto-can-tackle-the-ai-heavy-portfolio-dilemma",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-12T16:00:00+00:00",
+            "collected_at": "2026-09-12T19:57:49.181358+00:00"
+        },
+        {
+            "id": "facfec3e9bce14fb751dd43153e426fe177171e7d963604a3ff54ba6b53076e7",
+            "title": "Useful Things Agents Can Do That Are Not Writing Code",
+            "description": "Comments",
+            "url": "https://elijahpotter.dev/articles/useful_things_agents_can_do_that_are_not_writing_code",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-09-12T15:56:54+00:00",
+            "collected_at": "2026-09-12T19:57:33.887643+00:00"
+        },
+        {
+            "id": "0ddc7c58e041304080d6a0b0c9112048113b0133c17e5268e4c73655190613eb",
+            "title": "CISA Adds 5 Actively Exploited Artifactory, ScreenConnect, and RouterOS Flaws to KEV",
+            "description": "The U.S. Cybersecurity and Infrastructure Security Agency (CISA) has added five security flaws impacting JFrog Artifactory, ConnectWise ScreenConnect, and MikroTik RouterOS to its Known Exploited Vulnerabilities (KEV) catalog, following reports of active exploitation in the wild. Details of the vulnerabilities are as follows - CVE-2026-42016 (CVSS score: 8.1) - An incorrect authorization",
+            "url": "https://thehackernews.com/2026/09/cisa-adds-5-actively-exploited.html",
+            "source": "The Hacker News",
+            "category": "cybersecurite",
+            "tags": [
+                "aws",
+                "cve",
+                "cybersecurite",
+                "hacking",
+                "vulnerabilites"
+            ],
+            "published_at": "2026-09-12T15:54:45+00:00",
+            "collected_at": "2026-09-12T19:57:30.188557+00:00"
+        },
+        {
+            "id": "0caeed80cc30a7df231823eb98763f42e0e863b7685da2fea20c51961ae45e0f",
+            "title": "Microcode in Intel's 8087 floating-point chip: the scale instruction",
+            "description": "Comments",
+            "url": "https://www.righto.com/2026/09/8087-microcode-reverse-engineering-fscale.html",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "intel",
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-12T15:49:52+00:00",
+            "collected_at": "2026-09-12T19:57:33.626932+00:00"
+        },
+        {
+            "id": "52bdd9f469c4f2838a07dc64997afda78d245014429a4a24feb55f4c5c73b3c4",
+            "title": "xkcd-font: The xkcd font",
+            "description": "Comments",
+            "url": "https://github.com/ipython/xkcd-font",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-09-12T15:39:00+00:00",
+            "collected_at": "2026-09-12T19:57:33.887726+00:00"
+        },
+        {
+            "id": "1b07fd0950ad046f4127546a5428aa0b567772f3c701c534ffb589263cff5e68",
+            "title": "Why do companies stop using Haskell?",
+            "description": "Comments",
+            "url": "https://www.youtube.com/watch?v=2PebXEak24M",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-09-12T15:18:31+00:00",
+            "collected_at": "2026-09-12T19:57:33.888357+00:00"
+        },
+        {
+            "id": "ea00a957f04007f9248f33c0bd50419c72d6db4134c62e392f2a08c019eff2ae",
+            "title": "Revolut Leaks Customer Data to Hackers Posing as State Agency",
+            "description": "The institution shared personally identifiable information from an unknown number of users after receiving a request from an unauthorized government email account. The shared documents include identity details, ID and verification information, and financial statements, putting affected users at risk. Revolut Leaks Customer Information To Unidentified Threat Actors Revolut, a UK-based neobank, became the latest […]",
+            "url": "https://news.bitcoin.com/security/revolut-leaks-customer-data-to-hackers-posing-as-state-agency/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-12T15:14:56+00:00",
+            "collected_at": "2026-09-12T19:57:49.331592+00:00"
+        },
+        {
+            "id": "bacf7aac6987233eb08816b8de439185b5f8e3a92fa98fc9786f6a719ef6236d",
+            "title": "Nvidia is the central bank of AI",
+            "description": "Comments",
+            "url": "https://www.economist.com/interactive/briefing/2026/09/03/nvidia-is-the-central-bank-of-ai",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "nvidia",
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-12T15:08:27+00:00",
+            "collected_at": "2026-09-12T19:57:33.626710+00:00"
+        },
+        {
+            "id": "753ad596a3c452afef37d68962ad32bb435f7ebaa02dd9d14dc8a81876b09e3e",
+            "title": "Iran and Houthi rebels used Anthropic's Claude AI to target US warships and build hypersonic missiles — Houthi rebels also used the bot to code ballistic missile guidance systems",
+            "description": "'Great Satan's' AI comes in handy.",
+            "url": "https://www.tomshardware.com/tech-industry/artificial-intelligence/iran-and-houthi-rebels-used-anthropics-claude-ai-to-target-us-warships-and-build-hypersonic-missiles-houthi-rebels-also-used-the-bot-to-code-ballistic-missile-guidance-systems",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "anthropic",
+                "cpu",
+                "gpu",
+                "hardware",
+                "pc"
+            ],
+            "published_at": "2026-09-12T15:03:10+00:00",
+            "collected_at": "2026-09-12T19:57:36.293795+00:00"
+        },
+        {
+            "id": "3032be2fe4c77146526c8817782acda1f543e2cdcfde66100fd4b1b1854c7c18",
+            "title": "I made a build visualizer to understand Bun's compile times",
+            "description": "Comments",
+            "url": "https://lalitm.com/post/buildprof/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-12T14:45:28+00:00",
+            "collected_at": "2026-09-12T19:57:33.627017+00:00"
         },
         {
             "id": "97fc71751186901a8eab6099c116825c10b33badc2d2252e21ed5f0621d191b7",
@@ -140,6 +778,21 @@
             ],
             "published_at": "2026-09-12T14:25:14+00:00",
             "collected_at": "2026-09-12T14:44:14.256972+00:00"
+        },
+        {
+            "id": "9f948ffb275b586574a68adb4de1b4ef3da8adf65c837939edcff59a73a32a4b",
+            "title": "I refuse to let SPICE die",
+            "description": "Comments",
+            "url": "https://github.com/nefarius/vd_agent/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-12T14:25:07+00:00",
+            "collected_at": "2026-09-12T19:57:33.627701+00:00"
         },
         {
             "id": "f6eb0f09b7e7fc5deb155474e7e584143f63b1b4bcde5ca17fbc1531b1c1f90a",
@@ -469,6 +1122,21 @@
             ],
             "published_at": "2026-09-12T13:26:00+00:00",
             "collected_at": "2026-09-12T14:44:13.129188+00:00"
+        },
+        {
+            "id": "42df73899de20b82df1cfd9391529a7ddca53e803ca084a74026b8c0343d30fc",
+            "title": "A few good ideas in programming languages",
+            "description": "Comments",
+            "url": "https://prydt.xyz/blog/a-few-good-ideas-in-pl/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-12T13:07:52+00:00",
+            "collected_at": "2026-09-12T19:57:33.627144+00:00"
         },
         {
             "id": "f1cae18e741b77c4e7a1d519ef7be2975691fc977c0718a94198763134084324",
@@ -1960,6 +2628,22 @@
             ],
             "published_at": "2026-09-11T21:16:48+00:00",
             "collected_at": "2026-09-12T09:52:31.060763+00:00"
+        },
+        {
+            "id": "359ea16eccfd7c5dc75b3e3abaab9d4cda965192000e4272e52cdc8bce1eb903",
+            "title": "Android NAT-T keepalive offload bypasses VPN lockdown",
+            "description": "Comments",
+            "url": "https://supuk.ch/papers/android-natt-keepalive-vpn-bypass",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "android",
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-11T21:16:48+00:00",
+            "collected_at": "2026-09-12T19:57:33.627339+00:00"
         },
         {
             "id": "9021d387bc62790d03226ddfb03c5300796f198579a4aa97c934d6899fe931b0",
@@ -5949,6 +6633,21 @@
             ],
             "published_at": "2026-09-11T04:25:05+00:00",
             "collected_at": "2026-09-11T10:21:38.750150+00:00"
+        },
+        {
+            "id": "e0663a31cb81d88cf7825b9fec8f2038666b9c2f3b5d634fd082de29806b4e3a",
+            "title": "Reconstructing Concurrency Invariants Through Medieval East Asian Logic",
+            "description": "Comments",
+            "url": "https://oborona.zip/post/a-middle-period-engine-reconstructing-concurrency-invariants-through-east-asian-structural-logic",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-11T04:19:40+00:00",
+            "collected_at": "2026-09-12T19:57:33.627744+00:00"
         },
         {
             "id": "ee02c2a62a242d06918341f5cede162a4fc7d397111b2ea23072b7fcd0cc5c7b",
@@ -12364,6 +13063,21 @@
             "collected_at": "2026-09-10T10:20:41.668730+00:00"
         },
         {
+            "id": "50828781211ac7cb07fcbc21cec322ee234d6f27084f3b04cbf340d8d2546f59",
+            "title": "How we manage and engage with our horses shapes their personality",
+            "description": "Comments",
+            "url": "https://www.utu.fi/en/news/press-release/how-we-manage-and-engage-with-our-horses-shapes-their-personality",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-10T01:57:32+00:00",
+            "collected_at": "2026-09-12T19:57:33.627656+00:00"
+        },
+        {
             "id": "fc34d8b35bb35171d0a0f9510b8566fb4514b1ab754c971588b55847206a60f9",
             "title": "Someone Spammed My DEV Post. I Traced It to a Wombat.",
             "description": "Illustration generated for this article. Every prop is a finding: the sack of blank name badges is the Faker persona namespace, the rubber stamp is the inert tracking parameter, the three coins are the break-even, and the red yarn connects nothing because attribution failed. TL;DR — A spam comment on my article led to a TinyURL, a throwaway .store domain, and finally a legitimate SaaS product with an affiliate code stapled to it. No malware, no cloaking, no exploit. The account that posted it has a name generated by faker.js and a 19th-century engraving of a wombat for a face. I costed the whole operation out: three signups a year pays for it. That's why it will never stop. Full evidence, raw captures and a reproduce script: github.com/copyleftdev/dev-to-comment-hustle Act I: The comment I published Migrating Legacy LLM Infrastructure to an AI Gateway on September 1st. Eight days later, underneath two thoughtful comments about shared-key blast radius and provider failover, this appeared: Stop wasting time applying manually Let AI handle your job applications every single day Increase your chances of getting interviews fast tinyurl.com/36nsecn5 No punctuation. No engagement with the post. A shortener. It's funny in the way all low-effort spam is funny — it's not even trying . But a shortener is a closed door, and I have a shell. Let's open it, then let's go find who knocked. Act II: Where the link goes Never click. Ask for headers and refuse the redirect: curl -sS -I 'https://tinyurl.com/36nsecn5' HTTP / 2 301 location : https://zenviapro.store/massapply?whose=yahoo x-robots-tag : noindex zenviapro.store . A route called /massapply , and a whose=yahoo parameter that looks like campaign segmentation. Follow it all the way: curl -sSL -D - -o /dev/null 'https://zenviapro.store/massapply?whose=yahoo' | grep -iE '^HTTP/|^location:' HTTP / 1.1 302 Found Location : https://loopcv.pro/?via=md HTTP/2 301 location : https://www.loopcv.pro/?via=md HTTP/2 200 And there it is. LoopCV. A real, functioning job-application-automation SaaS. Not a phishing kit. Not a credential harvester. A product you can buy with a credit card — with ?via=md on the end. ?via= is Rewardful's referral parameter, and LoopCV's own affiliate page points registrations at loopcv.getrewardful.com . So md is somebody's affiliate token, and every person who clicks that comment and later subscribes puts money in a stranger's pocket. This is not a malware campaign. It's affiliate marketing with the manners removed. Act III: The infrastructure is held together with tape The sloppiness is the signal. It's a stock Express app with the wrapper still on HTTP / 1.1 302 Found X-Powered-By : Express Content-Type : text/plain; charset=utf-8 Content-Length : 48 Found. Redirecting to https://loopcv.pro/?via=md Found. Redirecting to is the literal default body of Express's res.redirect() . X-Powered-By: Express is the header every hardening guide tells you to strip in the first five minutes. Neither was touched. Ask for anything else and you get the stock 404: curl -sS 'https://zenviapro.store/' # <html><head><title>Error</title></head><body><pre>Cannot GET /</pre></body></html> There is no website here. No landing page, no cloaked content, no fake blog. One domain, one route , about ninety seconds of JavaScript. The tracking parameter is a prop whose=yahoo looks like segmentation. Which list? Which provider? Let's ask: for w in yahoo gmail outlook devto reddit '' XXtest ; do printf '%-8s -> ' \" ${ w :- <empty> } \" curl -sS -o /dev/null -w '%{http_code} %{redirect_url}\\n' \\ \"https://zenviapro.store/massapply?whose= $w \" done yahoo -> 302 https://loopcv.pro/?via=md gmail -> 302 https://loopcv.pro/?via=md outlook -> 302 https://loopcv.pro/?via=md devto -> 302 https://loopcv.pro/?via=md reddit -> 302 https://loopcv.pro/?via=md <empty> -> 302 https://loopcv.pro/?via=md XXtest -> 302 https://loopcv.pro/?via=md Inert. Every value routes identically. It splits no traffic and sub-tags nothing. The one piece of the URL that looks like operational sophistication is decoration. There is no cloaking whatsoever Real malicious redirectors fingerprint you — benign page for the researcher, payload for the victim. This one returns the same 302 to Googlebot, to curl , to an iPhone, and to a request with no User-Agent at all. No cloaking is itself a finding. This operator has no threat model, because nothing in the chain is illegal. It's a terms-of-service violation wearing a trench coat. The mail server is the real pivot dig +short zenviapro.store MX # 10 mail.beeservices.shop. The mail exchanger lives on a different domain — which resolves right back to the same box: zenviapro.store A 50.114.206.36 mail.beeservices.shop A 50.114.206.36 beeservices.shop A (nothing) beeservices.shop has no A record and no certificate in Certificate Transparency, ever. It's a mail-only domain. One box, two domains, two roles — that's a portfolio , not a one-off. And the box is listening. Port 80 closed; 443 and 25 open: 220 mail.zenviapro.store ESMTP 250-PIPELINING 250-8BITMIME 250 SMTPUTF8 No STARTTLS . No AUTH . A minimal MTA that does nothing but move mail in cleartext. The stale HELO is a fingerprint My favourite detail. The banner announces mail.zenviapro.store . dig +short mail.zenviapro.store A # (nothing) That hostname does not resolve. It's a leftover from an earlier config, before the MX was swapped to beeservices.shop . They rebuild the domains; they don't rebuild the server. A banner that disagrees with DNS is a durable pivot you can hunt across an entire fleet. Act IV: Who posted it This is the part I actually enjoyed. DEV has a public API, so the commenter isn't a mystery: curl -s 'https://dev.to/api/comments?a_id=4547359' | jq -r '.[].user.username' max_quimby mudassirworks jaylonstiedemannterry78-993 Meet jaylonstiedemannterry78-993 , display name Jaylon_Stiedemann-Terry78 , user ID 3748129, joined February 2, 2026 . The profile is a vacuum: { \"username\" : \"jaylonstiedemannterry78-993\" , \"name\" : \"Jaylon_Stiedemann-Terry78\" , \"joined_at\" : \"Feb 2, 2026\" , \"summary\" : null , \"location\" : null , \"website_url\" : null , \"twitter_username\" : null , \"github_username\" : null } Zero published articles. No bio, no location, no links, no socials. Seven months of membership and a single comment to show for it. A note on durability. If DEV removes this account — which it may well do — the profile lookup above starts returning 404 and the account page goes dead. That doesn't retract anything: the raw captures are committed in the evidence repo , checksummed, and dated. Read a 404 as the platform doing its job, not as a claim being withdrawn. The infrastructure findings are independent of the account either way, and the pattern — a Faker-templated name, an empty profile, an aged dormant account — outlives any single username. The name is machine-generated, and I can prove it Say Jaylon_Stiedemann-Terry78 out loud. Something's off — Stiedemann-Terry is a double-barrelled surname that doesn't sound like a family, it sounds like a draw . It is. Those tokens come straight out of Faker , the library every developer on earth uses to generate fake test data. Let's check the actual source: curl -sO https://raw.githubusercontent.com/faker-js/faker/next/src/locales/en/person/last_name.ts curl -sO https://raw.githubusercontent.com/faker-js/faker/next/src/locales/en/person/first_name.ts grep -n \"'Stiedemann'\" last_name.ts # 408: 'Stiedemann', grep -n \"'Terry'\" last_name.ts # 417: 'Terry', grep -n \"'Jaylon'\" first_name.ts # 2514: 'Jaylon', All three. Jaylon from the first-name list, Stiedemann and Terry both from the surname list. And here's the kicker: grep -c -- '-' last_name.ts # 0 Faker's 466-entry English surname list contains zero hyphens. So Stiedemann-Terry isn't one surname from the list — it's two independent draws that the operator joined with a hyphen. This isn't stock faker.internet.username() . It's a custom template: {firstName}_{lastName}-{lastName}{2 digits} Which means we can size their supply: 3,185 first names × 466 surnames × 466 surnames × 100 = 69,164,186,000 Sixty-nine billion distinct personas. Roughly eight per human being alive. They will never run out of names, and no blocklist of usernames will ever catch up. (One thing I checked so I wouldn't over-claim: the un-suffixed jaylonstiedemannterry78 returns a 404 — nobody has it. So the -993 is DEV's own username normalization, not evidence of a prior collision.) The avatar is a wombat The profile image is a 400×400 PNG, 8-bit grayscale-plus-alpha, stripped of all metadata. I downloaded it expecting a GAN face or a default monogram. It is a Victorian-era scientific engraving of a wombat. Not a stock photo of a person. Not an AI-generated headshot. A piece of public-domain 19th-century natural-history line art of a stout Australian marsupial, serving as the face of a fake job-spam persona. Whoever built this pipeline wired the avatar slot to some public-domain clipart source and never looked at the output. I want to be precise about something: there is no real person here to name. The name is provably synthetic, the face is a public-domain animal illustration, and the profile is empty. That's not me protecting anyone's privacy — it's the finding. The timeline says something the Express config doesn't Line the dates up: Date Event Δ 2026-01-27 zenviapro.store registered (Namecheap) — 2026-02-02 DEV account created +6 days 2026-07-30 First TLS certificate issued +184 days 2026-09-09 Spam comment posted +41 days The domain and the account were provisioned six days apart — same procurement burst. Then both sat completely dormant for six months before the certificate was issued and the thing went live. That's aged-asset tradecraft. New domains and new accounts trip reputation heuristics; seven-month-old ones don't. And it sits in genuine tension with everything in Act III: sloppy at the application layer, disciplined at the account-aging layer. Which makes sense once you think about who this is. Aging assets doesn't take skill. It takes patience , and a calendar. Stripping X-Powered-By takes knowing what it is. It wasn't a blast I swept the comments on all 30 of my published articles for the pattern: for id in $( jq -r '.[]|select(.comments_count>0)|.id' mine.json ) ; do curl -s \"https://dev.to/api/comments?a_id= $id \" \\ | jq -r '.. | objects | select(has(\"id_code\")) | ((.body_html // \"\") | gsub(\"<[^>]*>\";\"\")) as $t | select($t | test(\"tinyurl|applying manually|job application\";\"i\")) | \"HIT \\(.id_code) @\\(.user.username)\"' done Exactly one hit. Not a shotgun across my whole back catalogue — one comment, on one post, eight days after it went up. Whether that's targeting or just a slow drip, I can't tell from one sample. But it isn't volume. Act V: I went looking for them on GitHub. That search is the finding. Affiliate spammers leave GitHub artifacts more often than you'd think, because GitHub repos rank well and a repo full of referral links is free SEO. So I went hunting with gh . Start with the direct IOCs for q in '36nsecn5' '50.114.206.36' 'zenviapro.store' 'beeservices.shop' ; do gh search code \" $q \" --limit 5 done Zero hits. All four. The TinyURL slug, the origin IP, the redirector domain, the mail domain — none of it appears anywhere in GitHub's index. The operator has published nothing. Then check whether anyone else has flagged them PhishDestroy maintains destroylist , a curated blocklist of phishing and scam domains. I pulled the whole thing: curl -sL .../destroylist/HEAD/list.txt -o dl.txt wc -l dl.txt # 202659 grep -ixc 'zenviapro.store' dl.txt # 0 grep -ixc 'beeservices.shop' dl.txt # 0 202,659 curated malicious domains, and ours isn't one of them. Combined with the NOT_OBSERVED reputation verdict, that's now two independent sources agreeing: nobody is tracking this, because by every technical definition there's nothing to track. The lead that looked incredible and wasn't Here's where I nearly fooled myself, so I'm showing my work. Searching zenviapro turned up a hit in phishdestroy/namesilo-evidence — a registrar-abuse investigation filed with ICANN. In a list of flagged NameSilo domains: zenviaetc.info zenviahub.info zenviapro.info ← same second-level label as ours zenvias.info zenviatime.info zenviazone.info A six-domain family, same generation pattern, one of them sharing our exact label. My pulse went up. And they really are one operator — all six resolve through the identical Cloudflare nameserver pair: zenviapro.info asa.ns.cloudflare.com harley.ns.cloudflare.com zenviahub.info asa.ns.cloudflare.com harley.ns.cloudflare.com zenviaetc.info asa.ns.cloudflare.com harley.ns.cloudflare.com ... all six identical But it isn't our operator, and the contrast kills it: zenvia*.info cluster zenviapro.store (ours) Registrar NameSilo Namecheap DNS Cloudflare ( asa / harley ) registrar-servers.com Hosting Cloudflare proxy Linveo direct, no proxy TLD .info × 6 .store Nothing shared but six letters. Both are almost certainly riding the name of Zenvia , a real Brazilian CPaaS company — which is exactly why the label collides. Two unrelated operators reaching for the same brandable string. A matching name is not a matching operator. If I'd stopped at the grep I'd have published a confident, wrong attribution to a phishing cluster that has nothing to do with this. What GitHub did give me The affiliate ecosystem, in the open. LoopCV referral links are scattered across GitHub in exactly the SEO-backlink genre I expected: Repo Token Ramas68/LoopCV-Promo-Codes — *\"LoopCV Promo Codes \\ 50% Off Discount\"* diaodiaozhuye/awesome-ai-startups ?via=toolify heukshow/aicity-os ?via=sang-kwon Look at those tokens. abdul . toolify . sang-kwon . A first name, a company, a full handle. The affiliates who promote LoopCV in public sign their work. Ours is md . Two characters, no name, nothing to search. That's the only genuinely deliberate piece of operational security in this entire campaign — and it's not on the server, the domain, or the account. It's on the one string that would have led back to a person. So: no attribution. And the shape of the failure is the story. Someone who leaves X-Powered-By: Express on, ships a fake tracking parameter, and picks a wombat for an avatar still knew to make the payout token anonymous. They didn't secure the operation. They secured the part that gets paid. Act VI: The economics, which are the actual vulnerability Stop thinking like a defender and think like the operator. LoopCV's affiliate program pays 25% commission . Publicly reported figures put subscriptions at $50–$200 with customers staying 6–12 months . Exact interval arithmetic, gross revenue per referred customer: [$50, $200] × [6, 12] = [$300, $2,400] At 25%: [$300, $2,400] ÷ 4 = [$75, $600] ← commission per conversion Cost side: a .store domain plus a year of budget hosting — call it $38–$180 all-in. Break-even: [$38, $180] ÷ [$75, $600] = [19/300, 12/5] = [0.06, 2.4] Between one-sixteenth of a signup and three signups per year covers the entire operation. That's the whole thesis. Nothing here needs to work well . The copy can be terrible. The tracking parameter can be fake. The 404s can leak the framework. The HELO can be stale. The mascot can be a wombat. Three conversions and the year is paid for , and everything after that is margin on infrastructure that costs less than lunch. You cannot out-moderate that math. Reputation feeds have nothing, and they're right I ran the origin IP through an offline reputation lens: { \"target\" : { \"type\" : \"ip\" , \"value\" : \"50.114.206.36\" }, \"verdict\" : { \"disposition\" : \"unknown\" , \"confidence\" : 0.0 , \"reason_codes\" : [ \"NOT_OBSERVED\" ] }, \"observations\" : [] } Not observed. No feed has it — and that's correct . It hosts no malware, no C2, no phishing. Threat intel is tuned for technical harm, and this campaign's harm is economic and reputational. It will sit below every threshold you own, forever. Who the victim actually is Not me. I scrolled past it. LoopCV is the victim. A real company with a real product is having its brand welded to comment spam by an affiliate they've likely never spoken to. They eat the reputational damage, they pay commission on the conversions, and the operator's total exposure is a $12 domain and a wombat. To be explicit, because it matters: I found no evidence that LoopCV is running or is aware of this campaign. Open affiliate programs get abused; that's the risk of the model. The fix belongs to the vendor: Require affiliates to declare traffic sources, and enforce it Ban unsolicited comment/forum posting in the program terms, in writing Flag referral tokens whose traffic arrives overwhelmingly via shorteners with no referrer Kill tokens on abuse reports — fast, without requiring a lawyer ?via=md is a token. Tokens can be revoked. That's a one-line fix that permanently ends this specific campaign, and exactly one party can perform it. IOCs Campaign infrastructure — safe to blocklist: Indicator Type Notes tinyurl.com/36nsecn5 URL Shortener entry point zenviapro.store Domain Redirector; Namecheap; created 2026-01-27 https://zenviapro.store/massapply URL Only live route beeservices.shop Domain Mail-only sibling; no A record, no CT history mail.beeservices.shop Hostname MX for zenviapro.store 50.114.206.36 IPv4 Origin; 443 + 25 open, 80 closed AS62564 / oh2.linveo.com ASN / rDNS Linveo, Ohio jaylonstiedemannterry78-993 DEV account user_id 3748129; joined 2026-02-02; 0 articles Behavioural signatures — this is what actually generalises: Signature Value Affiliate token via=md (Rewardful format) Inert campaign param whose=<anything> — routing-neutral Server fingerprint X-Powered-By: Express + body Found. Redirecting to Root response Cannot GET / (Express default 404) SMTP banner 220 mail.zenviapro.store ESMTP — does not resolve SMTP capabilities No STARTTLS , no AUTH SPF v=spf1 mx ip4:50.114.206.36 ~all DMARC Absent on both domains Persona template {firstName}_{lastName}-{lastName}{2 digits} , all tokens ∈ Faker en Avatar class Public-domain engraving, grayscale+alpha PNG, metadata stripped Provisioning pattern Domain + account within 7 days, then ~6 months dormant ⚠️ loopcv.pro is NOT an indicator of compromise. It's a legitimate destination being abused by a third-party affiliate. Do not blocklist it. Blocklisting the victim is how threat intel gets a bad name. What to actually do If you run a comment platform: the highest-signal feature isn't the text, it's the shape . Zero-engagement first comments containing a shortener, from accounts with no posts and an empty profile, are trivially clusterable. Resolve shorteners server-side at submission time and score the destination. And the persona template is a gift — a name whose tokens all appear in Faker's en locale, with a structure Faker itself doesn't emit, is close to a free classifier feature. If you write on DEV: don't click, and don't just delete. curl -I takes four seconds. Then report the destination to the vendor, not the comment to the platform. The platform can remove one comment; the vendor can revoke the token behind all of them. If you run an affiliate program: you are one unsupervised token away from your brand appearing under a headline like this one. Read your traffic sources. The takeaway I went in expecting a dropper. I found four lines of Express, a fake tracking parameter, a name drawn from a test-data library, and a 19th-century wombat. That's the uncomfortable part. The most durable spam on the internet isn't sophisticated — it's cheap and legal . There's no CVE here, no payload to reverse, no C2 to sinkhole. Every traditional defensive tool I own returns NOT_OBSERVED , and every one of them is right to. The economics are the vulnerability. Three conversions a year, and the whole thing pays for itself forever. The wombat is just a bonus. All findings are from passive reconnaissance — DNS, WHOIS, Certificate Transparency, HTTP headers, a TCP banner grab, and DEV's own public API — against infrastructure and accounts the operator published for public consumption. No systems were accessed, no credentials used, nothing exploited.",
@@ -17018,6 +17732,22 @@
             ],
             "published_at": "2026-09-09T12:00:00+00:00",
             "collected_at": "2026-09-09T15:41:23.186477+00:00"
+        },
+        {
+            "id": "dd7be298c1b39befe3ed58a8700abd7b971a426aba121221624aca68e6771ea8",
+            "title": "Stabilizing Rust's Never Type",
+            "description": "Comments",
+            "url": "https://lwn.net/SubscriberLink/1091015/d9e48318ed242b41/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "rust",
+                "startup"
+            ],
+            "published_at": "2026-09-09T11:57:45+00:00",
+            "collected_at": "2026-09-12T19:57:33.626843+00:00"
         },
         {
             "id": "8abca2d5974c3170aac370fbf07368d943b91ce0c59bdd6c060ecc7d023d5020",
@@ -104881,6 +105611,52 @@
             ],
             "published_at": null,
             "collected_at": "2026-09-12T14:44:12.460754+00:00"
+        },
+        {
+            "id": "3820a8e27354b4cd1fe03493bde197794f028b660d184870047092638cedd59d",
+            "title": "Sylvan Esso think you should splurge on good-quality yogurt",
+            "description": "Amelia Meath and Nick Sanborn, better known as Sylvan Esso, have been bringing their low-key electro-pop to the masses since 2014, bursting onto the scene with their self-titled debut album and the single \"Hey Mami.\" Over the years, they've put out a number of excellent records, dabbling in dustier, more fragile textures on Free Love, […]",
+            "url": "https://www.theverge.com/entertainment/994340/sylvan-esso-ow-infinity-interview-music",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-09-12T19:57:31.452398+00:00"
+        },
+        {
+            "id": "4bb7ed73f911dcda7120a484a6abb1f99ebb232c2a0dcdfa79dad1568780c0f7",
+            "title": "Anthropic CEO says it’s time to pump the brakes on AI",
+            "description": "Anthropic CEO Dario Amodei says the time has come to slow down AI development and will give third-party evaluators like METR access to its models to help ensure its \"adherence to safety practices and commitments.\" In a winding essay, Amodei proposed a three-step plan to \"pace the frontier\" - jargon that simply means to slow […]",
+            "url": "https://www.theverge.com/ai-artificial-intelligence/994337/anthropic-ceo-slow-down-ai-development",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "anthropic",
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-09-12T19:57:31.452508+00:00"
+        },
+        {
+            "id": "d6096e2c6db94b6fd47bbf7c7c433de98be761658b993516ac8d7ccef22b5c8e",
+            "title": "LG responds to TV spying allegations",
+            "description": "Earlier this week, Gamers Nexus, Level1Techs, and independent security researchers detailed some alarming findings about how LG's TVs are logging and uploading data on its users. Now the company is pushing back against those allegations, saying that \"Some recent media coverage may have contributed to misconceptions about how LG smart TVs work.\" LG released a […]",
+            "url": "https://www.theverge.com/tech/994333/lg-responds-to-tv-spying-allegations",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-09-12T19:57:31.452605+00:00"
         }
     ]
 }
