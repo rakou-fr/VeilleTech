@@ -1,6 +1,6 @@
 {
-    "updated_at": "2026-09-13T15:24:19.717130+00:00",
-    "count": 7032,
+    "updated_at": "2026-09-13T20:04:23.490838+00:00",
+    "count": 7081,
     "articles": [
         {
             "id": "968c32634dc2a1cb83f007064d0bd309276c504696b107928b2bc3d51ba9601b",
@@ -17,6 +17,599 @@
             ],
             "published_at": "2026-09-14T00:00:00+00:00",
             "collected_at": "2026-09-12T02:26:22.005025+00:00"
+        },
+        {
+            "id": "b667e479f76374c997c963f3679674bf8645faa4353b297c4f5de9c540a79940",
+            "title": "Context aware Spring AI chat microservice",
+            "description": "Keeping State in a Stateless World: Building a Context-Aware Gemini Microservice with Spring AI and H2 By default, Large Language Models (LLMs) are completely stateless . Every API call you make to Google Gemini is treated like a first-time introduction. If a user says \" My name is Alex \" in request one, and \" What is my name? \" in request two, Gemini will not know the answer. To build a true chatbot experience, your microservice needs to remember the conversation history. In this post, we will build a Spring Boot microservice that connects to the Gemini API , uses Spring AI's ChatMemory Advisor to maintain context, and backs up that history using a persistent H2 database mapped to unique user sessions. The Architecture Google Gemini API : Handles the natural language processing. Spring AI ChatClient : Orchestrates the prompts and LLM interactions. MessageChatMemoryAdvisor : Intercepts outgoing prompts to inject historical context. H2 Database (H2ChatMemoryRepositoryDialect) : Persists the chat history locally. HTTP Session Header : Captures a unique session-id from the client to isolate individual user conversations. 1. Dependencies Setup Add the required dependencies to your pom.xml. This includes the Spring AI starter for Gemini, the chat memory module, and the H2 database driver. <dependency> <groupId> org.springframework.boot </groupId> <artifactId> spring-boot-h2console </artifactId> </dependency> <dependency> <groupId> org.springframework.ai </groupId> <artifactId> spring-ai-starter-model-chat-memory </artifactId> </dependency> <dependency> <groupId> org.springframework.ai </groupId> <artifactId> spring-ai-starter-model-chat-memory-repository-jdbc </artifactId> </dependency> <dependency> <groupId> org.springframework.ai </groupId> <artifactId> spring-ai-starter-model-google-genai </artifactId> </dependency> Configure Properties : Update the application.properties with chat model and get your API key from Google AI Studio spring.ai.model.chat = google-genai spring.ai.google.genai.api-key = API-KEY-GOES-HERE spring.ai.google.genai.chat.model = gemini-3.5-flash 2. Configuring the Chat Memory Instead of losing chat history on application restarts (which happens with default in-memory arrays), we configure a persistent ChatMemory bean backed by H2 using the JdbcChatMemoryRepository. import org.springframework.ai.chat.memory.ChatMemory ; import org.springframework.ai.chat.memory.MessageWindowChatMemory ; import org.springframework.ai.chat.memory.repository.jdbc.H2ChatMemoryRepositoryDialect ; import org.springframework.ai.chat.memory.repository.jdbc.JdbcChatMemoryRepository ; import org.springframework.context.annotation.Bean ; import org.springframework.context.annotation.Configuration ; import org.springframework.jdbc.core.JdbcTemplate ; @Configuration public class ChatConfig { @Bean public JdbcChatMemoryRepository chatMemoryRepository ( JdbcTemplate jdbcTemplate ) { // Enforces H2 syntax quirks for database execution return JdbcChatMemoryRepository . builder (). jdbcTemplate ( jdbcTemplate ) . dialect ( new H2ChatMemoryRepositoryDialect ()) . build (); } @Bean public ChatMemory chatMemory ( JdbcChatMemoryRepository repository ) { return MessageWindowChatMemory . builder () . chatMemoryRepository ( repository ). build (); } } Configure properties : include the below in application.properties to maintain the session across application restarts and to enable h2-console # H2 Database configuration (File-based storage to persist across restarts) spring.datasource.url = jdbc:h2:file:~/data/demochat;DB_CLOSE_ON_EXIT=FALSE spring.datasource.driverClassName = org.h2.Driver spring.datasource.username = sa spring.datasource.password = password # Enable H2 Console to view your tables manually at http://localhost:8080/h2-console spring.h2.console.enabled = true spring.h2.console.path = /h2-console # Spring AI - Auto-initialize the schema for H2 spring.ai.chat.memory.repository.jdbc.initialize-schema = always 3. Service Layer We build the ChatClient and attach the MessageChatMemoryAdvisor. This advisor acts as an interceptor: it fetches past messages from H2 before sending the prompt to Gemini, and saves Gemini's response right after. import org.springframework.ai.chat.client.ChatClient ; import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor ; import org.springframework.ai.chat.memory.ChatMemory ; import org.springframework.stereotype.Service ; @Service public class ChatService { private final ChatClient chatClient ; public ChatService ( ChatClient . Builder chatClientBuilder , ChatMemory chatMemory ){ this . chatClient = chatClientBuilder . defaultAdvisors ( MessageChatMemoryAdvisor . builder ( chatMemory ). build ()) . build (); } public String getResponse ( String sessionId , String queryString ){ return this . chatClient . prompt ( queryString ) . advisors ( x -> x . param ( ChatMemory . CONVERSATION_ID , sessionId )) . call (). content (); } } Exposing the REST Endpoint Finally, we expose a POST endpoint. We use @RequestHeader(\"x-session-id\") to extract the unique tracking key provided by the client application. import ai.chat_bot.gemini.demo.service.ChatService ; import org.springframework.beans.factory.annotation.Autowired ; import org.springframework.web.bind.annotation.* ; @RestController @RequestMapping ( \"/api\" ) public class ChatController { @Autowired private ChatService chatService ; @PostMapping ( \"/ai/prompt\" ) public String chat ( @RequestHeader ( \"x-session-id\" ) String sessionId , @RequestBody String query ){ return chatService . getResponse ( sessionId , query ); } } Testing the setup You can test the context awareness using curl or Postman. Request establishing a context : curl --location --request POST 'http://localhost:8080/api/ai/prompt' \\ --header 'x-session-id: 8757788243' \\ --header 'Content-Type: application/json' \\ --data-raw '{ \"query\": \"I love mangoes\" }' Response: Mangoes are absolutely elite! There is a very good reason they are called the \"King of Fruits.\" There is nothing quite like a perfectly ripe, juicy, sweet mango. Request to verify history recall curl --location --request POST 'http://localhost:8080/api/ai/prompt' \\ --header 'x-session-id: 8757788243' \\ --header 'Content-Type: application/json' \\ --data-raw '{ \"query\": \"what do you think is my favorite fruit\" }' Response: I’m going to go out on a limb here and make a wild guess... mangoes ? 🥭 😉 Call it a hunch, but you seemed pretty enthusiastic about them a moment ago! If you send the second request with a different session-id value, Gemini will correctly respond that it doesn't know and can give a generic response proving that multi-user session isolation is fully working . Conclusion By combining Spring AI's Advisor API with an H2 JDBC store , you can turn a stateless LLM endpoint into a fully stateful, context-aware chatbot microservice with minimal boilerplate code. You can view the source code directly in my GitHub Repository",
+            "url": "https://dev.to/marinenimd/context-aware-spring-ai-chat-microservice-ake",
+            "source": "DEV Community",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "developpement",
+                "gemini",
+                "git",
+                "llm",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-13T19:56:40+00:00",
+            "collected_at": "2026-09-13T20:04:06.021875+00:00"
+        },
+        {
+            "id": "9e254bde747fec7cabee82c995347f1a25e254e3a72d8d66aa94302efd80b04f",
+            "title": "How I Built a Bilingual RAG-Powered AI Calling & Chat Agent (With a Full Admin Ops Center)",
+            "description": "Most \"AI chatbot\" projects stop at a demo: a widget, an OpenAI/Gemini call, a canned prompt. Getting one into production for real businesses — across voice calls, web chat, and WhatsApp, in two languages, without hallucinating — is a different problem. Here's how I approached it. The Core Challenge Three requirements shaped the whole architecture: Multi-channel, single brain — phone calls, web chat, WhatsApp, and Instagram all needed to hit the same knowledge base and produce consistent answers. No hallucination tolerance — a wrong answer on a live sales call is worse than no answer. Non-technical operators — the business owner using the admin panel should never need to touch a config file, an API key in code, or a terminal. The RAG Pipeline The knowledge layer runs on a fairly standard but carefully tuned RAG stack: Ingestion: a website crawler pulls headers, paragraphs, and lists from a given URL (or a pasted/uploaded document), and normalizes it into clean text chunks. Embedding: chunks are embedded using gemini-embedding-001. Storage: vectors are indexed into ChromaDB for fast cosine-similarity retrieval. Retrieval-time logic: on every incoming query, the system computes similarity scores against the knowledge base. If the top match clears a confidence threshold, it answers from the KB (source: knowledge_base). If not, it falls back to a live, relevant web search (source: search_fallback) rather than letting the LLM freestyle an answer from parametric memory. That fallback tagging turned out to be one of the most useful design decisions — every logged interaction carries a source field (knowledge_base or search_fallback), which means you get a real-time KB Hit Rate metric for free: how often the system is confidently answering from your own data vs. reaching outside it. Observability Was Not an Afterthought A lot of RAG demos skip this, and it's the first thing that breaks trust once you hand a system to a real business. I built a diagnostic layer that surfaces, per query: Cosine distance / similarity scores against retrieved chunks Which knowledge base sections were actually matched End-to-end latency (ms) Source attribution (KB vs. fallback) This is exposed directly in a \"Diagnostic Playground\" in the admin UI — type a query, and see exactly what the retrieval layer matched and why, before it ever reaches a real customer. Aggregate metrics (Total Conversations, Average Latency, KB Hit Rate, Search Fallback %, Error Rate) roll up from the same interaction logs into an overview dashboard — no separate analytics pipeline needed. Lead Extraction Without a Structured Form Because conversations happen in free text (and voice-to-text), lead capture couldn't rely on form fields. The system parses conversational turns for identifiers — name, phone number, email — as they're mentioned naturally (\"my name is X and my number is Y\"), writes them to a leads table, deduplicates against existing entries, and assigns the lead to a sales rep via round-robin rotation. This runs as a lightweight side-effect of the main conversation loop, not a separate workflow the user has to trigger. Multi-Tenant Branding Without Multi-Tenant Infra Complexity Rather than spinning up separate deployments per client, business identity (company name, agent persona, tone, contact details, tagline) is stored as a set of \"Business Variables\" that get interpolated into the system prompt and voice/chat responses at runtime. One codebase, many brands — which matters a lot if you're an agency or planning to white-label this. No-Code Data Layer The default store is local (SQLite) for simplicity, but the admin UI also supports connecting an external Postgres-compatible database (Supabase, Neon, or vanilla Postgres) via a connection string pasted directly into the UI — no backend redeploy required. This was a deliberate trade-off: less \"clever\" than an ORM migration system, but it means a non-engineer can point the whole system at their own cloud database in under a minute. Bilingual by Default Since the target users span Hindi and English speakers, language handling isn't a toggle — the model detects and responds in whichever language the user used, per message, in both voice (STT/TTS) and text channels. What I'd Do Differently Next Real-time in-call escalation to a human when confidence is low (currently: unresolved queries become a lead for post-call follow-up — live handoff is the next milestone) Per-channel confidence thresholds (a WhatsApp typo tolerance vs. a live voice transcript need different tuning) Try It If you're building something similar or want to see this running on a real business's data, I opened up a free 10-day trial — happy to walk through the architecture in more depth too. 📧 nexopersupport@gmail.com · 🌐 nexoper.in Would genuinely love feedback from anyone who's tuned RAG confidence thresholds for production voice use cases — what's worked for you?",
+            "url": "https://dev.to/nexoper/how-i-built-a-bilingual-rag-powered-ai-calling-chat-agent-with-a-full-admin-ops-center-573o",
+            "source": "DEV Community",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "developpement",
+                "gemini",
+                "llm",
+                "openai",
+                "programmation",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-09-13T19:56:29+00:00",
+            "collected_at": "2026-09-13T20:04:06.022402+00:00"
+        },
+        {
+            "id": "51d32e3a1b3b1777e1b278308cbf82c0b28d3fb6449dc9c22fc2a78bc8cf96b9",
+            "title": "A Turing Machine in Minecraft",
+            "description": "This is an English translation of my original article on Habr , originally published in Russian. A Turing machine is one of the fundamental models in computer science. I've been playing Minecraft for more than 12 years and have built all kinds of mechanisms in the game. After years of university study and working in the industry, I had an idea: combine my hobby with fundamental theory, build a Turing machine using Minecraft's mechanics, and share the result. A Turing machine has three basic components: Tape: a sequence of consecutive cells—infinite in the theoretical model. Head: a read/write device positioned over the current tape cell. Transition table: the machine's program, expressed as a formal set of instructions. Detailed explanations of Turing machine theory are easy to find, so I'll focus on the implementation. Redstone: the basis of the simulation Minecraft has a built-in system for simulating electrical signals: redstone. Let's go over its basic building blocks. Signals and power levels A redstone signal has 16 power levels, from 0 (no signal) to 15 (maximum strength). Redstone dust carries a signal for up to 15 blocks, losing one power level per block. Wiring. Redstone dust is the main signal conductor. It automatically connects to neighboring dust, blocks, and components to form circuits. Key components Redstone torch: an inverting source. It is on by default and turns off when the block it is attached to receives power. It is effectively a NOT gate. Lever: when switched on, it fully powers the block it is attached to, providing a steady signal. Button: similar to a lever, but produces a pulse of fixed duration. Repeater: restores a signal to full strength, passes it in only one direction, and introduces a delay of 1–4 redstone ticks. It is essential for long circuits and controlling signal direction. Comparator: compares two signals. In comparison mode, it passes the main input only when it is greater than or equal to the side input. In subtraction mode, it subtracts the side input from the main input. Comparators are useful for more complex logic. Logic gates Torches, repeaters, and dust can be combined into all the basic logic gates: NOT: a torch at the end of a wire inverts the signal. AND: two repeaters feed torches whose outputs converge on a single block with an output torch. OR: two wires merge into one; the output is active if at least one input is active. NAND / NOR: combinations of the gates above. These primitives form the larger parts of the machine: tape memory, head logic, and the state table. Alphabet For convenience, I chose an alphabet of four symbols. This lets me represent 0 and 1, a special blank symbol indicating an empty cell, and one spare value. Implementation Memory cell The memory cell stores data on the tape. It contains four bits and can hold values from 0 to 15. Once activated (Figure 1), it continuously outputs the stored signal—in this example, 0101 . The input section on the left has a reset button beneath the first sign. Four bits are more than this implementation needs; I chose that capacity with future extensions in mind. Figure 1. Memory cell Shift register To select one of several memory cells, the machine needs a shift register. It has a row of lamps: the lit lamp indicates the cell the head points to. On the right, below the signs in Figure 2, there are three buttons: Move the head one cell to the left. Move the head one cell to the right. Reset the shift register to its initial position. In the initial position, the leftmost lamp is on. An optional lamp stands separately on the left. It lights up whenever the shift register finishes a move. This completion signal can be used to minimize delays in the main execution loop while ensuring that each shift has finished. In effect, this mechanism implements a bit-shift operation. Figure 2. Shift register Program cell A program cell is the basic storage unit of the transition table. It holds ten bits of information: The first four bits specify the value to write to the tape cell currently selected by the head. The next two bits specify the head movement: 10 means left, and 01 means right. The cell shown in Figure 3 is configured to move left. The final four bits specify the next state, entered after the head moves. Again, four bits are more than needed here, but leave room for future extensions. When a program cell is executed, it first writes a value to the tape, then moves the head, and finally switches to the selected state. Figure 3. Program cell Binary-to-decimal decoder The program is encoded in binary, so the machine needs a way to select physical components using binary values. This decoder is optional, but greatly simplifies both the logic and the construction of the Turing machine. In Figure 4, a binary number is supplied on the right—in this case, 10 . The output on the left indicates the corresponding decimal value: 2. Figure 4. Binary-to-decimal decoder Execution cycle The machine starts with its execution loop. The loop uses fixed delays between operations on its components. For example: read a cell, wait two seconds; write to a cell, wait two seconds; and so on. The components are not wired into a completion-signaling system. If the loop sends a command to move the head right, it does not receive a signal telling it exactly when that operation finishes. There is no particular technical obstacle to adding this; I used fixed delays to get a working result sooner. The overall sequence is: Start the machine. Read the symbol in the current memory cell. Look up the transition using the current state and the symbol read from the tape. Write the value from the transition table to the current cell. Move the head. Switch to the next state. If the state is empty, send a signal to stop the execution loop. Otherwise, return to step 2. After assembling all the components and connecting the necessary lines, we have a Turing machine in Minecraft. Figure 5. The Turing machine in Minecraft Viewed from above, the mechanism's individual components are easier to examine in action. Figure 6. Top view of the Turing machine The numbered components are: The encoded program: four states, including one halting state, and four alphabet symbols, including the blank symbol, ε. The build contains 20 basic program cells. The tape: eight memory cells, for a total of 32 bits of tape memory. The shift register. The execution loop. The binary-to-decimal decoders. The orange wire running from component 1 to component 4 carries the halt signal. Entering the halting state triggers this signal and stops the program's execution loop. Figure 7. Main components, viewed from above Additional views Figure 8. Close-up view Figure 9. View of the execution loop Conclusion The result is an interesting, fully functional mechanism implementing a particular instance of a Turing machine. You can watch it in action on YouTube . The example program increments a number entered on the tape beforehand. Play Minecraft and have fun! Original article: A Turing Machine in Minecraft — Habr (in Russian) .",
+            "url": "https://dev.to/oleg_merkulov/a-turing-machine-in-minecraft-2120",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-13T19:51:01+00:00",
+            "collected_at": "2026-09-13T20:04:06.023369+00:00"
+        },
+        {
+            "id": "ae23cf47aa14e5b7f6b38114c63bf8e38d989b9ab5924aeef49d746b7128faad",
+            "title": "The 3 Scaling Laws of AI: From Training More to Thinking More",
+            "description": "Hello, I'm Rijul, and I'm building LiveReview — a blast-radius aware AI code review built for your business-critical systems. Star us to help devs discover the project, give it a try, and share your feedback to help improve the product. We see the pace of AI development speeding up. One way to view this is through the 3 scaling laws of AI . It originally started with one scaling law, but as AI has advanced, it has grown into 3 different ways of scaling AI capabilities. Pre-training Scaling This is the scaling involved in the pre-training of a model. To help understand it better, imagine a student preparing for a huge general knowledge exam. If they read 10 books, they might do okay. But if we scale that to 100 books, they will do much better. So, the more they study, the more their score climbs. Now, coming to a real example, GPT-2, which was released in 2019, had 1.5 billion parameters and was trained on a modest slice of internet text. GPT-4-class models were trained on trillions of tokens. The difference in knowledge between them is a direct result of pre-training scaling. Post-training Scaling Now imagine that same well-read student takes practice tests, and a tutor gives them feedback: \"That answer was too long.\" \"You should have shown your reasoning.\" \"That tone was rude.\" The student's knowledge doesn't grow, but their ability to give the answer the grader actually wants improves enormously. Coming to a real example, the raw pretrained GPT-3 model had issues with going off-topic. But after reinforcement learning with human feedback , it became what we know as ChatGPT. The underlying knowledge is largely the same, but its ability to follow instructions and present answers in an ideal way has improved. Inference Time Scaling Picture 2 students solving a tricky math problem. One student instantly blurts out the first answer that comes to mind. But the second student works it out on scratch paper, checks their steps, tries different approaches, notices their previous mistakes, corrects them, and eventually reaches a solution. So, the second student gets the correct answer because they spent more time thinking, not because they studied more beforehand. Now, this is what we see with Agentic AI. We can see different effort levels, and the system can determine how much thinking goes into generating a response. So, a simple analogy to understand this is: Pre-training makes the student smarter, post-training makes the student better at giving good answers, and inference-time scaling makes the student take their time on hard questions. Wrapping Up It's interesting to see how AI is evolving and how fast-paced this evolution is. When these 3 scaling laws come together, it's even more impressive to see how AI capabilities are continuing to improve, with GPT-6 Astra coming up and the capabilities it is offering. Your team's attention is limited, and the deluge of AI-generated code is making it harder to keep production reliable and secure without slowing you down. I'm building LiveReview , a blast-radius aware AI code review built for your business-critical systems. Instead of presenting every diff with equal emphasis, LiveReview scores each change by blast radius — how far its impact reaches through your call graph — so you can focus attention where it actually matters. Spend code review effort where business risk is highest — not spread evenly across every diff. ⭐ Star it on GitHub: HexmosTech / LiveReview Blast-Radius Aware AI Code Review for Business-Critical Systems LiveReview: Blast-Radius Aware AI Code Review for Business-Critical Systems LiveReview is an AI code reviewer that scores every hunk of a diff by blast radius : how far a change reaches through your call graph, how much persistent state it touches, and how well-tested it is. A 3-line change to a shared auth check can outrank a 300-line UI tweak. Your team's attention goes to the highest-risk code first, not spread evenly across every diff. blast-radius-demo.mp4 LiveReview's Blast Radius & Review Priority scoring, live in the diff viewer. The exact math, not a black box Visualize blast radius at a glance Every factor that feeds the score How does Blast Radius scoring work? (a more technical explanation) Here's the goal: A 3-line fix in a function used by 40 other files, that also writes to a database, should score high. A 300-line UI change in one file, fully covered by… View on GitHub Click below to try LiveReview with your codebase:",
+            "url": "https://dev.to/rijultp/the-3-scaling-laws-of-ai-from-training-more-to-thinking-more-13hk",
+            "source": "DEV Community",
+            "category": "cloud",
+            "tags": [
+                "aws",
+                "developpement",
+                "git",
+                "openai",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-13T19:43:24+00:00",
+            "collected_at": "2026-09-13T20:04:06.023882+00:00"
+        },
+        {
+            "id": "c08d997cba8f5e318d90942a477f4894980afcefea2cfa3e805e942a1e754249",
+            "title": "RTK: A High-Performance Rust CLI Proxy That Slashes AI Agent Token Costs",
+            "description": "Eliminating Terminal Bloat: Meet RTK (Rust Token Killer) As developers increasingly delegate terminal tasks, testing, and debugging to AI coding agents (such as Claude Code, Cursor, Codex, and OpenHands), context window saturation has become a major engineering bottleneck. Standard developer tools—such as git diff , test runners, and package managers—were designed for human terminal readability, often generating verbose logs filled with progress indicators, decorative ASCII headers, and repetitive success statuses. When fed directly into an LLM's context window, these verbose logs rapidly consume input token quotas, degrade prompt caching efficiency, and crowd out essential architectural context. RTK (Rust Token Killer) is an open-source, high-performance CLI proxy developed by rtk-ai. Written in Rust with sub-10ms overhead, rtk intercepts shell commands and compresses terminal stdout before your agent ingests it. What is RTK? rtk functions as a transparent proxy between your coding agent and your system shell: Without RTK: Agent ➔ Shell ➔ Git/Cargo ➔ 1,000 lines of raw output ➔ Agent context With RTK: Agent ➔ Shell ➔ RTK Filter ➔ 25 lines of structured, actionable context ➔ Agent context By stripping noisy boilerplate, grouping recurring errors, and collapsing passing test suites into concise summaries, rtk reduces bash output token consumption by 60% to 90% across standard developer workflows. Key Core Features 1. Zero-Dependency, Sub-10ms Rust Binary Engineered for raw speed, rtk compiles to a single native binary. It introduces virtually no measurable latency to developer command pipelines while operating completely offline without external network calls. 2. Four Output Reduction Strategies rtk applies specialized reduction logic tailored to over 100 developer tools: Smart Filtering: Removes comments, whitespace, and progress spinners. Grouping: Aggregates related compiler errors and linter warnings by file and rule. Truncation: Strips deep repetitive stack traces while keeping the root error cause. Deduplication: Collapses consecutive identical log lines into counted summaries. 3. Broad Ecosystem Support Out of the box, rtk includes tailored filters for: Git Operations: Compact git status , one-line commit logs, and header-stripped git diff . Testing Frameworks: pytest , cargo test , vitest , jest , go test , and playwright (collapsing passing suites and highlighting failures only). Linters & Compilers: tsc , ruff , eslint , cargo clippy , and sqlfluff . Container Runtimes: Filtered docker ps retaining only critical status fields. 4. Frictionless Agent Integration RTK integrates seamlessly into AI agent environments using native lifecycle hooks: # Install via Homebrew (macOS / Linux) brew install rtk # Or via Windows Package Manager winget install rtk-ai.rtk # Initialize hook for your AI agent rtk init -g # Claude Code / Copilot rtk init -g --agent cursor # Cursor rtk init -g --codex # Codex Once initialized, standard agent bash executions automatically route through rtk , keeping your prompt context lean and responsive. Conclusion Context window space is the most valuable real estate in autonomous coding workflows. By filtering terminal noise at the source, RTK prevents context pollution, accelerates agent response times, and cuts operational API expenses. Ready to streamline your agent's terminal context? Check out the RTK GitHub Repository .",
+            "url": "https://dev.to/terminalchai/rtk-a-high-performance-rust-cli-proxy-that-slashes-ai-agent-token-costs-3bj5",
+            "source": "DEV Community",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "anthropic",
+                "developpement",
+                "docker",
+                "git",
+                "linux",
+                "llm",
+                "macos",
+                "programmation",
+                "rust",
+                "web",
+                "windows"
+            ],
+            "published_at": "2026-09-13T19:40:25+00:00",
+            "collected_at": "2026-09-13T20:04:06.024255+00:00"
+        },
+        {
+            "id": "e2ee54bd5ffca4b90ed135cb70a66856d04dd45db9437be0967c1c8c183db494",
+            "title": "What’s behind the AI industry’s latest warnings of doom?",
+            "description": "On Equity, we discussed the AI industry's latest debate about whether it poses an existential threat to humanity.",
+            "url": "https://techcrunch.com/2026/09/13/whats-behind-the-ai-industrys-latest-warnings-of-doom/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-09-13T19:40:15+00:00",
+            "collected_at": "2026-09-13T20:04:03.795451+00:00"
+        },
+        {
+            "id": "e38050de5cfcc6050fa0186e6a643f1b35f88cee7e6fece888e327faa1f43d72",
+            "title": "A stale hash failed 29 of 59 tests. The tool that refreshes hashes had never seen that copy.",
+            "description": "The project keeps derived claims from rotting with freshness pins. A pin is a row that cites another file and records the hash of the bytes it was derived from. A small device recomputes those hashes and re-keys the rows. If a pin cannot be reproduced, the check that depends on it goes red instead of quietly lying. It went red. The cause was not the pin it named. One bad row, 29 failing tests verdict-check, before the fix tests 59 total, 30 passed, 29 failed OK_READ_MARK marks=4/4 quoted=2/2 verified=1/4 stale=1 moved=2 Of four marks, one was stale and two had moved, so exactly one of the four verified. The 29 failures were not 29 defects. The suite reads the mark table once and then asserts against it, so a single unreproducible row poisons every test downstream of the read. A failing-test count is a count of readers of the broken thing. It says nothing about how many things are broken. Why the refresher never touched that row The re-keying device matches on a table header: // it re-keys rows under this header, and only this header if ( header === ' phases.pins ' ) { row . sha = sha12 ( readFileSync ( row . path )); } The stale copy of the digest lived under a different header, roughly five thousand lines further into the same config file. Same file path in the row, same hash field, different table. The device had been reporting green for weeks, and it was being honest: there was no drift among the rows it matched. A checker's denominator is the set of rows it can find. Green means \"no drift among the rows I match\", which is a much weaker sentence than the one everyone reads it as. Then I made the same mistake by hand I grepped the config for the cited file path, took the first hit, compared its hash against the file, and it matched. So I concluded there was no drift and handed a lane that premise. The premise was false, and the lane wasted a pass on it. $ grep -n 'path = \"spec/scaffold_spec.md\"' layout.toml | head -1 812: path = \"spec/scaffold_spec.md\" # the pins row, kept fresh by the device Line 5263 answers the same query. I stopped at the first match, in a file where the whole problem was that one fact had two homes. The lane found the real line by grepping for the hash value instead of the path. what I searched for matches what it told me the file path (the key) 2 the first row, which was fresh the hash (the value) 1 the row that was actually stale When a fact might live in more than one place, search for the value, not the key. The value has one right answer and the key does not. The fix was deletion, not a second pattern The obvious repair is to teach the device the second header. I did not do that. The duplicate row was retired and its quote moved onto the row the device already keeps true. verdict-check, after OK_ALL controls=24 (run twice, identical output) tests 59/59 Teaching the device both headers would have kept two cells correct. Two cells holding one fact is the defect. A tool that refreshes both makes the defect survivable rather than absent, and the next copy, added by someone who never reads the device, is stale again on the day it lands. One digest of one file lives in exactly one cell. The control I wish had existed first A repair the same day carried a control I now like more than the repair. Pins used to cite their target by line number, so a lane inserting rows above silently moved every citation. The pins were re-keyed onto block ids, and the claim \"a block id survives an edit above it\" was tested like this: $ # insert 20 lines at the top of the cited file, re-run the pin reader $ every line-number pin: moved $ every block-id pin: unmoved That is a mutation control. It changes the world in the exact way the mechanism claims to survive, so passing it means something. Before it existed, five reader rounds across 40 rows and four re-keying passes were the price of citing by line number, and none of that work proved the citations would hold. Two things I keep A green checker reports on its denominator, never on the world. Ask what it matches before believing what it says, and prefer a check whose denominator is a machine census over one whose denominator is a pattern someone typed. To verify a premise about a specific row, read that row. The first grep hit is a different row that happens to answer the same query, and in a file worth checking for duplicates, that is the likeliest thing it is.",
+            "url": "https://dev.to/mahirhir/a-stale-hash-failed-29-of-59-tests-the-tool-that-refreshes-hashes-had-never-seen-that-copy-3ie3",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-13T19:39:57+00:00",
+            "collected_at": "2026-09-13T20:04:06.024780+00:00"
+        },
+        {
+            "id": "fd52dbab312da4effe9e9b572db8757aeff8484a3e755f6c8d4f2458b9881c90",
+            "title": "Standard JSON Schema vs JSON Schema",
+            "description": "Damn, I like standards! I'm so happy to live in a world where we can finally use USB-C for almost everything... Oh, the article is not about USB-C, but about JSON Schema finally getting a \"Standard\" in 2026! Well, I'm kidding here... JSON Schema is a standard itself, which has existed for a long time already- multiple standards, actually: first proposal 2007, draft-04, draft-07, draft-2020-12, openapi-3.0, and they don't stop. Describing JSON with JSON - what can be better? This is what JSON Schema is: { \"type\" : \"object\" , \"properties\" : { \"id\" : { \"type\" : \"string\" }, \"price\" : { \"type\" : \"number\" } }, \"required\" : [ \"id\" , \"price\" ] } Hey, everybody knows this! Tell us about Standard JSON Schema instead!!! . . ... Ignoring Even if you don't know JSON Schema or have never written it yourself, it's a big part of our lives. I'm sure you've used at least one of those: OpenAPI OpenAI OpenTelemetry OpenRPC Ope... Wait, I feel an Open-prefix conspiracy here. So let's stop, and I'll explain how all the words relate to JSON Schema. OpenAPI is a standard which uses JSON Schema to describe HTTP APIs. OpenAI made it here not because I have a fun mood today - which is also true. They are here because modern AI models (not only OpenAI's) support JSON Schema to force a guaranteed structured output. OpenTelemetry is a nice example of how JSON Schema can be used for configuration. Pretty much all validation and hover support in IDE config files is powered by JSON Schemas. OpenRPC - I don't know; I myself just learned that something like this exists. To continue the story, JSON Schema is used here and there. And it was especially trendy ~7 years ago when Fastify was still young and shiny - this is what I wanted to say, but look at their updated website! There are also forms... Wait, but nobody in their right mind uses JSON Schema for forms! Well, it might be interesting for declarative UI, but in terms of validation, people have massively started adopting custom schema libraries instead: import Joi from \" joi \" ; const schema = Joi . object ({ id : Joi . string (). required (), price : Joi . number (). required (), }); Developers embraced the idea, and now we have hundreds of schema libraries. Each with its own API, logic, types, and internal representation. A representation that is never compatible with JSON Schema and many existing libraries that worked with JSON Schema before. We are so back now! This is when @colinhacks (Zod), @fabianhiller (Valibot), and @ssalbdivad (ArkType) gathered together and created Standard Schema . And a few months later, they added an extension: Standard JSON Schema . Now hundreds of schema-libraries, each previously reinventing a wheel, got a standard for how to provide JSON Schema for other libraries to consume in an agreed way. In other words, Standard JSON Schema is a standard way for schema libraries like Zod to return JSON Schema , so other libraries that support the standard can use the JSON Schema without needing to know it's provided by Zod. A standard for passing JSON Schema around. Literally. This sounds small, but it's actually super cool, and I really wish it gets higher adoption for the sake of the JavaScript ecosystem's future. Why do I think it's important? Do you know how tRPC currently supports OpenAPI? It infers input and output types during project compilation and uses them to create JSON Schema. This is an amazing solution that works for all existing schema libraries, but the formats and extra metadata are lost in the process. And every library that consumes some sort of schema nowadays has to reinvent the wheel. This is solved now, and I bet tRPC will start using Standard JSON Schema very soon. At least for augmenting the JSON Schema they derived from types. Honestly, adoption isn't big yet. But on a positive note, big projects like the OpenAI SDK recently added support for Standard JSON Schema. And my take is: if you're building a library that needs types to be known at runtime, definitely check out the Standard JSON Schema docs. How to use it? Some libraries come with it out of the box: import type { StandardJSONSchemaV1 } from \" @standard-schema/spec \" ; import * as z from \" zod \" ; z . string () satisfies StandardJSONSchemaV1 ; // ✅ So you can pass it around and use in a dependency agnostic way: // Function that accepts any compliant `StandardJSONSchemaV1` // and converts it to a JSON Schema. export function acceptSchema ( schema : StandardJSONSchemaV1 ) { // do stuff, e.g. return schema [ \" ~standard \" ]. jsonSchema . input ({ target : \" draft-2020-12 \" , }); } acceptSchema ( z . string ()); For some libraries like Valibot , bundle size is a priority. So instead of adding an extra 1-4KB to every user's bundle, there's either a separate function or even a package to get the standard: import * as v from \" valibot \" ; import { toStandardJsonSchema } from \" @valibot/to-json-schema \" ; toStandardJsonSchema ( v . string ()) satisfies StandardJSONSchemaV1 ; // ✅ Another interesting example is how Sury manages the case. By default, every schema comes with Standard JSON Schema disabled. It doesn't affect the bundle in any way. And there's a tree-shakable toggle, S.enableStandardJSONSchema() , which automatically enables Standard JSON Schema for every existing and future schema. import * as S from \" sury \" ; S . enableStandardJSONSchema (); S . string satisfies StandardJSONSchemaV1 ; // ✅ JSON Schema to Standard JSON Schema By default, these two are different things, and if a library API accepts Standard JSON Schema, it doesn't mean it accepts JSON Schema itself. You don't often want to do this, but I think it might happen to some of you. And there's a nice solution. For example, using Sury , which I mentioned above, we can do the conversion, and what's extra cool is that it'll provide you with types: import * as S from \" sury \" ; const schema = S . fromJSONSchemaOrThrow ({ type : \" object \" , properties : { id : { type : \" string \" }, role : { enum : [ \" admin \" , \" user \" ] } }, required : [ \" id \" ], }); //? S.Schema<{ id: string; role?: \"admin\" | \"user\" | undefined }> S . enableStandardJSONSchema (); schema satisfies StandardJSONSchemaV1 ; // ✅ Why might you need it? To come back to the roots and use a mature JSON Schema DSL? Or maybe convert draft-07 into openapi-3.0 - this also works because Standard JSON Schema supports different targets. As of the day of writing this article, Sury has 93.4% draft-07 compliance. This is almost as much as TypeBox , but TypeBox is not Standard JSON Schema compatible and doesn't allow conversion to another JSON Schema target. Shipping! I hope you liked the introduction to Standard JSON Schema . This project has huge potential, and I hope it will unify the JavaScript ecosystem over time. Not much adoption yet, but I'm sure it'll change. One more time, kudos to @colinhacks (Zod), @fabianhiller (Valibot), @ssalbdivad (ArkType), and the community for bringing the standard to life. And if you want to learn more about schema libraries and everything related, follow me on X - it'll make my day 🙏",
+            "url": "https://dev.to/dzakh/standard-json-schema-vs-json-schema-54fc",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "java",
+                "javascript",
+                "openai",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-13T19:39:37+00:00",
+            "collected_at": "2026-09-13T20:04:06.025671+00:00"
+        },
+        {
+            "id": "bf3eef8b02ea52ce9a485bdd633cd48a36c107675562d3637a2df44d32f28c6b",
+            "title": "Weekend Build Log: The Timeout Is the Product",
+            "description": "You sit down Saturday with one failing test file. The stack trace is ugly and long. You want a tiny helper that groups those failures. Ninety minutes later you are still retrying a model. The helper never became a demo. The weekend dissolved into another chat. This log cuts that loop. You freeze three files. You wrap the run in a timeout. You write a receipt. Then you stop. The Saturday trap You do not lack ideas on Saturday morning. You lack a stop rule. Chat tools invite one more retry. Each retry feels cheap in the moment. The clock still moves. The demo stays imaginary. Treat the timeout as the product. If the job misses the window, it failed. You ship the failure, not another prompt tweak. Cut the job to one verb Pick one verb before you open an editor. Group. Summarize. Rank. Stop there. Write the verb on a sticky note. If a second verb appears, it waits. Sunday is not a second product. Here is a tight job statement you can reuse. Job: group pytest failures by file path. Input: tests/last-run.txt Output: groups.json Limit: 90 seconds wall clock. That statement is the scope cut. Everything else is skip work. Freeze three files first Do not start inside a chat window. Create three files on disk. They outlive the session. job.md holds the verb, input, and output. prompt.txt holds the only instruction you will send. budget.yaml holds time, retries, and output path. Keep those files boring. Boring files survive Saturday better than clever agents. # budget.yaml job : group-failures wall_clock_seconds : 90 max_attempts : 1 input : tests/last-run.txt output : groups.json receipt : receipts/saturday.json max_attempts: 1 is the point. A second attempt is a new weekend. Label this layout as a proposal until you run it. Do not fake a green build. Put a kill switch on the process Unix already ships the feature. Use timeout . Do not write a scheduler. mkdir -p receipts tests cat > tests/last-run.txt << ' EOF ' FAILED tests/test_api.py::test_timeout FAILED tests/test_api.py::test_retry FAILED tests/test_auth.py::test_expired_token EOF timeout 90s python3 group_failures.py \\ --input tests/last-run.txt \\ --output groups.json \\ --receipt receipts/saturday.json echo \"exit: $? \" Exit 124 means the clock won. That is a valid demo. Write it down. Do not catch that exit and retry. Retry is how Saturday dies. Write a receipt after every run A chat log is not evidence. A receipt file is. You want four fields only. # group_failures.py # Proposed weekend helper. Run it locally before you trust it. from __future__ import annotations import argparse import json import time from collections import defaultdict from pathlib import Path def group_lines ( raw : str ) -> dict [ str , list [ str ]]: groups : dict [ str , list [ str ]] = defaultdict ( list ) for line in raw . splitlines (): line = line . strip () if not line . startswith ( \" FAILED \" ): continue body = line [ len ( \" FAILED \" ):] path = body . split ( \" :: \" , 1 )[ 0 ] groups [ path ]. append ( body ) return dict ( groups ) def main () -> int : parser = argparse . ArgumentParser () parser . add_argument ( \" --input \" , required = True ) parser . add_argument ( \" --output \" , required = True ) parser . add_argument ( \" --receipt \" , required = True ) args = parser . parse_args () started = time . time () source = Path ( args . input ) grouped = group_lines ( source . read_text ( encoding = \" utf-8 \" )) Path ( args . output ). write_text ( json . dumps ( grouped , indent = 2 ) + \" \\n \" , encoding = \" utf-8 \" , ) receipt = { \" job \" : \" group-failures \" , \" seconds \" : round ( time . time () - started , 3 ), \" input \" : args . input , \" output \" : args . output , \" groups \" : len ( grouped ), \" timed_out \" : False , } receipt_path = Path ( args . receipt ) receipt_path . parent . mkdir ( parents = True , exist_ok = True ) receipt_path . write_text ( json . dumps ( receipt , indent = 2 ) + \" \\n \" ) print ( receipt_path . read_text (), end = \"\" ) return 0 if __name__ == \" __main__ \" : raise SystemExit ( main ()) The script does no model call. That is the scope cut talking. You can add a model later. You may not need one. Make the demo one command Your demo is not a UI. Your demo is a command a friend can paste. python3 group_failures.py \\ --input tests/last-run.txt \\ --output groups.json \\ --receipt receipts/saturday.json cat groups.json cat receipts/saturday.json Expected groups.json looks like this. { \"tests/test_api.py\" : [ \"tests/test_api.py::test_timeout\" , \"tests/test_api.py::test_retry\" ], \"tests/test_auth.py\" : [ \"tests/test_auth.py::test_expired_token\" ] } If those two files exist, the weekend shipped. If they do not, you failed closed. Either result is honest. Decision table for the next hour Use this table when the helper feels small. Small is the goal. Urge Do this Skip this Add retries Keep max_attempts: 1 Sleep loops Add a web page Print groups.json Flask, auth, CSS Add a model Freeze prompt.txt first Agent memory Add flags Keep three flags Config frameworks Miss the timeout Commit the receipt \"One more run\" Read the skip column twice. That column is the build. When a free model is actually useful Sometimes the grouping rule is messy. Regex will lie. A short model pass can draft group_lines . Disclosure: This article was prepared as part of MonkeyCode's product outreach. MonkeyCode is relevant here only as a place with free model access and a free server option. Use those two things to draft the helper. Then run the same timeout on the result. Do not turn the server into a chat room. Keep the model outside the kill switch at first. Generate group_failures.py once. Paste it into git. Run timeout 90s against the file you saved. If the draft needs a second generation, that is Sunday work. Do not invent extra surfaces around that draft. No dashboard. No plugin. No background worker. The receipt still decides whether the hour counted. If you try MonkeyCode for this gate, keep the same three files. The product should not replace budget.yaml . What you skip on purpose Write the skip list in job.md . A skip list is part of the demo. No retry loop around the model. No extra libraries for HTTP or agents. No UI beyond stdout and two JSON files. No streaming tokens into a log you will never read. No \"memory\" file that grows every run. You already published helpers that refuse extra flags. This log is different. The clock is the contract. The receipt is the proof. A five-step Saturday checklist Follow the order. Do not reorder under stress. Write job.md with one verb only. Freeze prompt.txt and budget.yaml . Implement the smallest local function. Run it under timeout 90s . Commit groups.json plus the receipt. If step 4 fails, commit the failure receipt. Then close the laptop. That is still a shipped weekend. Limitations This gate is blunt. Blunt tools miss nuance. A ninety-second wall clock cannot see queue delay. The sample script only groups FAILED lines. Real pytest output is richer. You will need more parsing later. A free model draft can still be wrong. The timeout will not catch logic bugs. It only catches hangs. A free server option does not remove your review duty. You still read the diff. You still own the exit code. Do not treat this article as a benchmark. No latency numbers were claimed. No quota numbers were claimed. No model names were claimed. Who should not use this Do not use this if you are paging production at 2am. On-call work needs a real runbook. Do not use this if your job needs multi-step tools. A single timeout will starve that design. Do not use this if you cannot freeze the prompt. If stakeholders change the verb hourly, the receipt lies. Do not use this if you need a hosted UI today. You will overbuild before lunch. Close the weekend You started with a noisy test file. You end with two JSON files and a clock. That is enough product for Saturday. Keep the kill switch in the Makefile. Keep the skip list in git. Let Monday argue with the receipt, not with your memory.",
+            "url": "https://dev.to/hackgo_6978/weekend-build-log-the-timeout-is-the-product-3bpj",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "git",
+                "programmation",
+                "python",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-09-13T19:35:21+00:00",
+            "collected_at": "2026-09-13T20:04:06.026586+00:00"
+        },
+        {
+            "id": "35a414ea0e931b3a9804c18668a645cbf71fb43c52fa7b72bcae19f1de9b4bc4",
+            "title": "NO idea where to start learning SQL?",
+            "description": "This article is a beginner friendly guide that gets you started into learning SQL as a programming language. Introduction Relational databases store data in tabular form, often referred to as structured data. The alternative is Unrelational databases. Now SQL is simply the programming language that enables you to do so. SQL stands for Structured Querry Language Basics To understand a Structured Querry Language , these 4 concepts should come in mind: Tables - data organized into rows and columns, similar to a spreadsheet eg Customer's table rows - a single record in a table eg a specific name,'Ahmed' columns - a single attribute or field eg customer_name Databases - A Database is like a house that stores the organised data electronically making it easier and safer to find, retrieve and modify the data.This is usually done by the help of a software. To illustrate more , check the image below: The icons are SQL databases and Dbeaver is the software . SQL command categories: DDL - Data Definition Language Defines and modifies the structure of the database itself: tables, schemas, and constraints. create - building a new table or a database alter - changing an existing table's structure drop - deleting a table or databbase entirely truncate - deleting the content inside a table but maintainging the structure A data engineer setting up a new pipeline will lean on DDL to create the tables that will hold incoming data, and adjust them with ALTER as requirements change. DQL - Data Querry Language Is used to retrieve data without changing it. Common key word is select . A data analyst spends most of their day writing DQL (SELECT) queries — pulling metrics, building reports, and answering ad hoc business questions. TCL - Transaction Control Language Manages groups of changes as a single unit, ensuring consistency of data commit - save all changes made in a transaction rollback - undo changes made in a transaction savepoint - set a point within a transaction to roll back to, without undoing everything Now a common question will be what is a transaction . Well a transaction is like a single unit of work made up of one or more operations eg deleting, updating, writting data that either completes or fails. Think of it as an all or nothing rule. All steps work, changes are saved but if a single step doesnt, all previous changes are undone . In systems handling money or critical records, TCL ensures that a group of related changes either all happen or none do. For instance, transferring funds between two bank accounts involves debiting one and crediting another — COMMIT only fires once both steps succeed, and a failure triggers a rollback so the data never ends up half-updated. DML - Data Manipulation Language Used for working with the data inside a table. insert - adding new rows delete - removing rows update - modifying exisiting rows An application connected to the database uses DML constantly in the background: every time a user signs up, places an order, or updates their profile, the app runs INSERT , UPDATE , or DELETE statements. 5. DCL - Data Control Language Basically manages who can do what. grant - gives a user permission to perform a certain action revoke - takes the permission away A database administrator (DBA) uses DCL to control who has access to sensitive tables — for example, granting an analyst read-only access while restricting DELETE permissions to a small team. Getting started on queries The select statement is where all sql work begins. select first_name , last_name from customers where county = 'Mombasa' order by age desc ; first_name , last_name , county , age are all columns in our table. The table name is called customers , while ' Mombasa ' is a value in the column county . The example above is a simple sql querry just to get you started as a beginner, once you have mastered these concepts, next thing you will dive into is filtering and operations , and joins.",
+            "url": "https://dev.to/rapidlashes/no-idea-where-to-start-learning-sql-4nh6",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-13T19:30:18+00:00",
+            "collected_at": "2026-09-13T20:04:06.027146+00:00"
+        },
+        {
+            "id": "a13b22e547ddd6dac7a4c6daf15595a27ed4ec86f654a7fd359262ec6147f318",
+            "title": "Why Your .NET MCP Tool Classes Crash at Runtime (And the Two-Line Fix)",
+            "description": "If you're building MCP servers in .NET with instance-based tool classes — the kind that take ILogger<T> , HttpClient , or a repository through constructor injection — there's a good chance you've already hit this at runtime: System.Reflection.TargetException: Non-static method requires a target. No warning at startup. No compile-time error. Just a crash the moment an AI model calls your tool in production. This post explains why it happens, shows the two-line fix in DotnetFastMCP v2.1, and covers a related improvement that makes AI models call your tools correctly on the first attempt — without asking the user for clarification. The Problem: Two Paper Cuts That Bled Every Day Paper Cut 1: The Runtime Crash Nobody Warned You About The framework lets you organize your MCP tools into classes and scan them with one line: builder . WithComponentsFrom ( Assembly . GetExecutingAssembly ()); This scans your assembly, finds every method decorated with [McpTool] , and registers it. Clean, simple, plug-and-play. Except — if your tool class had constructor injection , you'd get a silent registration. The class would appear in the tool list. But the moment an AI model called it, the server would throw: System.Reflection.TargetException: Non-static method requires a target. At runtime. In production. With no warning during startup. The cause was straightforward: WithComponentsFrom registered the methods in the tool dictionary, but never registered the declaring class in ASP.NET Core's DI container. When the handler tried to resolve an instance for invocation, there was nothing to resolve. The workaround was to manually add every tool class: // ❌ v2.0: manual registration required for every non-static tool class builder . Services . AddTransient < ProductSearchTool >(); builder . Services . AddTransient < ImageGenerationTool >(); builder . Services . AddTransient < InventoryTool >(); // ... one line per class, forever This is exactly the opposite of what \"plug-and-play\" should mean. Paper Cut 2: AI Models Were Flying Blind on Parameter Names When an AI model calls tools/list , the server returns a JSON Schema for each tool's parameters. Here's what that schema looked like in v2.0: { \"name\" : \"search_products\" , \"inputSchema\" : { \"type\" : \"object\" , \"properties\" : { \"query\" : { \"type\" : \"string\" }, \"limit\" : { \"type\" : \"integer\" }, \"filter\" : { \"type\" : \"string\" } }, \"required\" : [ \"query\" ] } } No descriptions. Just types and names. The model had to guess what filter means. Is it a category? A regex? A SQL WHERE clause? The Fix: Two Lines of Setup, Zero Boilerplate Both issues are fixed in v2.1. Install the update: dotnet add package DotnetFastMCP --version 2.1.1 Fix 1: Constructor Injection Just Works Starting in v2.1, WithComponentsFrom automatically registers every non-static tool class in the DI container using TryAddTransient : public class ProductSearchTool { private readonly IProductRepository _repo ; private readonly ILogger < ProductSearchTool > _logger ; // Constructor injection — works automatically in v2.1 public ProductSearchTool ( IProductRepository repo , ILogger < ProductSearchTool > logger ) { _repo = repo ; _logger = logger ; } [ McpTool ( \"search_products\" , Description = \"Searches the product catalog\" )] public async Task < string > SearchAsync ( string query , int limit = 10 ) { _logger . LogInformation ( \"Searching for '{Query}'\" , query ); var results = await _repo . SearchAsync ( query , limit ); return JsonSerializer . Serialize ( results ); } } Your Program.cs stays clean — register only the dependencies , not the tool class: var mcpServer = new FastMCPServer ( \"my-server\" ); var builder = McpServerBuilder . Create ( mcpServer , args ); builder . Services . AddScoped < IProductRepository , SqlProductRepository >(); builder . WithComponentsFrom ( Assembly . GetExecutingAssembly ()); var app = builder . Build (); await app . RunMcpAsync ( args ); TryAddTransient means existing registrations (like AddHttpClient<T> ) are preserved — no collisions. Fix 2: [McpDescription] — Tell the AI What Each Parameter Means [ McpTool ( \"search_products\" , Description = \"Searches the product catalog\" )] public async Task < string > SearchAsync ( [ McpDescription ( \"The search query string, e.g. 'red cotton saree'\" )] string query , [ McpDescription ( \"Maximum number of results to return (1–100)\" )] int limit = 10 , [ McpDescription ( \"Filter by category: 'clothing', 'accessories', 'footwear'\" )] string ? category = null ) { ... } Now tools/list returns descriptions in the schema. The model knows exactly what to pass without asking the user. Framework-injected parameters ( McpContext , CancellationToken , ClaimsPrincipal ) are always excluded automatically. Try It Yourself: Verify in 60 Seconds git clone https://github.com/tekspry/DotnetFastMCP.git cd DotnetFastMCP/examples/BasicServer dotnet run -- --urls http://localhost:5100 Then call the non-static tool: curl -s -X POST http://localhost:5100/mcp \\ -H \"Content-Type: application/json\" \\ -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"greet_user\",\"arguments\":{\"name\":\"Alice\",\"style\":\"formal\"}}}' | jq . Response: \"Good day, Alice. How may I assist you today?\" No manual DI registration. No runtime crash. Constructor injection just works. Migration from v2.0 No breaking changes. Update the package version, remove manual AddTransient<MyToolClass>() calls (now redundant), and add [McpDescription] to your parameters. Resources 📦 DotnetFastMCP on NuGet 💻 GitHub: tekspry/DotnetFastMCP 🧪 Real-world example: FashionAccessoryPipeline DotnetFastMCP is MIT-licensed and open for contributions.",
+            "url": "https://dev.to/tekspry/why-your-net-mcp-tool-classes-crash-at-runtime-and-the-two-line-fix-lcb",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "csharp",
+                "developpement",
+                "git",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-13T19:28:37+00:00",
+            "collected_at": "2026-09-13T20:04:06.027940+00:00"
+        },
+        {
+            "id": "4cc66850914d669dd47f6f1052b3cfbebc0d8668d639b2bd6a83ce57c8d24185",
+            "title": "Schumer Calls Senate Caucus to Decide Fate of CLARITY Bill",
+            "description": "The meeting, slated for Sunday evening, might seal the fate of the CLARITY bill if Democrats convene to vote against it in full on Tuesday. While a new bill draft was revealed last Thursday with over 100 changes, it falls short of solving key roadblocks. Senate Democrats To Consider Position On CLARITY Bill The destiny […]",
+            "url": "https://news.bitcoin.com/regulation-and-legal/schumer-calls-senate-caucus-to-decide-fate-of-clarity-bill/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-13T19:24:45+00:00",
+            "collected_at": "2026-09-13T20:04:22.246914+00:00"
+        },
+        {
+            "id": "ef4bcabf70d80f10d3f567a97268e23d9ea949501ff6a8d99c1d4b8467a18681",
+            "title": "[Boost]",
+            "description": "Designing a plugin architecture for third-party database providers in a TypeScript application Cevheri Cevheri Cevheri Follow Sep 13 Designing a plugin architecture for third-party database providers in a TypeScript application # architecture # backend # database # typescript 1 reaction Add Comment 2 min read",
+            "url": "https://dev.to/kaya-abdullah/-ibc",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "programmation",
+                "typescript",
+                "web"
+            ],
+            "published_at": "2026-09-13T19:16:52+00:00",
+            "collected_at": "2026-09-13T20:04:06.028024+00:00"
+        },
+        {
+            "id": "31b6f0ece426f17c943c99593d1b9f2995338f7e7a5c2eebb5c711cfbf636b4f",
+            "title": "Validate Telegram Login Widget Auth Payloads in PHP and Yii2",
+            "description": "Integrating the official Telegram Login Widget allows users to authenticate on a web application using their Telegram account. When a user authorizes via the widget, Telegram passes authentication parameters (such as id , first_name , username , auth_date , and hash ) back to your specified redirect URL or JavaScript callback. In this tutorial, we will construct a backend validation mechanism in PHP and implement it inside a Yii2 application controller. We will compute the expected HMAC-SHA-256 signature, execute a timing-safe hash comparison, check signature freshness, and bind the incoming telegram_id to your user database. What this guide covers: Constructing the data_check_string according to Telegram Login Widget specifications. Generating the secret key via sha256(bot_token) . Validating payload signatures with hash_equals() . Binding verified telegram_id records in Yii2. What this guide does not cover: Setting up frontend JavaScript widgets or HTML embed code. Telegram Mini App initData verification (which uses a different secret key derivation process). The Telegram Verification Algorithm Unlike Mini App initData (which uses the literal string \"WebAppData\" as the HMAC key), the standard Telegram Login Widget derives its secret key by taking the binary SHA-256 hash of your bot token. The algorithm steps are: Extract the hash parameter from the incoming payload. Filter out hash from the remaining keys. Sort the remaining key-value pairs alphabetically by key name. Format each pair as key=value and join them with newline characters ( \\n ). Generate the secret key: hash('sha256', $botToken, true) . Compute hash_hmac('sha256', $dataCheckString, $secretKey) . Verify the output against the received hash using hash_equals() . Verify that auth_date is within an acceptable threshold (e.g., 86,400 seconds). Here is a reusable PHP service class implementing this verification logic: <?php declare ( strict_types = 1 ); namespace app\\components ; final class TelegramLoginValidator { public function isValid ( array $authData , string $botToken , int $maxAgeSeconds = 86400 ): bool { if ( ! isset ( $authData [ 'hash' ], $authData [ 'auth_date' ])) { return false ; } $checkHash = ( string ) $authData [ 'hash' ]; unset ( $authData [ 'hash' ]); // Check payload freshness $authDate = ( int ) $authData [ 'auth_date' ]; if (( time () - $authDate ) > $maxAgeSeconds ) { return false ; } // Filter non-string values and build key=value list $dataCheckArr = []; foreach ( $authData as $key => $value ) { if ( is_scalar ( $value )) { $dataCheckArr [] = $key . '=' . $value ; } } // Sort keys alphabetically sort ( $dataCheckArr , SORT_STRING ); $dataCheckString = implode ( \" \\n \" , $dataCheckArr ); // Secret key is the raw binary SHA-256 hash of the bot token $secretKey = hash ( 'sha256' , $botToken , true ); $hash = hash_hmac ( 'sha256' , $dataCheckString , $secretKey ); return hash_equals ( $hash , $checkHash ); } } Integrating with a Yii2 Controller Next, wire this validator into a Yii2 controller action. We fetch the bot token from environment variables or Yii::$app->params , run the validation check, and either bind the incoming telegram_id to an existing authenticated user session or create a new user account. Ensure your User database table has an indexed telegram_id column (BIGINT, nullable, unique). <?php namespace app\\controllers ; use Yii ; use yii\\web\\Controller ; use yii\\web\\BadRequestHttpException ; use app\\models\\User ; use app\\components\\TelegramLoginValidator ; class AuthController extends Controller { public function actionTelegramCallback () { $requestParams = Yii :: $app -> request -> get (); $botToken = ( string )( getenv ( 'TELEGRAM_BOT_TOKEN' ) ?: ( Yii :: $app -> params [ 'telegramBotToken' ] ?? '' )); if ( empty ( $botToken )) { throw new \\LogicException ( 'Telegram bot token is not configured.' ); } $validator = new TelegramLoginValidator (); if ( ! $validator -> isValid ( $requestParams , $botToken )) { throw new BadRequestHttpException ( 'Invalid or expired Telegram authentication signature.' ); } $telegramId = ( int ) $requestParams [ 'id' ]; $username = $requestParams [ 'username' ] ?? null ; // Check if a user with this telegram_id already exists $user = User :: findOne ([ 'telegram_id' => $telegramId ]); if ( ! $user ) { // If currently logged in, link telegram_id to current profile if ( ! Yii :: $app -> user -> isGuest ) { /** @var User $user */ $user = Yii :: $app -> user -> identity ; $user -> telegram_id = $telegramId ; $user -> save ( false , [ 'telegram_id' ]); Yii :: $app -> session -> setFlash ( 'success' , 'Telegram account connected successfully.' ); return $this -> redirect ([ '/user/profile' ]); } // Register a new user account bound to this Telegram identity $user = new User (); $user -> telegram_id = $telegramId ; $user -> username = $username ?: 'tg_' . $telegramId ; $user -> generateAuthKey (); // Sets random auth_key for session security if ( ! $user -> save ()) { throw new \\RuntimeException ( 'Failed to register user account.' ); } } // Log the user into the Yii2 application session Yii :: $app -> user -> login ( $user , 3600 * 24 * 30 ); return $this -> redirect ([ '/site/dashboard' ]); } } Production Considerations Environment Variable Configuration : Never hardcode bot tokens into code. Store TELEGRAM_BOT_TOKEN in system environment variables or safely loaded .env files using getenv() . Replay Protection : The auth_date check enforces a max window (e.g., 24 hours). If your application handles high-value transactions, consider storing consumed hash strings in Redis for the duration of the expiration window to prevent replay attacks entirely. Account Linking Logic : If a user is already authenticated via traditional credentials (email/password), prompt them to link their Telegram account from inside their profile page rather than overwriting existing records automatically. Need custom bot architectures or specialized backend integrations built for production workloads? BotCreator — studio that ships Telegram bots / Mini Apps.",
+            "url": "https://dev.to/serhii_a9c08345ac360cf5c8/validate-telegram-login-widget-auth-payloads-in-php-and-yii2-1273",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "java",
+                "javascript",
+                "php",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-13T19:15:45+00:00",
+            "collected_at": "2026-09-13T20:04:06.028888+00:00"
+        },
+        {
+            "id": "798b4a264698a3ff5aba81c21bcc214d4b6d5e121548ae71d3a8c2d46c0a62e9",
+            "title": "AI recursive self-improvement might not come so quickly after all (August 2026)",
+            "description": "Comments",
+            "url": "https://www.technologyreview.com/2026/08/18/1142188/ai-recursive-self-improvement/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-13T18:49:44+00:00",
+            "collected_at": "2026-09-13T20:04:05.684033+00:00"
+        },
+        {
+            "id": "a262fccdf8bcaf452c2d414b99dc23685feb3bedaaca838840d4a0a6f9d40eb2",
+            "title": "Flock cameras used to arrest a child for playing on a swing",
+            "description": "Comments",
+            "url": "https://www.youtube.com/watch?v=koclOnlde0E",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-13T18:47:26+00:00",
+            "collected_at": "2026-09-13T20:04:05.683846+00:00"
+        },
+        {
+            "id": "6994d1b8c4407af0c29a66c0ff3eb0b279b30e0f623e57717f62f820ca264251",
+            "title": "Is Clarity dead? A vibes-based analysis: State of Crypto",
+            "description": "",
+            "url": "https://www.coindesk.com/policy/2026/09/13/is-clarity-dead-a-vibes-based-analysis-state-of-crypto",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-13T18:45:08+00:00",
+            "collected_at": "2026-09-13T20:04:22.011892+00:00"
+        },
+        {
+            "id": "333af2d37f6f78ba0f3abd8e72d4760c5c9689963befbf0492d4adb42b3a742d",
+            "title": "LAPTOP Enters Memecoin Frenzy, $245 Million Crypto Heist Sees Guilty Pleas, And More – Weekly Recap",
+            "description": "This week’s stories highlighted crypto’s widening reach — and its risks. Pump.fun paired memecoins with tokenized stocks, while Hunter Biden’s LAPTOP token collapsed 98% after launch. Liquid began recovering from a 4,000 BTC exploit, a cybercrime network admitted stealing more than $245 million in crypto, and reports said Iran is increasingly using bitcoin and USDT […]",
+            "url": "https://news.bitcoin.com/featured/laptop-enters-memecoin-frenzy-245-million-crypto-heist-sees-guilty-pleas-and-more-weekly-recap/",
+            "source": "Bitcoin.com News",
+            "category": "cybersecurite",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-13T18:18:46+00:00",
+            "collected_at": "2026-09-13T20:04:22.247005+00:00"
+        },
+        {
+            "id": "d42ce96dc59dee3e31ddcf07da4040b7f9d8f9dc285e5702996a90bbc41d7e7e",
+            "title": "I'm being cyberattacked by Tesla, Inc",
+            "description": "Comments",
+            "url": "https://dreamstation.systems/personal/tesla.html",
+            "source": "Hacker News",
+            "category": "cybersecurite",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-13T18:03:09+00:00",
+            "collected_at": "2026-09-13T20:04:05.683448+00:00"
+        },
+        {
+            "id": "8b1969c001e4491ef95875ba805bc8834dfc0fcd3130b0172b28dea7c4e91c7a",
+            "title": "This PCB is brought to you by Fable 5",
+            "description": "Comments",
+            "url": "https://a6mzero.com/posts/this-pcb-is-brought-to-you-by-fable-5/",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-09-13T18:00:25+00:00",
+            "collected_at": "2026-09-13T20:04:05.820102+00:00"
+        },
+        {
+            "id": "d9c8aa9e69f9877f0545a6e75a33b0c3a2a750174a04cf06fd9cbae08d65e0ce",
+            "title": "Global Shortage Has Led to Motor Oil Rationing at Costco",
+            "description": "Comments",
+            "url": "https://guessingheadlights.com/global-shortage-has-led-to-motor-oil-rationing-at-costco/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-13T17:57:59+00:00",
+            "collected_at": "2026-09-13T20:04:05.683356+00:00"
+        },
+        {
+            "id": "18db813c4932ff11baf4faf9ea9cfeba8642d7c785fb1a1a00163bf2e599ad13",
+            "title": "Device Drivers lab exercise – COSC562",
+            "description": "Comments",
+            "url": "https://web.eecs.utk.edu/~smarz1/courses/cosc562/drivers.html",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-13T17:41:50+00:00",
+            "collected_at": "2026-09-13T20:04:05.683647+00:00"
+        },
+        {
+            "id": "87060bd958a6a516b039099c0e36fd49e04072e6fae004f9a7e2517aa819bdcd",
+            "title": "Why is Google still serving dodgy ads?",
+            "description": "Comments",
+            "url": "https://www.atomic14.com/2026/09/13/why-is-google-still-serving-dodgy-ads",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-13T17:37:44+00:00",
+            "collected_at": "2026-09-13T20:04:05.683249+00:00"
+        },
+        {
+            "id": "f556be927f38fd0444d6d57470e97f36ca14bb588e4ad65add3eed636be288d3",
+            "title": "McGlone Warns SPX Pullback Could Send Bitcoin Price to $10K",
+            "description": "Mike McGlone, senior commodity strategist at Bloomberg Intelligence, stressed that high stock prices and upcoming interest rate hikes suggest bitcoin’s price may retrace meaningfully to $10,000, serving as a leading indicator of a risk-asset drawdown. Bloomberg’s McGlone: Bitcoin’s ‘A Dud,’ ‘Beta’ While the cryptocurrency market enjoyed one of its finest Augusts ever, with Bitcoin prices […]",
+            "url": "https://news.bitcoin.com/crypto-news/mcglone-warns-spx-pullback-could-send-bitcoin-price-to-10k/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto",
+                "intel"
+            ],
+            "published_at": "2026-09-13T17:15:14+00:00",
+            "collected_at": "2026-09-13T20:04:22.247101+00:00"
+        },
+        {
+            "id": "c0c3c18a272a1ee5ccf2541f1e8ffeea0af135e57ea147056d429184954d2889",
+            "title": "Romania soccer introduces black card to 'combat abusive behaviour' from parents",
+            "description": "Comments",
+            "url": "https://www.nytimes.com/athletic/7586821/2026/09/12/football-black-card-referee/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-13T17:08:16+00:00",
+            "collected_at": "2026-09-13T20:04:05.683973+00:00"
+        },
+        {
+            "id": "c79c391a218e59c9add1ccafcb5a6d0536389b61659b76d3e1ef4cd66352cc25",
+            "title": "Diablo IV x The Witcher III: Wild Hunt Collab Unveiled, Here's A First Look",
+            "description": "As part of a new partnership between Blizzard & CD Projekt Red. At Gamescom this year, CD Projekt Red and Blizzard announced a partnership and teased some announcements. Now, at day two of BlizzCon 2026 this weekend, fans of these companies have got a first look at the Diablo IV x Witcher 3 collab. Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/news/2026/09/diablo-iv-x-the-witcher-iii-wild-hunt-collab-unveiled-heres-a-first-look",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-09-13T17:00:00+00:00",
+            "collected_at": "2026-09-13T20:04:20.157960+00:00"
+        },
+        {
+            "id": "05a4efd040a0d24f913f3cfa68e1dd0cf05fda9de9ed8db178e089508c609baa",
+            "title": "Quantum-proof blockchain: why math, not machines, holds the key",
+            "description": "",
+            "url": "https://www.coindesk.com/opinion/2026/09/13/quantum-proof-blockchain-why-math-not-machines-holds-the-key",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-13T17:00:00+00:00",
+            "collected_at": "2026-09-13T20:04:22.011935+00:00"
+        },
+        {
+            "id": "01ca980f3f42dd9dec87dcf919bca1cf611ef9358f3aea8769acfb5c3a1dd06d",
+            "title": "David Sacks: OpenAI and Anthropic Don't Need Regulations to Pace Frontier Models",
+            "description": "Comments",
+            "url": "https://twitter.com/DavidSacks/status/2098973625252708460",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "anthropic",
+                "open-source",
+                "openai",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-13T16:52:33+00:00",
+            "collected_at": "2026-09-13T20:04:05.683814+00:00"
+        },
+        {
+            "id": "9f4895a907944ad7700a2cb76aa95fa9433809a1122e10e0310aab6f6f959d13",
+            "title": "Ubuntu 26.10 completes transition to Rust-based coreutils",
+            "description": "Ubuntu 26.10 completes the distro’s move to Rust-based core utilities, with the commands previously held back due to security issues now migrated to memory-safe versions. cp, mv and rm were held back on their GNU versions in Ubuntu 26.04 LTS due to a crop of TOCTOU (time-of-check to time-of-use) issues that needed to be fixed in the uutils versions. With those issues resolved upstream, Ubuntu 26.10 finishes the job. The ‘Stonking Stingray’ ships a full set of Rust core utilities, which encompasses common command-line tools like ls, cat, chmod and du. Canonical donates €40k a year to help fund work on Rust software Canonical’s engineers began “oxidising” the distro – replacing foundational […] You're reading Ubuntu 26.10 completes transition to Rust-based coreutils , a blog post from OMG! Ubuntu . Do not reproduce elsewhere without permission.",
+            "url": "https://www.omgubuntu.co.uk/2026/09/ubuntu-2610-rust-coreutils-complete",
+            "source": "OMG! Ubuntu",
+            "category": "linux",
+            "tags": [
+                "desktop",
+                "linux",
+                "rust",
+                "ubuntu"
+            ],
+            "published_at": "2026-09-13T16:39:11+00:00",
+            "collected_at": "2026-09-13T20:04:11.026245+00:00"
+        },
+        {
+            "id": "6118181b330889410e7c282b52d34cbd1c1bc7754cf7afe0e85c9258e0acbbb7",
+            "title": "Obama urges Democrats to have a ‘clear plan’ for AI safeguards",
+            "description": "Obama recently said that Democrats need to make artificial intelligence one of their “central agendas” and “have a very clear plan” to address concerns around the technology’s economic impact and safety.",
+            "url": "https://techcrunch.com/2026/09/13/obama-urges-democrats-to-have-a-clear-plan-for-ai-safeguards/",
+            "source": "TechCrunch",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "innovation",
+                "intel",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-09-13T16:30:00+00:00",
+            "collected_at": "2026-09-13T20:04:03.795518+00:00"
+        },
+        {
+            "id": "9e582c3bfcccb53c77f61acc7a808ec4dd82198869224ab69464d9355077b23b",
+            "title": "Switching to GNU Guix: A Beginner's Perspective",
+            "description": "Comments",
+            "url": "https://whhone.com/posts/switching-to-gnu-guix/",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-09-13T16:19:47+00:00",
+            "collected_at": "2026-09-13T20:04:05.819826+00:00"
+        },
+        {
+            "id": "c2b5e5a10ccfa12cf53fa609e7461e87c59173c4d7afd54d42df2ded5b2ccb9e",
+            "title": "Another Bitcoin Bridge Broke, and This Time Billions Were Minted",
+            "description": "Over the past week, the crypto community has been hearing about bizarre hacks involving bitcoin-backed tokens, and following the troubles tied to the Liquid Network’s L-BTC and Nomic’s nBTC, Symbiosis’s bitcoin bridge was exploited. Reports say that a hacker minted billions of unbacked syBTC across a set of transactions and managed to cash out around […]",
+            "url": "https://news.bitcoin.com/security/another-bitcoin-bridge-broke-and-this-time-billions-were-minted/",
+            "source": "Bitcoin.com News",
+            "category": "cybersecurite",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto",
+                "ios"
+            ],
+            "published_at": "2026-09-13T16:10:47+00:00",
+            "collected_at": "2026-09-13T20:04:22.247170+00:00"
+        },
+        {
+            "id": "df2bc97da00eedfa8c1a12d62e1a85e98173123883169690ba3022215e107a2c",
+            "title": "what if my git host were a static site generator?",
+            "description": "Comments",
+            "url": "https://char.lt/blog/2026/09/sorcery-repo-viewer/",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "git",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-09-13T16:10:06+00:00",
+            "collected_at": "2026-09-13T20:04:05.819746+00:00"
+        },
+        {
+            "id": "44cdc58c805a295ba0e61735ccf664a81fd666e5d59bd18406366be919f2657c",
+            "title": "TechCrunch Mobility: Lyft has entered the robotaxi chat",
+            "description": "Welcome back to TechCrunch Mobility, your hub for the future of transportation, and now, more than ever, the role AI is playing in it.",
+            "url": "https://techcrunch.com/2026/09/13/techcrunch-mobility-lyft-has-entered-the-robotaxi-chat/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-09-13T16:04:00+00:00",
+            "collected_at": "2026-09-13T20:04:03.795569+00:00"
+        },
+        {
+            "id": "5341d3af6c2f852d4cbb1dc94b4b18f2a2b4f633b354d707f57271fe1944a265",
+            "title": "Melty Blood: ﻿Twi-Lumina Announced For Switch 1 & 2, Out 2027",
+            "description": "Update: April release confirmed in new trailer. : At EVO Japan this weekend, developer French Bread and publisher Aniplex lifted the lid on Melty Blood: Twi-Lumina with a special teaser trailer. Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/news/2026/09/melty-blood-twi-lumina-announced-for-switch-1-and-2-out-2027",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-09-13T16:00:00+00:00",
+            "collected_at": "2026-09-13T20:04:20.158048+00:00"
+        },
+        {
+            "id": "8de5032844127f50eefa15f5d7ad9c5b63f9613cec082a64890d3646771e3b1e",
+            "title": "Libraries Run Rust Inside Python (With PyO3)",
+            "description": "Comments",
+            "url": "https://belderbos.dev/blog/how-libraries-run-rust-inside-python/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "python",
+                "rust",
+                "startup"
+            ],
+            "published_at": "2026-09-13T15:24:05+00:00",
+            "collected_at": "2026-09-13T20:04:05.683940+00:00"
+        },
+        {
+            "id": "82e3165a7a942b00cf12a3688d3292118eb33fd794ef720de75259ecd5c28423",
+            "title": "Golang developers should try Odin",
+            "description": "Comments",
+            "url": "https://rm4n0s.github.io/posts/2-go-devs-should-learn-odin/",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "go",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-09-13T15:23:41+00:00",
+            "collected_at": "2026-09-13T20:04:05.819884+00:00"
         },
         {
             "id": "b81136ee2f25eacbc483ba16641c07c1d6d32e4cf20494a4bbc7b3651e06abe5",
@@ -83,6 +676,22 @@
             ],
             "published_at": "2026-09-13T15:04:02+00:00",
             "collected_at": "2026-09-13T15:24:03.289112+00:00"
+        },
+        {
+            "id": "340d83a17f9dffcaaf90d3e2d4d013e6e27cec3908aeb15b30b6df582512c2ed",
+            "title": "Cpak – OCI application package format for Linux desktops, servers and devices",
+            "description": "Comments",
+            "url": "https://cpak.it/",
+            "source": "Hacker News",
+            "category": "linux",
+            "tags": [
+                "linux",
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-13T15:02:56+00:00",
+            "collected_at": "2026-09-13T20:04:05.683751+00:00"
         },
         {
             "id": "c6013ba1daf81ceaed8dfad9fd6421c4ccdeabe96c1965e2fb297ebd8a26bda0",
@@ -252,6 +861,21 @@
             "collected_at": "2026-09-13T15:24:03.295351+00:00"
         },
         {
+            "id": "467a58203a259994fb408483e3deb812be1a626dc375db5b8edaa53d513b0200",
+            "title": "Nobody pays for open source. We can force them to",
+            "description": "Comments",
+            "url": "https://seldo.com/posts/nobody-pays-for-open-source-we-can-force-them-to/",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-09-13T14:34:32+00:00",
+            "collected_at": "2026-09-13T20:04:05.820651+00:00"
+        },
+        {
             "id": "213f7fae1d5f35a03ac943fc4a3bca13e960018528bad1257ac4e503d3d733bb",
             "title": "Astra and Fable still hack on simple variants of alignment evals from 2025",
             "description": "Comments",
@@ -301,6 +925,23 @@
             "collected_at": "2026-09-13T15:23:59.505839+00:00"
         },
         {
+            "id": "e1eb60d78f10e9e03428afcb12a0dcd2de78d03f97ef8d5e7d6994a25cd80942",
+            "title": "CUDA for AMD on Windows",
+            "description": "Comments",
+            "url": "https://github.com/Speedstu/CUDA-for-AMD-Windows",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "amd",
+                "open-source",
+                "programmation",
+                "startup",
+                "windows"
+            ],
+            "published_at": "2026-09-13T14:25:13+00:00",
+            "collected_at": "2026-09-13T20:04:05.683589+00:00"
+        },
+        {
             "id": "f9e056a8fec09cb1a14e096df54db3b655e01b6e7ef788a2f864b3cb4cae718a",
             "title": "Houthis Used Claude Code to Develop Missile Guidance Software: Anthropic",
             "description": "Comments",
@@ -347,6 +988,21 @@
             ],
             "published_at": "2026-09-13T14:10:00+00:00",
             "collected_at": "2026-09-13T15:24:05.427307+00:00"
+        },
+        {
+            "id": "24a9b9783df88a8d4d5ba643114b607adaf1cb8954b6c5a9c174a4f3f87e2e4a",
+            "title": "Making Startups Powerful",
+            "description": "Comments",
+            "url": "https://paulgraham.com/powerful.html",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-13T14:09:53+00:00",
+            "collected_at": "2026-09-13T20:04:05.683615+00:00"
         },
         {
             "id": "a84fa1bdb619dc87b102103411fd41b5ede6220ebb579296d0d835432ae0dc25",
@@ -5001,6 +5657,21 @@
             "collected_at": "2026-09-11T20:16:55.560537+00:00"
         },
         {
+            "id": "aa08b00243d4822d40d17518118d0cb3ae2fefe37399d8b114811b6f59cf0bcd",
+            "title": "A Brief Retrospective on the Sprite Network Operating System",
+            "description": "Comments",
+            "url": "https://github.com/OSPreservProject/sprite/blob/master/sprite.txt",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-11T19:52:53+00:00",
+            "collected_at": "2026-09-13T20:04:05.684203+00:00"
+        },
+        {
             "id": "99916f179b960134c7e7f1e04dc83b2bf9dcc97df2553046949fdd940fdbc70c",
             "title": "Kith My Imagination",
             "description": "This post is my submission for DEV Education Track: Build Apps with Google AI Studio . What I Built Kith is An AI Which Works As Your Friend Whom You Can Chat with without worrying about what he will think Demo https://kith-studio.ai.studio/ My Experience I learned that Google Ai Studio is all that it tells about itself as i made kith it was just making what i intended to make but without any knowledge of code one can make it.more suprising was that i never thought that it would be this exciting and it would come to life",
@@ -6253,6 +6924,21 @@
             ],
             "published_at": "2026-09-11T15:41:04+00:00",
             "collected_at": "2026-09-11T20:16:55.231866+00:00"
+        },
+        {
+            "id": "27ec9af7da2f2120cb69e0a9df4c80e63ba62f6ed635df9f9e8cab3973588005",
+            "title": "Alan's Random Insult Generator (1999)",
+            "description": "Comments",
+            "url": "https://alanbellows.com/experiments/insult/index.html",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-11T15:34:53+00:00",
+            "collected_at": "2026-09-13T20:04:05.684000+00:00"
         },
         {
             "id": "cceafc0f07e1f0679ff7eb92d81a3acb3e20d4c742f95de5cf1ce3f6cb31f8fa",
@@ -8818,6 +9504,22 @@
             "collected_at": "2026-09-11T10:21:23.233183+00:00"
         },
         {
+            "id": "33c8275437d7caea1bffe63a9a350b8cc7554f469b97b3f03f9ae596c318fe3e",
+            "title": "Reverse-Engineering Claude Web's MicroVM: Uncovering Anthropic's Hidden Antspace",
+            "description": "Comments",
+            "url": "https://aprilnea.me/en/blog/reverse-engineering-claude-code-antspace",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "anthropic",
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-11T03:45:42+00:00",
+            "collected_at": "2026-09-13T20:04:05.684146+00:00"
+        },
+        {
             "id": "612e39b8c31eaaf183aa863516aae1a8433146da22ccd68303a778b7be7f2d93",
             "title": "Models Don't Go Rogue",
             "description": "Comments",
@@ -9449,6 +10151,21 @@
             ],
             "published_at": "2026-09-10T23:51:13+00:00",
             "collected_at": "2026-09-11T02:19:32.231653+00:00"
+        },
+        {
+            "id": "a8a5962c5cbce2c4da837d731647b61ca432bbaa63bc037f8bcbad06aed56d9c",
+            "title": "Sean Carroll explains the biggest ideas in the universe – Full Interview [video]",
+            "description": "Comments",
+            "url": "https://www.youtube.com/watch?v=_TBNJyztai0",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-10T23:32:12+00:00",
+            "collected_at": "2026-09-13T20:04:05.683494+00:00"
         },
         {
             "id": "43bee4329c9e0fc39137082e1ad0fb6d18b69c6c9413328dc915ade4dae56196",
@@ -13136,6 +13853,21 @@
             ],
             "published_at": "2026-09-10T12:28:32+00:00",
             "collected_at": "2026-09-10T20:17:17.603574+00:00"
+        },
+        {
+            "id": "25702c29c86ed60e427f7f7a6d6c8a85761fafe832e3df6e9b8133d1e181d59f",
+            "title": "Julia 1.13 Highlights",
+            "description": "Comments",
+            "url": "https://julialang.org/blog/2026/09/julia-1.13-highlights/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-10T12:27:25+00:00",
+            "collected_at": "2026-09-13T20:04:05.683779+00:00"
         },
         {
             "id": "1c8aec6380c31f92407b5ba54bfa3ba8ab0ea78b984e4035687b142492a00fcc",
@@ -108055,6 +108787,56 @@
             ],
             "published_at": null,
             "collected_at": "2026-09-13T15:24:01.035022+00:00"
+        },
+        {
+            "id": "395acc6e88d3562ed17d0c8e1f020acc0a69110745373589a24a6e4c1701ca2d",
+            "title": "Trump and Mike Johnson think the AI industry is overreacting",
+            "description": "Yesterday, Anthropic CEO Dario Amodei published a lengthy open letter saying it was time to \"pace the frontier\" and slow down AI development. OpenAI's Sam Altman and Elon Musk both agreed, publicly voicing their support on X. Even Alphabet's Demis Hassabis offered tentative support for Amodei's proposal. Donald Trump and House Speaker Mike Johnson, however, […]",
+            "url": "https://www.theverge.com/ai-artificial-intelligence/994441/trump-mike-johnson-ai-industry-overreacting",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "anthropic",
+                "gadgets",
+                "internet",
+                "openai",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-09-13T20:04:03.944269+00:00"
+        },
+        {
+            "id": "499803bcd27c8772d853a1182ff3886ad08af66c840c1fcb90b84fd5275dfc19",
+            "title": "Apple is reportedly working on iPhone game controllers",
+            "description": "Bloomberg's Mark Gurman says Apple is developing two game controllers for the iPhone and will likely sell them under the Beats brand. Rumors that Apple might enter the game controller business have circulated for some time. But last week, MacRumors reported finding two references in macOS 26.7's code to two game controllers identified as first-party […]",
+            "url": "https://www.theverge.com/tech/994426/apple-iphone-game-controllers",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "ios",
+                "macos",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-09-13T20:04:03.944377+00:00"
+        },
+        {
+            "id": "c7a491448b2a22c5855e00cfbb81b5169998787b45c7618a71109acf2336e495",
+            "title": "The Units’ Digital Stimulation is synthpunk perfection",
+            "description": "The Units are a band I discovered in part thanks to No Dogs in Space. During their miniseries on The Screamers (another incredible band worth checking out), they mention synthpunk.org as one of their sources. And there's no better way to get my attention than to combine two of my favorite things - punk rock […]",
+            "url": "https://www.theverge.com/entertainment/994415/the-units-digital-stimulation-synthpunk-review",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "git",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-09-13T20:04:03.944452+00:00"
         }
     ]
 }
