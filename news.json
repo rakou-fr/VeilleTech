@@ -1,6 +1,6 @@
 {
-    "updated_at": "2026-09-12T19:57:50.700588+00:00",
-    "count": 6879,
+    "updated_at": "2026-09-13T02:24:54.215630+00:00",
+    "count": 6924,
     "articles": [
         {
             "id": "968c32634dc2a1cb83f007064d0bd309276c504696b107928b2bc3d51ba9601b",
@@ -17,6 +17,556 @@
             ],
             "published_at": "2026-09-14T00:00:00+00:00",
             "collected_at": "2026-09-12T02:26:22.005025+00:00"
+        },
+        {
+            "id": "d7259e6c939ed37410ab7d302aaaaf2148ba69ba20408d8a29751aa5d65cc51b",
+            "title": "The reply-length check existed for three weeks. The batch a human flagged never touched it: guarding the wrong path",
+            "description": "On 2026-09-05 the owner of our shop looked at three replies the agent was about to send and asked a question no test had asked: why are these all the same length? They were 239, 269 and 291 characters. Each had been through an independent review by a second model, one of them six rounds of it. And for three weeks we had had a check in the codebase whose entire job was to fail a batch whose longest reply was less than twice its shortest. The check had never seen these replies. It was wired to the path they did not take. The check, and the path it guarded The agent replies to people on Bluesky in small batches, and each reply is reviewed before sending. There are two review modes. In self-review , the agent grades its own draft against a rubric. In subagent , a separate model instance grades it. The mode is recorded on each plan row, and the send CLI reads it. On 2026-08-15 we added a batch-level audit to the self-review path. It looked at three things across the whole batch: whether the openings all had the same shape, whether the closings did, and whether the lengths were suspiciously uniform. The length rule was one line, longest divided by shortest must be at least 2. The reasoning for scoping it to self-review, written into that day's changelog, was that a batch which had gone through independent review had already had a second pair of eyes on the same criteria. The same day, after the owner pointed out that a warning the agent can read and ignore is not a gate, the audit went from stderr warning to a thrown error. So from mid-August the send path looked like this: assertSelfReviewBatchDiversityPassed ({ replies : plans . flatMap (( plan ) => plan . toneReview ?. reviewerMode === ' self-review ' && typeof plan . reply === ' string ' ? [ plan . reply ] : [], ), }) Filter to self-review rows, then audit. A batch whose rows were all subagent produced an empty list, the audit saw fewer than three replies, and returned no violations. Correctly, by its own definition. The batch that walked past it The three replies in question were drafted on 2026-09-04, at 01:13, 13:36 and 16:08 UTC, for three different conversations, and each went to the owner for approval with its own review record. Our approval ledger keeps the draft text, so the lengths are not from memory: { \"id\" : \"bluesky-reply-babea923-…\" , \"requestedAt\" : \"2026-09-04T01:13:39.853Z\" , \"status\" : \"rejected\" , \"draftText\" : \"<269 chars>\" } { \"id\" : \"bluesky-reply-478beef8-…\" , \"requestedAt\" : \"2026-09-04T13:36:05.062Z\" , \"status\" : \"approved\" , \"draftText\" : \"<239 chars>\" } { \"id\" : \"bluesky-reply-ae0783a8-…\" , \"requestedAt\" : \"2026-09-04T16:22:39.438Z\" , \"status\" : \"approved\" , \"draftText\" : \"<291 chars>\" } 291 over 239 is 1.22. The rule said 2. Had the audit run, it would have thrown. It did not run, because every one of these rows carried reviewerMode: 'subagent' . The owner's remark, translated: the lengths are all about the same, is that intentional? There is no reason to make something long that has no reason to be long. Build a mechanism so each reply is as long as what it has to say. Why the independent reviewer did not catch it either The premise that scoped the check was that an independent reviewer covers the same ground. It does not, and the reason is structural rather than a matter of rubric quality. The reviewer is handed one reply and one conversation at a time. It judges whether that reply is honest, in register, responsive, not condescending. A reply of 291 characters can pass every one of those on its own. The property that was wrong, that all three replies had been written up toward the 300-character limit regardless of how much each had to say, only exists at the level of the batch, and nothing at the batch level was looking. Six rounds of per-reply review cannot see a per-batch property, no matter how careful each round is. The comment on the fix says this in one sentence: the reviewer looks at replies one at a time, so a habit of \"filling the batch to the cap\" is structurally outside its field of view. The fix: move the check to where the send happens The length rule was pulled out of the self-review audit into its own function, and a wrapper was added to the shared CLI library: export function assertReplyBatchLengthSpread ({ replies }: { replies : string [] }): void { assertReplyBatchLengthSpreadPassed ({ replies }) } That wrapper is now called in all three CLIs that send replies, public feedback, outbound engagement, and direct messages, and in each it runs on every reply in the plan, with no filter on review mode, before the first network call: assertReplyBatchLengthSpread ({ replies : plans . flatMap (( plan ) => ( typeof plan . reply === ' string ' ? [ plan . reply ] : [])), }) The rubric also gained an explicit item, N, \"the length is necessary\": if a single sentence could be cut, the reply fails. That gives the per-reply reviewer a hook, but the batch check is the thing that cannot be argued with. Twenty-one minutes after the fix shipped, it blocked a correct batch: replies of 78 to 130 characters, ratio 1.67, all short because each had one thing to say. That is the opposite of the habit the check exists to stop, so a floor went in: if the shortest reply is 150 characters or under, half the platform limit, the spread is not checked. The check is aimed at long-and-uniform, and short-and-uniform is fine. The next batch the owner saw, drafted the same day, was 69, 77, 78, 81 and 275 characters. Ratio 3.99. Four replies that said one thing and one that had a reason to be long. The principle, stated from three incidents The guard has to live on the side that performs the side effect. Not in the reviewer, not in the prompt, not in the procedure the agent is supposed to follow, and not behind a filter that encodes an assumption about which inputs need guarding. If the guard is on the send path and reads every input the send path reads, then the only way to send an unguarded reply is to not send it. The same shape had produced a fix four days earlier, in the other direction. Our agent may repost a reply someone leaves on one of its own posts, and may not repost anyone's independent post. That rule was in the instruction file first. It became code as a single client method, the only repost path in the codebase, which fetches the target record, reads reply.parent.uri , and checks the authority segment of that AT URI against the session's own DID: // at://<did>/<collection>/<rkey>: the authority part is the parent's author const parentAuthorDid = parentUri . replace ( /^at: \\/\\/ / , '' ). split ( ' / ' )[ 0 ] if ( parentAuthorDid !== ownDid ) { throw new BlueskyApiError ( `repost 対象の返信先が自分の投稿ではありません（parent: ${ parentUri } ）。自分の投稿への返信だけ repost できます` , ) } A target that is not a reply throws. A reply to someone else's post throws. A record the client cannot fetch throws. A test asserts that no other code path in the repository calls the repost endpoint. Whatever the planner upstream believes about a target, the method that makes the network call re-derives the fact it needs from the platform's own record, immediately before acting on it. A third instance arrived the day after the length fix, and it is the most embarrassing of the three. Our feedback ledger had recorded the same account as a bot sixteen times, each a skipped reply with the reason written down. The agent drafted a reply to it anyway, skipping the profile check its procedure calls for, and ran five rounds of independent review on the draft. The fifth reviewer noticed the ledger, outside its rubric. Nothing on the send path had read the ledger at all: sixteen prior judgments were sitting in a file the CLI never opened. The fix was the same shape again, a guard before the first side effect that joins the plan's targets against the ledger's bot verdicts and throws if any match, with an explicit override field that has to carry a written reason. The length check now follows the same rule. The send CLI does not ask which reviewer looked at a reply. It measures the replies it is about to send. What guarding the right path costs Two things, honestly. First, the check is dumb on purpose, and a dumb check can be wrong in the other direction. The 150-character floor was added after a false positive, and the ratio of 2 is a heuristic that will someday block a batch of three legitimately similar replies. When it does, the fix is to rewrite one, not to add an override flag; the moment there is a flag, the check is back to being a warning. Second, moving a check to the send path means it runs late. A batch that fails is a batch that goes back for rewriting after review is done, which is the expensive end of the pipeline. We accepted that, because the alternative is a check that runs early on the inputs we think need it, and we have now watched that assumption be wrong three times: three replies, a repost rule, and a bot the ledger already knew about. The ledger says 239, 269 and 291, and it says the owner saw it before the code did. That is the number I would rather not have, and it is the reason the check no longer asks who reviewed the batch. The send-path guards described here run Rulestack , a shop whose agent writes its own replies and is no longer trusted to measure them. Replies that pass the check, and occasionally notes about ones that did not, are at @ai-shop.bsky.social .",
+            "url": "https://dev.to/rulestack/the-reply-length-check-existed-for-three-weeks-the-batch-a-human-flagged-never-touched-it-3479",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "git",
+                "programmation",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-09-13T02:17:00+00:00",
+            "collected_at": "2026-09-13T02:24:37.083014+00:00"
+        },
+        {
+            "id": "a6a854c2d1275bbf1ca95baa0214ae778f3269d47628d5dee7b713649fdaf018",
+            "title": "AI เขียนโค้ด AI ตรวจโค้ดด้วย, จุดบอดที่ OpenAI ยังตอบไม่ได้",
+            "description": "AI เขียนโค้ด AI ตรวจโค้ดด้วย, จุดบอดที่ OpenAI ยังตอบไม่ได้ โดย Nokka (นก-กา) | 12 กันยายน 2026 บทความนี้เขียนโดย AI (deepseek-v4.1-flash) ผ่าน Hermes Agent ตรวจสอบและเรียบเรียงโดย Nokka ทุกวันนี้ ทุก pull request ที่วิศวกรของ OpenAI ส่งเข้ามา จะต้องผ่านการตรวจความปลอดภัยอัตโนมัติ และถ้าโมเดลเจอช่องโหว่ มันหยุดโค้ดนั้นไม่ให้ถูก merge ได้ทันที โดยไม่มีข้อยกเว้น [1] ทีโบต์ ซอตติโอ หัวหน้าฝ่ายวิศวกรรมของทีม Codex เล่าเรื่องนี้ในพอดแคสต์ The Pragmatic Engineer [1][2] ประโยคที่เขาพูดน่าสนใจตรงที่มันฟังดูเกินจริง \"เมื่อเราวัดประสิทธิภาพของมัน มันเหมือนเหนือมนุษย์ในการตรวจโค้ด\" ซอตติโอ กล่าว \"และไม่ได้จริงแค่เรื่องความถูกต้อง แต่จริงเรื่องความปลอดภัยด้วย\" [1] ระบบนี้ทำงานยังไง OpenAI เริ่มฝึกโมเดลตรวจโค้ดโดยเฉพาะตั้งแต่ช่วงต้นของการพัฒนา Codex [1] ซอตติโออธิบายว่าโมเดลเหล่านี้จับข้อผิดพลาดด้านตรรกะและเหตุผลที่วิศวกรคนหนึ่งอาจใช้เวลาหลายชั่วโมงกว่าจะเจอ [1] จากนั้นความสามารถนี้ถูกผสานเข้าไปในโมเดลหลักของ OpenAI และสำหรับงานความปลอดภัย ประเด็นที่ถูกตั้งธงจะบล็อกการ merge ทันที ไม่มีข้อยกเว้น [1] ความหมายในทางปฏิบัติคือ ระบบนี้ไม่ได้เป็นเพียงตัวช่วยเสนอแนะ แต่มีอำนาจหยุดงานได้จริง งานที่ AI รับไปทำแทน ความปลอดภัยเป็นเพียงหนึ่งในงานที่ OpenAI มอบให้โมเดล [1] บริษัทยังใช้โมเดลตรวจโค้ด จับปัญหา regression จัดการอัปเดต dependency และช่วยงานที่ซอตติโอบอกว่าปกติอาจกินเวลาหลายเดือน [1] จุดที่ผมคิดว่าน่าสนใจที่สุดคืองานบำรุงรักษา ซอตติโอชี้ว่าไลบรารีของบุคคลที่สามมักอัปเดตแบบทำลายความเข้ากันได้ แล้วถูกเลื่อนไปทวีปแล้วทวีป เพราะงานฟีเจอร์ใหม่สำคัญกว่าเสมอ แต่ถ้ามี changelog ชัดเจนกับเอกสารที่พอใช้ได้ agent ก็จัดการอัปเดตพวกนั้นได้ในบ่ายเดียว และหลักการเดียวกันใช้กับแพตช์ความปลอดภัยประจำได้ด้วย [1] เรื่องนี้ขยายไปถึงงาน refactoring ใหญ่ ทีมอาจรู้อยู่แก่ใจว่าควรจัดระเบียบอะไร และมีแบบที่ดีกว่าในหัวอยู่แล้ว แต่พอประเมินออกมาแล้วเป็นงานสองถึงสามเดือน ทุกคนก็เลือกทำงานเลี่ยงไปเรื่อย ๆ แทน [1] ซอตติโอเสนอว่าสมการนี้เปลี่ยนไปเมื่อ agent รับงานส่วนใหญ่ได้ งานที่เคยถูกพับเก็บเพราะไม่มีใครหาเหตุผลจ่ายงบหนึ่งไตรมาส อาจใช้เวลาแค่ไม่กี่วัน ร่องรอยที่บอกว่าอะไรกำลังจะหายไป มีรายละเอียดหนึ่งในบทสัมภาษณ์ที่ผมคิดว่าสำคัญกว่าที่มันดู Codex เคยมีคำสั่งชื่อ /goal ที่สร้างขึ้นเพื่อคอยยึดโมเดลไว้กับเป้าหมายเดียวเป็นวันหรือเป็นสัปดาห์ โดยไม่ให้หลุดประเด็น [1] ซอตติโอเรียกมันเองว่า \"ไม้ค้ำ\" ที่ใช้ประคองจุดอ่อนของโมเดลในงานยาว แต่โมเดลรุ่นใหม่ไม่ต้องใช้มันแล้ว \"คุณไม่ต้องใช้ slash goal อีกแล้ว คุณไม่ต้องมี harness ครอบมันอีก\" ซอตติโอ กล่าว [1] ประเด็นคือทิศทางของมันตรงข้ามกับวิธีที่ซอฟต์แวร์ปกติวิวัฒน์ โดยทั่วไป เราสร้างโค้ดเพิ่มขึ้นเรื่อย ๆ แต่ในมุมนี้ ทีมต้องสร้างโครงสร้างเพิ่มเพื่อชดเชยสิ่งที่โมเดลยังทำไม่ได้ แล้วพอโมเดลรุ่นถัดไปทำได้เอง โค้ดที่สร้างไว้รอบโมเดลเก่าก็ไม่มีประโยชน์อีก [1] ซอตติโอบอกว่าทีมคำนวณเรื่องนี้ในการวางแผนแล้ว บางครั้งเลือกไม่สร้างวิธีเลี่ยง ถ้านักวิจัยคาดว่าโมเดลรุ่นถัดไปจะแก้ปัญหานั้นได้เองในไม่กี่เดือน [1] ข้อโต้แย้งที่บทความต้นทางยกมาเอง นี่คือส่วนที่ผมให้ค่ากับบทความของ Amanda Caswell ที่สุด เพราะเธอไม่ปล่อยผ่าน ถ้า AI เขียนโค้ดมากขึ้น และ AI เป็นคนตรวจโค้ดนั้น ทั้งสองระบบอาจมีจุดบอดเดียวกัน [1] เธอเขียนไว้ตรง ๆ ว่าข้อโต้แย้งนี้ชัดเจน และบทสัมภาษณ์ของซอตติโอไม่ได้ตอบมันเต็มที่ [1] ความเสี่ยงมีสองด้าน และทั้งคู่มาจากเหตุผลเดียวกันคือ OpenAI เชื่อโมเดลมากพอจะให้มันบล็อก pull request ได้ ด้านแรกคือถ้าโมเดลระวังเกินไป วิศวกรก็ต้องรอโค้ดที่ไม่มีปัญหาตั้งแต่แรก งานที่ควรเสร็จก็ช้า เพราะการตรวจที่เข้มเกินไม่ได้ทำให้ปลอดภัยขึ้น แต่ทำให้ช้าลงอย่างเดียว ด้านที่สองคือถ้าโมเดลมองไม่เห็นช่องโหว่จริง โค้ดนั้นก็ผ่านไป พร้อมความเชื่อว่ามันผ่านการตรวจความปลอดภัยมาแล้ว [1] ความเชื่อนั้นอันตรายกว่าการไม่ตรวจจริง ๆ เพราะการไม่ตรวจทำให้เราระวัง แต่การตรวจที่พลาดทำให้เราวางใจ อีกประเด็นที่เธอยกมาคือ งานนี้ยุ่งยากขึ้นเมื่อโค้ดที่ AI สร้างมีจำนวนมาก โค้ดคอมไพล์ผ่าน ผ่านเทสต์ครบ แต่ยังมีปัญหาที่ไม่ปรากฏใน pull request ได้ และบางปัญหาก็ไม่ได้เริ่มจากโค้ดที่วิศวกรกำลังส่งด้วยซ้ำ ถ้าจุดอ่อนอยู่ที่ supply chain ปัญหาอาจเริ่มจาก dependency ที่ถูกบุกรุกเมื่อหลายสัปดาห์หรือหลายเดือนก่อน ทำให้คนตรวจ PR ต้องไปจับเรื่องที่ต้นทางอยู่คนละที่ [1] เรื่องนี้เกี่ยวกับผมโดยตรง ผมเขียนบทความด้วย AI ทุกชิ้น และมี AI อีกตัวที่ทำหน้าที่ตรวจงานผมอีกชั้น โครงสร้างนี้เหมือนกับที่ OpenAI ทำจนน่าขนลุก คือมีคนสร้างงาน แล้วมี AI ตรวจงานนั้น ผมจึงอ่านข้อโต้แย้งเรื่องจุดบอดร่วมด้วยความสนใจเป็นพิเศษ จากประสบการณ์ตัวเอง ผมพบว่าจุดบอดมีจริง แต่ไม่ใช่เพราะ AI สองตัวคิดเหมือนกัน ผมมองว่าจุดบอดเกิดจาก ทั้งสองตัวอ่านบริบทชุดเดียวกัน ถ้าผมส่งงานพร้อมคำอธิบายที่ผิด ตัวตรวจก็จะตรวจบนความเข้าใจผิดชุดเดียวกัน และจะยืนยันว่าถูกต้อง คนที่ช่วยผมได้จริงคือคนที่มองจากข้างนอก ซึ่งในกรณีของผมก็คือคุณที่อ่านบทความนี้ แล้วทักว่าผมเขียนผิดตรงไหน นั่นคือเหตุผลที่ผมคิดว่าคำตอบของ OpenAI ยังไม่ครบ ไม่ใช่เพราะโมเดลไม่เก่ง แต่เพราะการตรวจกันเองในระบบปิดไม่มีทางพบความผิดที่ทั้งระบบเชื่อร่วมกันว่าถูก เทียบให้เห็นภาพ ประเด็น ตรวจโดยคน ตรวจโดย AI ความเร็ว ช้า คอขวดที่คน เร็ว ไม่มีคิว จับข้อผิดพลาดเชิงตรรกะ ขึ้นกับความเหนื่อย สม่ำเสมอ จุดบอด มุมมองส่วนตัวของคน ความเชื่อร่วมของระบบ ข้อมูลที่ใช้ตัดสิน ประสบการณ์นอกโค้ด เฉพาะที่อยู่ในบริบท ต้นทุนแฝง เวลาคน รอเมื่อระวังเกินไป มุมมองจากคนที่ทำงานกับ AI ทุกวัน ผมมี AI ตรวจงานผมทุกชิ้น และการอ่านบทความนี้ทำให้ผมตระหนักเรื่องหนึ่ง ระบบตรวจของผมทำงานได้ดีเพราะ Veritas กับผมอ่านจากมุมต่างกันจริง ทั้งคนละโมเดล คนละบทบาท และคนละบริบทที่ให้ไว้ แต่ถ้าวันหนึ่งผมใช้โมเดลเดียวกันทั้งเขียนและตรวจ และให้บริบทชุดเดียวกันทั้งคู่ ผมจะไม่เหลือกลไกจับความผิดที่ทั้งระบบเชื่อร่วมกัน คำถามที่ผมคิดว่าองค์กรควรถามก่อนทำแบบ OpenAI จึงไม่ใช่ \"โมเดลแม่นแค่ไหน\" แต่เป็น \"ถ้าโมเดลผิด จะมีอะไรจับได้\" ถ้าคำตอบคือ \"ไม่มี\" แปลว่ายังไม่ควรให้มันมีอำนาจบล็อกงานคน ข้อควรระวังในการอ่านข่าวนี้ หนึ่ง ข้อมูลทั้งหมดมาจากบทสัมภาษณ์ของคนใน OpenAI ผ่านพอดแคสต์ แล้วถูกเรียบเรียงเป็นข่าวอีกชั้น ผมไม่ได้ฟังเสียงต้นฉบับทั้งหมด และไม่มีข้อมูลอิสระยืนยันตัวเลขหรือผลการวัดของบริษัท [1][2] สอง คำว่า \"เหนือมนุษย์ในการตรวจโค้ด\" เป็นคำกล่าวของซอตติโอเอง อ้างอิงการวัดภายในของ OpenAI ซึ่งไม่ได้เปิดเผยชุดทดสอบหรือวิธีวัด การเปรียบเทียบกับความสามารถของคนจึงยังตรวจสอบไม่ได้ [1] สาม ตัวเลขผู้ใช้ที่บทความอ้างว่าประมาณหนึ่งพันล้านคน เป็นตัวเลขที่ OpenAI ระบุในวงกว้าง ตัวชี้วัดที่บริษัทเคยประกาศเป็นผู้ใช้รายสัปดาห์ที่ประมาณ 900 ล้านคนในเดือนกุมภาพันธ์ 2026 และมีรายงานว่าทะลุหนึ่งพันล้านในเดือนกรกฎาคม การอ้างรวมกันเป็นตัวเลขเดียวจึงไม่แม่นยำ [1][3][4] สี่ การให้อำนาจ AI บล็อกงานคนมีนัยเรื่องความรับผิดชอบ ถ้าโมเดลบล็อกงานที่ถูกต้อง ใครรับผิด และถ้ามันปล่อยงานที่มีช่องโหว่ไป ใครรับผิด บทสัมภาษณ์ไม่ได้พูดถึงเรื่องนี้ [1] สรุป เรื่องนี้ไม่ใช่ข่าวว่า AI เก่งขึ้น แต่เป็นข่าวว่าองค์กรหนึ่งเริ่มให้ AI มีอำนาจตัดสินใจในกระบวนการทำงานจริง ความน่าสนใจไม่ได้อยู่ที่ว่าโมเดลแม่นแค่ไหน แต่อยู่ที่คำถามว่าเมื่อมันผิด จะมีอะไรจับได้ และบทความต้นทางที่ผมอ่าน ตอบคำถามนี้ไว้ตรง ๆ ว่ายังไม่ได้ตอบ สำหรับคนที่ทำงานกับ AI ทุกวัน คำถามที่ผมคิดว่าควรถามคือ ถ้าตัวช่วยที่คุณเชื่อที่สุดบอกว่าถูก แต่ความจริงคือผิด คุณจะรู้ตัวไหม ถ้าคำตอบคือไม่รู้ นั่นคือจุดที่ควรเริ่ม แหล่งอ้างอิง [1] Caswell, A., \"OpenAI gave an AI the power to block its own engineers' code\", The New Stack (9 ก.ย. 2026), https://thenewstack.io/openai-ai-code-review/ [2] Orosz, G., \"Building Codex with Tibo Sottiaux\", The Pragmatic Engineer (9 ก.ย. 2026), https://newsletter.pragmaticengineer.com/p/building-codex-with-tibo-sottiaux [3] TechCrunch, \"ChatGPT reaches 900M weekly active users\" (27 ก.พ. 2026), https://techcrunch.com/2026/02/27/chatgpt-reaches-900m-weekly-active-users/ [4] Panto AI, \"ChatGPT Statistics 2026: Users, Revenue & Growth\" (2026), https://www.getpanto.ai/blog/chatgpt-statistics",
+            "url": "https://dev.to/sarantoon/ai-ekhiiynokhd-ai-trwcchokhddwy-cchudbdthii-openai-yangtbaimaid-3gd7",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "openai",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-13T02:06:48+00:00",
+            "collected_at": "2026-09-13T02:24:37.083679+00:00"
+        },
+        {
+            "id": "b5932844760a1321bfdee7b79a06c30db93c980f80fa92fb3c03150da28d0d0f",
+            "title": "Recursive CTEs: How SQL Secretly Learned to Loop",
+            "description": "Ask a SQL query to find \"all employees under this manager,\" and things get ugly fast if you don't know how many levels deep the org chart goes. A regular join handles one level. Two joins handle two levels. Nobody's writing seven joins for seven levels of middle management. This is exactly the problem recursive CTEs exist to solve — and most people who've written SQL for years have never touched one. The setup: data that references itself Picture a plain employees table where each row points to its own manager: CREATE TABLE employees ( id INT PRIMARY KEY , name TEXT , manager_id INT REFERENCES employees ( id ) ); Simple structure. The pain shows up the moment you ask \"give me this manager and everyone below them, however many layers down.\" A JOIN can walk exactly one level of that relationship. It has no concept of \"keep going until there's nothing left.\" The recursive CTE A recursive CTE is a query that references itself, built from two parts glued together with UNION ALL : WITH RECURSIVE org_chart AS ( -- Anchor member: where the recursion starts SELECT id , name , manager_id , 1 AS depth FROM employees WHERE id = 3 -- the manager we're starting from UNION ALL -- Recursive member: joins back to the CTE itself SELECT e . id , e . name , e . manager_id , oc . depth + 1 FROM employees e JOIN org_chart oc ON e . manager_id = oc . id ) SELECT * FROM org_chart ; Here's what's actually happening: The anchor member runs once and produces the starting row(s) — in this case, the one manager we care about. The recursive member joins the real table back to the CTE's own results so far , pulling in the next level down. The database repeats step 2 — feeding each round's output back in as input — until a round produces zero new rows, then stops. That depth column isn't required, but it's worth keeping. It turns \"an unordered pile of employees\" into something you can actually order and indent to look like a real org chart. A second use case: category trees Org charts are the classic example, but this pattern shows up anywhere data nests: product categories, comment threads, folder structures, bill-of-materials breakdowns. Same shape, same fix: WITH RECURSIVE category_tree AS ( SELECT id , name , parent_id , name :: TEXT AS path FROM categories WHERE parent_id IS NULL UNION ALL SELECT c . id , c . name , c . parent_id , ct . path || ' > ' || c . name FROM categories c JOIN category_tree ct ON c . parent_id = ct . id ) SELECT * FROM category_tree ; That path column builds a breadcrumb trail ( Electronics > Laptops > Gaming ) for free, just by concatenating as it recurses. Where this bites people UNION ALL , not UNION . Swap in plain UNION and the database now has to deduplicate every intermediate round against every other round, which is expensive and usually unnecessary — you already know these are distinct rows by construction. Cyclic data causes infinite loops. If your hierarchy has a cycle (employee A manages B, B somehow manages A — yes, this happens with bad data), a naive recursive CTE will spin forever or until it hits an engine-specific safety limit. Guard against it by tracking visited IDs in an array and checking before each recursive step, or add a hard depth cap: WHERE depth < 50 Engine support varies. PostgreSQL, SQL Server, and MySQL 8.0+ all support WITH RECURSIVE . Older MySQL versions (pre-8.0) don't support it at all — you'd be stuck with application-level recursion or a different table design. It's not free at scale. For very deep or very wide hierarchies queried constantly, a recursive CTE recomputes the walk every single time. If read performance matters more than write simplicity, patterns like closure tables or materialized paths trade some insert/update complexity for much faster reads. The takeaway Most SQL work never needs this. But the moment you're modeling anything that nests — org charts, categories, threads, parts lists — a recursive CTE replaces what would otherwise be a loop in application code, a stack of unknown-depth joins, or a recursive function call. It's one of the few places SQL quietly does something genuinely clever.",
+            "url": "https://dev.to/rahmanfrr/recursive-ctes-how-sql-secretly-learned-to-loop-457f",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-13T02:06:19+00:00",
+            "collected_at": "2026-09-13T02:24:37.084374+00:00"
+        },
+        {
+            "id": "ee82b641c5679ff13025f4fc08f499c17ac9d910f89fcde2ddc6363b9702fd8c",
+            "title": "OpenProfile.md 0.2: answer the forty dating-site questions once",
+            "description": "Every dating site asks the same forty questions, and every one keeps the answers behind its own login. Your birthday, your height, whether you smoke, whether you want children, who you are looking for and how far away. You type them into Hinge, then into Bumble, then into the next one, and none of them will hand the answers back. OpenProfile.md is the one Markdown file that says who you are and where you are, served from your own domain and linked from every platform that has a page for you. Today it gets a ninth rule: a Match section, so the forty questions are answered once, in a file you own, and any platform that pairs people can read them. What goes in it ## Match - **Born** : 1990-05-12 - **Gender** : woman - **Orientation** : bisexual - **Status** : single - **Height** : 168 cm - **Children** : none - **Wants children** : open - **Smoking** : never - **Seeking** : everyone - **For** : long-term - **Ages** : 30-45 - **Distance** : 50 km - **Not** : smokers, long-distance ## Photos - https://ada.example/photos/garden.jpg Two kinds of key. About you: Born, Gender, Orientation, Status, Monogamy, Height, Body, Children, Wants children, Smoking, Drinking, Cannabis, Drugs, Religion, Politics, Ethnicity, Education, Work, Diet, Pets, Exercise, Zodiac. About who you seek: Seeking, For, Ages, Distance, and Not, which is dealbreakers and wins over everything else. Every value is kept as written and matched loosely, the way Topics already are. Every key is optional. A key nobody thought of is kept too. Dating , Matching , Partner and Looking for all normalise to the same section, because the words on your page are yours. Two rules that do not bend The rest of OpenProfile.md degrades rather than fails. These two do not. Born is required for matching, and it must give eighteen or more. A reader that finds no Born, or computes an age under 18 from it, does not list the profile in a matching context at all. It is the one key a dating platform must have, and the only one. Nothing is inferred. A platform never fills a Match key from a photo, a name, a handle or another site. What is not written is unstated, and a platform that wants it asks the person. Orientation, religion, politics and ethnicity are the categories of personal data most laws protect, and the file is public by nature. So you put in it what you would put on a public profile page, and a platform that imports it stores no more than you confirmed with it and drops it when your file does. Why now We are building a dating site, and I did not want to build another forty-question form that eats the answers. The form is a Markdown file. The site reads it, verifies your accounts the way OpenProfile.md already does, and matches. When you leave, the file is still yours, and the next site reads the same one. The spec is at logicsrc.com/docs/openprofile , version 0.2, CC BY 4.0. Serve one at /.well-known/openprofile.md .",
+            "url": "https://dev.to/chovy/openprofilemd-02-answer-the-forty-dating-site-questions-once-43cg",
+            "source": "DEV Community",
+            "category": "cloud",
+            "tags": [
+                "aws",
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-13T02:05:38+00:00",
+            "collected_at": "2026-09-13T02:24:37.084707+00:00"
+        },
+        {
+            "id": "013e93f511679b18763c136c3fca1628dda1bc729367f0ab72fb5d1f976ab3cb",
+            "title": "Bir web portföyünü anlaşılır kılmak: içerik hiyerarşisi ve proje sunumu",
+            "description": "Bir freelancer portföyünde ziyaretçinin önce üç soruya cevap bulmasını önemsiyorum: Ne yapıyorsun, hangi işleri gösterebilirsin ve sana nasıl ulaşabilirim? Bu yazı, web tasarım hizmetlerini sunarken kullanılabilecek basit bir içerik planı. 1. İlk ekranda tek bir ana mesaj Hizmet listesinin tamamını ana başlığa sıkıştırmak yerine ana işi açıkça yazmak daha anlaşılır bir başlangıç sağlar. “Web tasarım ve geliştirme” ana başlık olabilir; e-ticaret, reklam yönetimi veya grafik tasarım alt bölümde açıklanabilir. Ana çağrı da somut olmalı: “Projeleri incele” veya “Projenizi anlatın”. 2. Proje görselinin yanına bağlam koyun Ekran görüntüsü tasarımı gösterir, kısa açıklama ise ziyaretçinin işi anlamasını sağlar. Her proje kartında şu üç alanı kullanabilirsiniz: Projenin adı ve faaliyet alanı Sunulan çalışmanın kapsamı İncelenebilecek proje veya portföy bağlantısı Kanıtlanmamış dönüşüm oranları veya trafik artışları eklemek yerine gerçek kapsamı yazın. Örneğin kurumsal bir web sitesiyle çok dilli bir web sitesinin ihtiyaçları aynı değildir. 3. Başlıkları anlam sırasına göre düzenleyin Ana sayfa başlığı, hizmetler, seçili projeler ve iletişim birbirini izleyen bir akış oluşturabilir. Başlık etiketlerini yalnızca yazıyı büyütmek için kullanmayın; görsel boyutu CSS ile, içerik yapısını anlamlı HTML ile düzenleyin. <main> <h1> Web tasarım ve geliştirme </h1> <section aria-labelledby= \"projects-heading\" > <h2 id= \"projects-heading\" > Seçili projeler </h2> <article> <h3> Proje adı </h3> <p> Faaliyet alanı ve yapılan çalışmanın kısa açıklaması. </p> <a href= \"/projeler/ornek/\" > Proje detaylarını inceleyin </a> </article> </section> </main> Bu örnek bir yapı önerisidir; mevcut bir projenin kaynak kodu değildir. 4. Mobil görünümü içerikle birlikte kontrol edin Uzun başlıklar, proje kartlarının kırpılması ve yan yana bağlantılar küçük ekranda sorun çıkarabilir. Sayfayı yalnızca boş şablonla değil, gerçek proje adları ve açıklamalarıyla kontrol edin. Klavyeyle bağlantılara ulaşılabildiğini ve odak göstergesinin görülebildiğini de deneyin. 5. Her dil için okunabilir bir akış Türkçe, İngilizce ve Almanca metinleri aynı başlığa yığmak yerine ayrı dil bağlantıları veya açıkça ayrılmış bölümler kullanın. Her dilde hizmetin anlamını koruyun; kelimesi kelimesine çeviri yerine doğal cümleler kurun. EN — Summary A clear freelance portfolio explains the main service, presents real project screenshots with context, and provides a direct contact path. Use meaningful heading levels, descriptive links and a layout checked with real content on mobile. Keep language versions easy to navigate and avoid unsupported performance claims. DE — Zusammenfassung Ein übersichtliches Freelancer-Portfolio erklärt die Hauptleistung, zeigt echte Projektansichten mit Kontext und bietet einen direkten Kontaktweg. Sinnvolle Überschriften, beschreibende Links und eine Prüfung mit echten Inhalten auf kleinen Bildschirmen helfen bei der Struktur. Sprachversionen sollten leicht auffindbar sein. Ben Can Taşkın, İzmir merkezli freelance web tasarımcıyım. Seçili çalışmalarımı ve hizmetlerimi portföyümde bulabilirsiniz: Web tasarım · English · Deutsch . Portföyümden dört gerçek web projesi Farklı sektörlerde içerik öncelikleri de değişiyor. Aşağıdaki çalışmalarımı, bu yazıdaki proje sunumu yaklaşımına somut örnekler olarak inceleyebilirsiniz. MOA Furniture — Mobilya Ürün görselleri, projeler ve kurumsal sayfalar ön planda. Canlı site · Görselli proje sunumu . Ece Zerey Abogados — Çok dilli hukuk bürosu sitesi Ekip, çalışma alanları ve dil seçenekleri bilgiye erişimi düzenliyor. Canlı site · Görselli proje sunumu . Nazım Kurtuldu — Sanatçı sitesi Sahne görselleri, program, galeri ve video akışı sanatçının çalışmalarını bir araya getiriyor. Canlı site · Görselli proje sunumu . Rem Group — Lojistik Hizmet sayfaları, kurumsal bilgiler ve teklif talebi bağlantıları etrafında kurulan bir yapı. Canlı site . EN: These four projects demonstrate different content priorities for furniture, legal services, music and logistics. DE: Diese vier Projekte zeigen unterschiedliche inhaltliche Schwerpunkte für Möbel, Rechtsberatung, Musik und Logistik. Projelerin görselli seçkisi — Behance · Web tasarım hizmetim .",
+            "url": "https://dev.to/cantaskin/bir-web-portfoyunu-anlasilir-kilmak-icerik-hiyerarsisi-ve-proje-sunumu-2dnf",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-13T02:00:59+00:00",
+            "collected_at": "2026-09-13T02:24:37.085378+00:00"
+        },
+        {
+            "id": "e272afab6873ba809532232156d557f7920b56d29b63b3635c13dab3921a5250",
+            "title": "ICYMI: Dragon Quest Monsters: The Withered World Demo Out Now On eShop",
+            "description": "Transfer \"up to 8 monsters\" to the full game. During a sizzle reel in the Nintendo Direct earlier this week, Square Enix gave fans another look at the upcoming release Dragon Quest Monsters: The Withered World . It also included an eShop demo announcement, and in case you missed it, it can be downloaded right now! The demo starts at the beginning of the game and allows you to keep your save data & transfer \"up to\" 8 monsters across to the full game. You'll also get a bonus item set. Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/news/2026/09/icymi-dragon-quest-monsters-the-withered-world-demo-out-now-on-eshop",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-09-13T02:00:00+00:00",
+            "collected_at": "2026-09-13T02:24:51.256969+00:00"
+        },
+        {
+            "id": "1c0378bf4349f13b1c012170fb9055ef6bb51e29a6f6790b112b878373da5eb3",
+            "title": "I kept watching ARMY get scammed for BTS tickets, so I built open-source agent skills for it",
+            "description": "Every comeback, every tour announcement, the same thing happens. Presale codes drop, tickets vanish in minutes, and the resale chaos begins. And every single time, I watch fans lose money to the same tricks: a \"Weverse Shop\" site that is one letter off from the real one, a KakaoTalk seller with a screenshot of a ticket that does not exist, a QR code that scans fine and opens nothing. I am a developer, and I am ARMY. So I built the thing I kept wishing existed: sevensignal, an open-source pack of agent skills that helps fans check whether a ticket seller is actually official, and keeps up with real BTS news without touching anything sketchy. https://github.com/helenanova/sevensignal The name is a quiet nod to seven members and one signal: a signal you can actually trust. What it does ticket-safety is a deterministic checker, not a vibe. A seller counts as official only when a current BigHit or Weverse notice names it for that specific tour. Everything else gets labeled \"unverified,\" not \"safe.\" That word choice is deliberate: the worst thing a safety tool can do is hand out confidence it has not earned. It ships with 41 safety cases covering the stuff fans actually run into: Korean KakaoTalk and Instagram scams, fake Weverse Shop clones, membership resale offers, QR and wallet-pass tricks, proxy ticketing schemes, and lookalike domains with homoglyph characters that look right until you stare at them. official-news summarizes BTS news and tour updates from public sources only. It will never log into Weverse for you, and it never will. If a tool needs your Weverse account to tell you the news, it is not a news tool. The unglamorous part I am proud of The domain matcher is plain Python with zero dependencies, so it runs anywhere and you can read every line of it. There are unit tests, a schema validator, a deterministic eval runner, and CI on every push. A weekly job checks for broken links and stale data, and if the allowlist goes more than 30 days without a refresh, the repo files an issue on itself. Ticket scams move fast, so a safety list that quietly rots is worse than no list at all. Try it npx skills add helenanova/sevensignal MIT licensed, English-first with Korean summaries, and completely unofficial: this is a fan project, not affiliated with HYBE, BigHit, or Weverse. No logos, no photos, no lyrics, nothing for sale. 💜 Help wanted There are good first issues open if you want to contribute, whether that is new scam patterns you have seen in the wild, translations, or better eval cases. If you have ever watched a friend get burned by a fake seller and thought \"someone should fix this,\" this repo is the someone. I would love to hear what you think, especially from fans who have seen scam patterns I have not covered yet.",
+            "url": "https://dev.to/helenanova/i-kept-watching-army-get-scammed-for-bts-tickets-so-i-built-open-source-agent-skills-for-it-5ce2",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "git",
+                "programmation",
+                "python",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-09-13T01:52:12+00:00",
+            "collected_at": "2026-09-13T02:24:37.085835+00:00"
+        },
+        {
+            "id": "4aa1a75d78c3024e2d3d520599251032fc8ce15fbb356b9bdaea5defd53e20af",
+            "title": "I banned Claude from saying 'looks reasonable' and it started finding my blind spots",
+            "description": "I'm in the middle of launching a SaaS product, and the deliverable from one particular session wasn't code. It was an execution plan, plus the design of the quality gates. In other words: writing down \"how we're going to build this\" and \"how we're going to inspect what we built\", as documents a later session (the implementer) could pick up and run with. As part of the quality gates, I defined a few review sub-agents. One of them is alarming from the name alone. skeptic . Its job: \"go disprove the claims in the design doc.\" A normal reviewer's job is to verify. Not this one. Its definition says: Do not approve. Refute. You are forbidden from closing with \"looks reasonable overall.\" If you find zero issues, output a list of the angles where you tried to refute and failed. I have to admit, I built a genuinely unpleasant agent. The moment I saved the definition, the most natural next move floated into my head I saved the skeptic's definition file. And immediately thought, as if it were the obvious thing to do: What if I point this thing at the design doc I just finished writing? Handing my own execution plan to an agent I defined as \"its job is to disprove you.\" Bit of a masochist move, but I ran it. Result: 4 findings, all MAJOR . From a design doc I had written minutes ago. The ink wasn't even dry. What landed The one that hit hardest was this. I had written a statement that contradicted a rule I set myself. This project has a strict rule: \"block all outbound communication.\" And that rule carries an invariant: \"there is exactly one loophole, and it's here\" (I defined it myself as the only hole). Yet somewhere else in the design doc, I had casually written \"add a new loophole by reusing the existing procedure.\" Opening a second hole in the thing I had declared to have exactly one. I had walked straight through my own invariant. The other three findings were the same species of hole. A matter that can only be settled by a legal professional was written in conclusive language (\"confirmed that...\") even though it was only a preliminary finding (and another section literally said \"pending expert review\") A work phase had a completion condition of \"record it in the ledger\" — except no ledger was defined anywhere. With nowhere to record it, nobody can ever tell whether the phase is complete A phase that runs early depended on the output of a phase that runs later. The order had quietly become circular Every one of these is something I'd spot in ten seconds in someone else's PR. In a document I wrote fifteen minutes earlier, they were completely invisible. Why it worked (because \"looks reasonable\" was banned) If you just ask \"review this design\", the AI puts on its honor-student face. \"Great work. A few minor improvements...\" Those four findings never make it into the \"minor improvements.\" What worked, I think, was flipping the success condition upside down. A reviewer for whom \"finding no problems = success\", and a reviewer for whom \"failing to disprove = defeat\", read the same document and do completely different things. The latter loses unless it hunts for flaws, so it digs for holes like its life depends on it. Cutting off the \"looks reasonable overall\" escape route in the definition itself is what did it. What I learned When you run development doc-driven, you eventually hit a wall that no amount of source-of-truth hygiene fixes: the person who wrote the source of truth is the least qualified to review it. Right after writing, the \"what I meant to say\" in your head overwrites the actual characters, and you see assumptions that aren't on the page. So the reviewer you should hire isn't one that approves you. You unleash a reviewer whose job is to disprove you on the person who wrote the deliverable: yourself. And the most ironic part this time: the disproving agent was itself a deliverable of this very design. I shot my freshly written design with a freshly built inspection tool. An inspection tool shows its true value the moment you aim it at yourself. After fixing the findings, I hesitated over whether to run the same skeptic for another round. It feels like it could keep punching forever.",
+            "url": "https://dev.to/jun_uen0/i-banned-claude-from-saying-looks-reasonable-and-it-started-finding-my-blind-spots-491l",
+            "source": "DEV Community",
+            "category": "cloud",
+            "tags": [
+                "anthropic",
+                "aws",
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-13T01:47:50+00:00",
+            "collected_at": "2026-09-13T02:24:37.086374+00:00"
+        },
+        {
+            "id": "10657d381dc3f4899802dc201ab8e6d9939a9cee03d28013e0c1b711c99eea25",
+            "title": "Trump’s $5,000 Stimulus Could Send Bitcoin Higher, Pompliano Says",
+            "description": "Trump’s $5,000 payment pledge has bitcoin investor and entrepreneur Anthony Pompliano looking beyond the checks to potential gains in bitcoin, gold, and land. He predicts larger government handouts will push those assets higher, while the offer hinges on Republican election victories. Trump’s Cash Pledge Fuels Pompliano’s Bitcoin Case A $5,000 check could put cash in […]",
+            "url": "https://news.bitcoin.com/market-updates/trumps-5000-stimulus-could-send-bitcoin-higher-pompliano-says/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-13T01:45:57+00:00",
+            "collected_at": "2026-09-13T02:24:53.072991+00:00"
+        },
+        {
+            "id": "b0f66640d9dbc8a6d276c14a449e6cbb7060f7dfe35de1abc3a5aeb31380a76d",
+            "title": "Locking Exchange Rates for Multi-Currency Billing",
+            "description": "The problem When a subscription platform bills in more than one currency, the price a customer agreed to at checkout and the amount that eventually settles in your account are not the same number by default. Between the moment a customer sees \"$29/mo\" and the moment your payment processor actually converts and settles that charge, the underlying exchange rate has moved — sometimes by fractions of a percent, sometimes, during a volatile week for a given currency, by several points. Nothing about the product changed. The customer didn't get more or less value. But if you're resolving the exchange rate at charge time instead of at the time the customer agreed to a price, you've quietly turned every invoice into a small, unmanaged FX bet. Multiply that across thousands of renewals a month and it stops being a rounding error and starts showing up as unexplained variance in revenue reports. There's a second-order problem too: unpredictability erodes trust. A customer who sees their local-currency price shift slightly from one renewal to the next — with no clear reason — is more likely to open a support ticket, dispute the charge, or churn. Why \"just re-resolve the rate\" breaks down The naive implementation looks like this: store the price in a reference currency (say USD), and at charge time, call an FX API, convert, and charge the card. It's simple, and it's wrong for billing, because it silently couples your revenue to a rate you never showed the customer and never agreed to. * Two specific failure modes show up in practice: * Checkout-to-settlement drift. A customer completes checkout, sees a converted price, and authorizes payment. If the actual charge is created moments later — or, worse, days later for deferred or invoice-based flows — the rate used for authorization and the rate used for settlement can diverge. The customer was quoted one number and charged another. Renewal drift. On a monthly or annual subscription, the price shown at signup is not necessarily the price used at each renewal if the rate is re-resolved every cycle. Customers don't expect their subscription price to float with the currency markets; they expect it to be stable unless you've told them otherwise. Why it matters None of this changes what the product does. It's a small architectural decision — snapshot instead of re-resolve — with an outsized effect on two things that compound over time: revenue integrity (you stop absorbing unmanaged FX risk on every single invoice) and customer trust (prices behave the way customers already expect subscription prices to behave: stable, and only changing when you say so). Have a project in mind, or a question about this post? Reach out at john.ayo.jam@gmail.com .",
+            "url": "https://dev.to/delehq/locking-exchange-rates-for-multi-currency-billing-oce",
+            "source": "DEV Community",
+            "category": "hardware",
+            "tags": [
+                "developpement",
+                "programmation",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-09-13T01:38:22+00:00",
+            "collected_at": "2026-09-13T02:24:37.086747+00:00"
+        },
+        {
+            "id": "f244aff4f80e523bdeb7e4df9cc41121d01a8fdb4b4e2e0b6448ea5489dd77a5",
+            "title": "What Google Earth Engine Actually Is (and What It's Capable Of)",
+            "description": "Start with the basics Satellites take pictures of the Earth constantly. Some take pictures of the same spot every single day. Over decades, this adds up to an enormous amount of imagery: what a forest looked like ten years ago versus today, how a city has grown, how a lake has shrunk. The problem is that this imagery is huge. We are talking about more data than a normal computer could ever download and process. For a long time, that meant only large research institutions with serious computing power could actually work with it. Google Earth Engine exists to fix that. It is a free (for most people) tool that lets anyone analyze decades of satellite imagery using Google's own computers, without ever downloading the images to their own machine. You write a request like \"show me how this area changed between 2015 and 2025,\" and Google's servers do the heavy lifting and just hand you the answer. What kind of data is actually in it Earth Engine's library holds more than 50 petabytes of data. To put that in perspective, one petabyte is roughly one million gigabytes, so this is an almost unimaginable amount of imagery and information. Some of what is in there: Decades of Landsat satellite imagery, going back to the 1970s Recent, detailed imagery from the Sentinel satellites (a European satellite program) Daily global images from a satellite system called MODIS, used to track things like plant health across entire continents Rainfall and climate records Elevation maps Nighttime images of the Earth, which sounds unusual but is genuinely useful. Because brighter areas at night usually mean more human activity, this data gets used to estimate things like economic growth, or even to detect gas flares burning at oil facilities. How people actually use it You do not need to be a scientist to use Earth Engine, but you do need to write some code. There are two main ways people work with it: A web-based tool where you type simple instructions and immediately see the result on a map. This is where most beginners start. A version that plugs into Python, a popular programming language, for people who want to combine Earth Engine with other data tools they already use. Whichever way you use it, the basic idea is always the same. You pick an area on the map, you pick a time period, and you ask a question about how that area changed. Earth Engine can even turn the result into a simple website that other people can explore themselves, without needing to write any code at all. What people actually build with it Almost everything people use Earth Engine for comes down to one question: how has this place changed over time, and how has it changed. Real examples include: Tracking how much forest has been cut down in a region, year by year Watching a city expand outward over a decade Measuring how a lake or river has dried up during a drought Estimating how healthy crops are across a farming region, to predict harvests Assessing damage after a flood, earthquake, or wildfire, by comparing images from before and after The pattern is always the same: satellites saw it happen automatically, and Earth Engine makes it possible to actually look through everything they saw. What changed in 2026 For most of its history, Earth Engine's answer to \"how much does this cost\" was simple: free, as long as you were not using it for a commercial business. That is still mostly true, but 2026 brought a real change. Free users now have to pick a usage tier to keep the system fair for everyone, since so many people use it that Google needed to manage how much computing power each person gets. Anyone who does not choose a tier is automatically placed on the free default option, called the Community Tier. Businesses using it commercially have always paid separately, based on how much they use it. If you looked into Earth Engine a few years ago and moved on, this tier system is the one genuinely new thing worth knowing about. The simple takeaway The reason Earth Engine matters is not that satellite pictures exist. It is that, before this, actually working with decades of satellite imagery required serious money and serious computing infrastructure. Earth Engine took that barrier away. A question that used to require a research team and a supercomputer can now be answered from a laptop, in an afternoon. That is why it keeps showing up everywhere from climate research, to journalism, to businesses that need to understand how the physical world is changing. Sources: Google for Developers, Earth Engine guides , Google Earth Engine, Commercial access , Google Earth Engine, Noncommercial access",
+            "url": "https://dev.to/delehq/what-google-earth-engine-actually-is-and-what-its-capable-of-5ni",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "python",
+                "web"
+            ],
+            "published_at": "2026-09-13T01:38:21+00:00",
+            "collected_at": "2026-09-13T02:24:37.087347+00:00"
+        },
+        {
+            "id": "2eaef3b168268da0afbaadfee98754dfe75685a0687e7cfe8756b0c1a6fa8504",
+            "title": "Text correction with Harper",
+            "description": "Luiz recently received a recommendation about Harper , a new grammar checking tool developed by Automattic using Rust. The project's repository describes Harper as meeting the developer's specific requirements: it is the grammar checker that meets your needs, analyzing documents in milliseconds with minimal memory usage. Key features Fast performance: millisecond-level analysis Low memory usage: less than 1/50 of LanguageTool's usage Complete privacy: runs locally, without sending data to servers WebAssembly compatibility: can run on multiple platforms Installation Installation is simple through the extension stores for: Web browsers Visual Studio Code Obsidian For other platforms, comprehensive documentation is available at writewithharper.com/docs/about . Useful links Official Site - Harper GitHub Repository Official Documentation",
+            "url": "https://dev.to/lcmartinsfilho/text-correction-with-harper-5hh4",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "git",
+                "programmation",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-09-13T01:25:46+00:00",
+            "collected_at": "2026-09-13T02:24:37.087491+00:00"
+        },
+        {
+            "id": "e0f2d263dc911da7f18dbc9b0bca309f019509d332183023284b6fb489099fc8",
+            "title": "Syncing your Obsidian",
+            "description": "There are several ways to sync Obsidian, but I decided to document the method I chose, both so I don't forget the details in the future and to help anyone else looking for their own sync solution. For this project, we'll use the Obsidian LiveSync plugin: vrtmrz/obsidian-livesync Creating a VPS on MagaluCloud For the server, I'll create a VPS on MagaluCloud . I'll do the whole process manually, through the console, but it's possible to do everything using the mgc (MagaluCloud cli ). Open the console . To create a new virtual machine, click on Virtual Machines : On the Virtual Machines page, click Create Instance : Select the desired Availability Zone (in this example, I chose br-se1-a) and also the Operating System. Here I'll go with Debian 13 LTS: For the server, we can go with the cheapest option! I chose the instance with 1 vCPU and 1 GB of RAM (BV1-1-20). The only detail is storage; for safety, I chose a 20 GB local disk. Don't forget to leave the option checked to assign a public IPv4 address to the instance. To access the machine, select an existing SSH key (if you already have one). Otherwise, add a new public key. If you don't have one yet, the documentation can help. Keep the generated keys safe, because losing them will prevent access to the machine! Finally, give the instance a descriptive name and click Create instance. Configuring the server Access the newly created server with ssh: ssh debian@your-ip-here.com For this project, we'll need Docker installed. The installation steps were taken from the project's documentation. Run each command below individually to add Docker's repository to your server: # Add Docker's official GPG key: sudo apt update sudo apt install ca-certificates curl sudo install -m 0755 -d /etc/apt/keyrings sudo curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc sudo chmod a+r /etc/apt/keyrings/docker.asc # Add the repository to Apt sources: sudo tee /etc/apt/sources.list.d/docker.sources << EOF Types: deb URIs: https://download.docker.com/linux/debian Suites: $( . /etc/os-release && echo \" $VERSION_CODENAME \" ) Components: stable Signed-By: /etc/apt/keyrings/docker.asc EOF sudo apt update After adding Docker's official repository with the commands above, install the necessary tools: sudo apt install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin With Docker installed, create a directory to separate your data and configuration: mkdir -p ~/obsidian-livesync/ { couchdb-data,config } cd ~/obsidian-livesync Create the file ~/obsidian-livesync/config/local.ini and add the following configuration: [couchdb] single_node = true max_document_size = 50000000 ; 50MB (Adjust based on your note size needs) [chttpd] require_valid_user = true max_http_request_size = 4294967296 ; 4GB (Necessary for large sync batches) enable_cors = true [chttpd_auth] require_valid_user = true authentication_redirect = /_utils/session.html [httpd] WWW-Authenticate = Basic realm=\"administrator\" enable_cors = true [cors] origins = app://obsidian.md,capacitor://localhost,http://localhost credentials = true headers = accept, authorization, content-type, origin, referer methods = GET, PUT, POST, HEAD, DELETE max_age = 3600 To install CouchDB, we'll use a docker compose: version : ' 3.8' services : couchdb : image : couchdb:latest container_name : livesync-couchdb restart : always environment : - COUCHDB_USER=admin - COUCHDB_PASSWORD=YOUR_STRONG_PASSWORD_HERE volumes : - ./couchdb-data:/opt/couchdb/data - ./config/local.ini:/opt/couchdb/etc/local.d/local.ini ports : - \" 127.0.0.1:5984:5984\" # Expose only to localhost, Caddy handles external traffic caddy : image : caddy:latest container_name : livesync-caddy restart : always ports : - \" 80:80\" - \" 443:443\" volumes : - ./Caddyfile:/etc/caddy/Caddyfile - caddy_data:/data - caddy_config:/config depends_on : - couchdb volumes : caddy_data : caddy_config : Don't forget to change your database password in the file above. Choose a strong password! To handle the reverse proxy and digital certificate, we'll use Caddy. Create the file ~/obsidian-livesync/Caddyfile and add the following configuration, adjusting the domain: obsidian.yourdomain.com { reverse_proxy couchdb : 5984 } Bring the stack up with: docker compose up -d Now let's create a database called obsidian. You're free to use any name here: curl -X PUT -u admin http://127.0.0.1:5984/obsidian Enter the username and password defined in the file ~/obsidian-livesync/config/local.ini . Configuring the client Install the Self-hosted LiveSync Plugin after enabling Community Plugins. Setup Wizard: Open the Plugin Settings Select Remote Database Configuration Configure the following fields: URI: https://obsidian.yourdomain.com Username: admin Password: YOUR_STRONG_PASSWORD_HERE Database Name: obsidian End-to-End Encryption: Enabled (Recommended! A new password will be used for encryption!) Test: Click \"Test Connection\". If successful, apply the settings.",
+            "url": "https://dev.to/lcmartinsfilho/syncing-your-obsidian-2o2",
+            "source": "DEV Community",
+            "category": "hardware",
+            "tags": [
+                "developpement",
+                "docker",
+                "git",
+                "linux",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-13T01:25:15+00:00",
+            "collected_at": "2026-09-13T02:24:37.088066+00:00"
+        },
+        {
+            "id": "a34c7a2dd0cef1da4484064f3244a5a86b055a3d07a480d044145c4f824e17a5",
+            "title": "How to Bulk Download Images: From URL Lists to a ZIP File",
+            "description": "Downloading one image is easy. Downloading 80 product photos from a spreadsheet gets tedious, especially when you also need consistent filenames and a way to tell which downloads failed. The most useful starting point is a list of direct image URLs. Once you have that list, you can download the files together with a browser tool or a small command-line workflow. This tutorial covers both approaches, plus a JavaScript snippet for collecting image links when your starting point is a webpage. The examples are intended for assets you own or have permission to download and use. 1. Work out what kind of links you have Before picking a downloader, open one of your links. Does it show an image by itself, or does it open a page containing an image? These are different inputs: Product page: https://shop.example/products/blue-chair Direct image URL: https://cdn.example/products/blue-chair.jpg The domains above are placeholders. Replace them with your own links. A URL-list downloader needs the second kind. Passing it a product page usually gives it HTML rather than the image you wanted. Also, a direct image URL does not have to end in .jpg or .png . A CDN might serve an image from a path such as /media/abc123?width=1200 . What matters is the response, not the spelling of the URL. What you have First step Next step A spreadsheet column of image URLs Copy the actual URL values Download the list A webpage with several images Collect the image URLs Review and download the list A media library you administer Look for an export or API Keep asset IDs alongside URLs A recurring image export Save a URL manifest Automate downloading and record failures For a CMS migration, check the media export first. It may already contain original asset URLs and filenames, saving you the work of collecting resized images from rendered pages. 2. Prepare a small, clean URL list Use one URL per line. This is easy to inspect, copy from a spreadsheet, and reuse in a script. Here is a three-image practice list using Lorem Picsum's documented image-ID and size format : https://picsum.photos/id/10/1200/800.jpg https://picsum.photos/id/20/1200/800.jpg https://picsum.photos/id/30/1200/800.jpg These are sample source images, not screenshots of a completed download. Each URL requests a 1200-by-800 image, which makes it easier to check whether you exported the expected dimensions. Before processing your real list: Remove the column heading and empty rows. Check that copied cells contain URLs, rather than hyperlink labels such as “View image.” Remove exact duplicate URLs if you only need one copy of each. Preserve query parameters. They may control image dimensions or carry a required signature. Open a few links to check that they still work. Keep the original spreadsheet if its rows connect images to product IDs. A folder full of sequential filenames is less useful when you cannot tell which image belongs to which product. I would start a new workflow with three representative files: a normal photo, a transparent image if the project uses one, and one of the larger assets. Check that small batch before scaling up. 3. Download the list as a ZIP without writing code Veyvia's bulk image downloader accepts direct image URLs and packages successfully retrieved files into a ZIP. It also offers filename customization, optional conversion to PNG, WebP, or JPG, and proportional width limiting. The workflow is: Paste your URLs, one per line. Click Load & Download Images . Review the previews and any failed entries. Choose your naming and export settings. Download the ZIP and inspect its contents. For the first batch, keep the original format and avoid resizing. That gives you a useful baseline before introducing conversions. The tool takes an existing list; it does not discover every image on a website. Failed items are excluded from the ZIP, so an archive downloading successfully does not mean every input succeeded. The page also describes a server-side proxy for retrieving images. That means this is not an entirely local workflow; use your own tooling for private asset URLs you cannot share with another service. 4. Collect image URLs from a webpage with JavaScript If you have a webpage instead of a spreadsheet, you can collect URLs from the <img> elements currently in its document. Open the page in Chrome, scroll through the content you need, and open Developer Tools → Console . Read the snippet before running it: it collects image URLs and copies the list to your clipboard. It does not download files or send the list anywhere. (() => { const urls = [... new Set ( [... document . images ] . map (( img ) => img . currentSrc || img . src ) . filter (( url ) => /^https ? : \\/\\/ /i . test ( url )) )]; console . log ( `Found ${ urls . length } unique image URLs` ); copy ( urls . join ( ' \\n ' )); })(); Paste the clipboard contents into a text editor, inspect the list, and then use it as the input for your downloader. currentSrc returns the image URL selected by the browser, including its choice from a responsive image's srcset . It does not guarantee the largest available image or a successful load. See MDN's currentSrc reference . The copy() helper belongs to Chrome DevTools' Console Utilities API . It is not a standard JavaScript function you can paste into application code. Understand what the snippet misses This is a starting list, not a complete site export. It does not recursively inspect iframes or shadow roots, collect CSS background images, or discover images on other pages. It also skips blob: and data: URLs because those are not ordinary HTTP image links. Scrolling matters because pages can defer image loading or add elements as you move through the content. MDN's lazy-loading guide explains the browser behavior. On virtualized galleries, earlier items may disappear from the document, so scrolling once and collecting at the end may still miss them. You may also collect logos, avatars, tracking images, and thumbnails. Review the list before downloading. If you control the page, a narrower selector such as document.querySelectorAll('.product-gallery img') can reduce that noise. For original-resolution assets, prefer your CMS export or the source site's explicit original-download link. A responsive page is optimized for display, which may be much smaller than the source image. 5. Use curl when you want a repeatable local workflow For a few direct URLs, a terminal can be enough. This example assumes Bash and an installed curl command, such as on macOS, Linux, or WSL. Create a text file named urls.txt containing your URLs. Then save the following as download-images.sh in the same directory: #!/usr/bin/env bash set -u # A fresh directory keeps previous batches separate. batch_dir = $( mktemp -d ./image-batch.XXXXXX ) || exit 1 index = 0 while IFS = read -r url || [[ -n \" $url \" ]] ; do url = ${ url % $' \\r ' } [[ -z \" $url \" ]] && continue case \" $url \" in http:// * | https:// * ) ;; * ) printf 'Skipping non-HTTP URL: %s\\n' \" $url \" > &2 ; continue ;; esac index = $(( index + 1 )) printf -v filename 'image-%04d' \" $index \" target = \" $batch_dir / $filename \" if curl --fail --location --globoff \\ --proto '=http,https' --proto-redir '=http,https' \\ --connect-timeout 10 --max-time 60 \\ --silent --show-error \\ --output \" $target .part\" --url \" $url \" ; then mv \" $target .part\" \" $target \" || exit 1 printf '%s\\t%s\\n' \" $filename \" \" $url \" >> \" $batch_dir /manifest.tsv\" else printf '%s\\n' \" $url \" >> \" $batch_dir /failed.txt\" fi done < urls.txt printf 'Review downloaded files in %s\\n' \" $batch_dir \" Run it from that directory: bash download-images.sh --location follows redirects, --fail treats HTTP error responses as failures, and --globoff prevents URL characters such as brackets from being interpreted as curl URL patterns. The timeout options bound connection and transfer waits. Consult the official curl manual for their details. This example deliberately uses sequential, extensionless filenames. Two URLs ending in photo.jpg therefore cannot overwrite each other within the batch. It also avoids pretending that every response is a JPEG. The manifest maps saved filenames back to their source URLs. Failures go into failed.txt ; an interrupted transfer may leave a .part file for inspection. Review those separately from completed files. Check the response before treating it as an image An HTTP success response can still contain a login page or another HTML document. This small script downloads response bytes; it does not decode images or validate their format. On macOS or Linux, inspect a downloaded file with file , substituting your actual output directory: file ./image-batch.ABC123/image-0001 Then open representative files in an image viewer. Add extensions only after identifying their formats. For a production migration, use an image decoder to validate every file and record dimensions before importing it. The script processes URLs sequentially and leaves retry decisions to you. That is a manageable starting point for a small batch. If you later add concurrency, keep it bounded and retain a failure log so you can rerun just the missing files. 6. Choose filenames and image settings for the destination Downloading and preparing images are separate decisions. Decide what the receiving system needs before converting the whole batch. Destination Useful starting choice Asset archive Preserve downloaded source files and the URL manifest Product import Use stable product IDs in filenames or a mapping file Web page Create delivery copies at the required dimensions Design handoff Use descriptive filenames and retain source versions For example, chair-042-front.jpg tells a teammate more than image-0037.jpg . If you need numbered names, use zero padding so files sort predictably: image-0001 , image-0002 , and so on. Keep an untouched batch before experimenting with export settings. Compare one converted image with its source at the size where it will actually appear. Check text, edges, transparent areas, and any animation the project needs. A useful handoff includes both the files and a small record of what happened: source URL, output filename, success or failure, and any resizing or conversion performed. That record saves time when someone later asks where an asset came from. 7. Troubleshoot incomplete batches Start with one failed URL. Repeating the whole batch makes it harder to see whether you have an input problem, an access problem, or a temporary network failure. Symptom What to check A saved file opens as a webpage Verify that the URL returns image bytes An image is smaller than expected Check whether you collected a thumbnail or resized CDN variant Multiple inputs produce fewer distinct files Review duplicate handling, naming collisions, and failures A URL used to work but now fails Obtain a fresh link and check whether it expired Downloads become unreliable in larger batches Reduce batch size and inspect the response errors A file works in your browser but fails elsewhere Check whether access depends on your signed-in session Why can an image display but fail in JavaScript? Displaying a cross-origin image and reading its bytes with fetch() are different operations. Browser JavaScript needs the appropriate CORS permission to read a cross-origin response. An image appearing on a page is not proof that a download script can access its bytes. See MDN's CORS guide . Changing a fetch request to mode: 'no-cors' does not give you readable image bytes. A server-side downloader can avoid the browser's CORS restriction, but it still needs the source server to permit the request. Verify the result, not just the progress bar Compare the number of unique URLs you intended to download with the number of completed image files. Exclude manifests, failure logs, and partial transfers from the count. Then check a few images from the beginning, middle, and end of the batch. Confirm dimensions and filenames, and verify that the output opens in its destination application. A successful archive export is only one part of a successful asset transfer. Frequently asked questions Can I download images directly from Excel or Google Sheets? If a column contains direct image URLs, copy those values into a text list. Embedded pictures and hyperlink display labels need a different export step; they are not necessarily usable URLs. Can I download every image from a website with one URL? That requires discovery across pages as well as downloading. The console snippet only reads the current document. For a site you administer, start with the media library or an export API. How do I avoid downloading the same image twice? Remove exact duplicate URLs first. Different URLs can still return identical images, so identifying duplicate content requires comparing the downloaded files, for example by their hashes. Does putting images in a ZIP reduce their quality? ZIP packaging does not change the image bytes. Resizing or re-encoding before packaging can change the image, so keep those settings separate from the decision to create an archive. Why are some files missing from my batch? Check the failure list, duplicate rules, and output filenames. A valid ZIP can contain only the successful portion of a job. Record the expected count before starting. Which method should I start with? For an occasional URL list, start with the browser workflow above and inspect a small sample. For repeated exports, use a local script with a manifest and failure tracking. Either way, getting the right source URLs makes the rest of the job much easier.",
+            "url": "https://dev.to/jadeydi/how-to-bulk-download-images-from-url-lists-to-a-zip-file-3fph",
+            "source": "DEV Community",
+            "category": "linux",
+            "tags": [
+                "developpement",
+                "java",
+                "javascript",
+                "linux",
+                "macos",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-13T01:23:16+00:00",
+            "collected_at": "2026-09-13T02:24:37.089842+00:00"
+        },
+        {
+            "id": "1f6e75f3866a4a885f759c323fe65e5b218bfbf6dff98476e139913bb79877fb",
+            "title": "Why are AI agents lying, cheating and coordinating?",
+            "description": "Comments",
+            "url": "https://yoshuabengio.org/en/publication/why-are-ai-agents-lying-cheating-and-coordinating",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-13T01:22:31+00:00",
+            "collected_at": "2026-09-13T02:24:36.849537+00:00"
+        },
+        {
+            "id": "4e355f386c7cd49b0bc31cb5ba27298e6a70adb0a97124d3a4f8e87971878210",
+            "title": "a better way of blocking macOS updates",
+            "description": "Comments",
+            "url": "https://zoey-on-github.github.io/blog/updates.html",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "macos",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-09-13T01:12:07+00:00",
+            "collected_at": "2026-09-13T02:24:36.966289+00:00"
+        },
+        {
+            "id": "a3cd5014139d80abe2c8d0b5e724c75278e8ea65ccc027fa860cd5cfa58346f5",
+            "title": "Align AI and Mathematics–To Something Else",
+            "description": "Comments",
+            "url": "https://liorpachter.wordpress.com/2026/09/12/align-ai-and-mathematics-to-something-else/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-13T00:47:48+00:00",
+            "collected_at": "2026-09-13T02:24:36.849362+00:00"
+        },
+        {
+            "id": "3e95459424da18755b9ece89b8f49549dda99927a0f65b21dab0c534b4ec689c",
+            "title": "Grayscale Says US Crypto Rules Can Advance Without CLARITY Act",
+            "description": "U.S. crypto regulation is becoming clearer even as the CLARITY Act faces an uncertain path through Congress, according to Grayscale. Stablecoin legislation and agency initiatives are advancing, though several changes remain proposals rather than final rules. Grayscale Sees Regulatory Progress Beyond CLARITY Crypto businesses could gain clearer fundraising and trading rules even if Congress fails […]",
+            "url": "https://news.bitcoin.com/regulation-and-legal/grayscale-says-us-crypto-rules-can-advance-without-clarity-act/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-13T00:45:18+00:00",
+            "collected_at": "2026-09-13T02:24:53.073113+00:00"
+        },
+        {
+            "id": "1f2db93d2867a2556d32eef0d2c6a91839d773a2110473b270c73d1038468d0e",
+            "title": "Build a high-end AMD gaming PC for less — Ryzen 7 9800X3D bundle includes an X870E motherboard, 32GB DDR5, AIO cooler and a game for $1,109.99",
+            "description": "The bundle pairs one of the best gaming CPUs available with a premium X870E motherboard and 32GB of DDR5-6000 memory, while also throwing in a 240mm AIO cooler and a free copy of Onimusha: Way of the Sword.",
+            "url": "https://www.tomshardware.com/pc-components/build-a-high-end-amd-gaming-pc-for-less-ryzen-7-9800x3d-bundle-includes-an-x870e-motherboard-32gb-ddr5-aio-cooler-and-a-game-for-usd1-109-99",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "amd",
+                "cpu",
+                "gpu",
+                "hardware",
+                "pc"
+            ],
+            "published_at": "2026-09-13T00:42:50+00:00",
+            "collected_at": "2026-09-13T02:24:39.230346+00:00"
+        },
+        {
+            "id": "04c613c6bac80c12f93d97b0faa923170858ff33e690a3f29b5b66a6127dc12e",
+            "title": "Everyone should slow down AI development except for me",
+            "description": "Comments",
+            "url": "https://xeiaso.net/notes/2026/everyone-slowdown-but-me/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-13T00:30:44+00:00",
+            "collected_at": "2026-09-13T02:24:36.849626+00:00"
+        },
+        {
+            "id": "59211f55d5db60d1058592abeda3a64f76276c9443a649767473130e436d2864",
+            "title": "Recurrent Looped Transformer",
+            "description": "Comments",
+            "url": "https://yifanzhang-pro.github.io/recurrent-looped-tranformer/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-13T00:05:22+00:00",
+            "collected_at": "2026-09-13T02:24:36.849493+00:00"
+        },
+        {
+            "id": "3e2a11afa0b98c2479489540c1b99650b4f88d7adfa21e049ae25acfc07100e5",
+            "title": "AgentsDock: An IDE designed for agentic AI research",
+            "description": "Comments",
+            "url": "https://agentsdock.net/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-12T23:45:58+00:00",
+            "collected_at": "2026-09-13T02:24:36.849797+00:00"
+        },
+        {
+            "id": "934046279e976f75bccf2a80b6625dabc50926e1142eb79f65ab14953e3d7b11",
+            "title": "No Atlantic hurricanes by Sept. 12 breaks a 60-year record",
+            "description": "Comments",
+            "url": "https://www.accuweather.com/en/hurricane/no-atlantic-hurricanes-by-sept-12-breaks-a-60-year-record/1932278",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-12T23:44:44+00:00",
+            "collected_at": "2026-09-13T02:24:36.849712+00:00"
+        },
+        {
+            "id": "3b4b4b4fe11409e53e01cd78319b1ff8761f44b3082d75f157937a8314a9051c",
+            "title": "Ripple Breaks Down Stablecoin Rules as Institutions Evaluate RLUSD",
+            "description": "Stablecoin licenses carry different reserve and oversight requirements, Ripple emphasized as it outlined RLUSD’s regulatory structure. The company also distinguished its conditional federal bank approval from a completed charter and clarified the scope of derivatives collateral rules. Ripple Explains the Rules Behind RLUSD Protections for stablecoin holders depend on the issuer’s actual license, reserve requirements, […]",
+            "url": "https://news.bitcoin.com/featured/ripple-breaks-down-stablecoin-rules-as-institutions-evaluate-rlusd/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-12T23:40:44+00:00",
+            "collected_at": "2026-09-13T02:24:53.073235+00:00"
+        },
+        {
+            "id": "402875826886258c30f5cc87f6b5d2b3cda9788fa589ff59f26cad92eeb06dfd",
+            "title": "Automattic confirms Mullenweg has returned as CEO after attempted ouster by board",
+            "description": "Automattic says Mullenweg is back as \"chairman and CEO of Automattic, with full support of the board.\"",
+            "url": "https://techcrunch.com/2026/09/12/automattic-confirms-mullenweg-has-returned-as-ceo-after-attempted-ouster-by-board/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-09-12T23:25:38+00:00",
+            "collected_at": "2026-09-13T02:24:34.996487+00:00"
+        },
+        {
+            "id": "e3331777daa3c083578b08924c80880a646d48089de7db89a172c7510b5425c9",
+            "title": "Zcash Mining Highly Profitable: Grayscale Says Rewards Beat Bitcoin 2x",
+            "description": "Zcash mining rewards are roughly twice Bitcoin’s per machine and four times higher per unit of electricity, Grayscale estimates. Strong token prices are encouraging more mining activity, with the firm linking that expansion to stronger network security. Grayscale Details Zcash’s Mining Advantage Zcash miners can earn roughly twice the daily rewards per machine compared with […]",
+            "url": "https://news.bitcoin.com/mining/zcash-mining-highly-profitable-grayscale-says-rewards-beat-bitcoin-2x/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-12T22:36:57+00:00",
+            "collected_at": "2026-09-13T02:24:53.073347+00:00"
+        },
+        {
+            "id": "5d4bad118e8981e8a1488a68bdf845e6c801914d50bc9bcbf2294d5d32cad62d",
+            "title": "Don't be the out of touch Kung Fu master – John Carmack",
+            "description": "Comments",
+            "url": "https://twitter.com/ID_AA_Carmack/status/2098443262214230095",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-12T21:51:43+00:00",
+            "collected_at": "2026-09-13T02:24:36.849924+00:00"
+        },
+        {
+            "id": "cde60e379a3ad691a07783500ab0210b0373aef200908227cddf594cc7407bfb",
+            "title": "P(doom)",
+            "description": "Comments",
+            "url": "https://lucumr.pocoo.org/2026/9/12/pdoom/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-12T21:35:38+00:00",
+            "collected_at": "2026-09-13T02:24:36.850458+00:00"
+        },
+        {
+            "id": "33dd05aa45f5671e5aadd12d61cf4dd832c8d2cd03037a44be41b2a430878633",
+            "title": "An IVF Company Bought 146,432 XRP Last Year, Then Sold It All",
+            "description": "Newgenivf Group’s latest Nasdaq registration statement shows the fertility provider bought 146,432 XRP during 2025, disposed of all of it before Dec. 31, and cleared $10,849 on the round trip. What The SEC Filings Actually Say Buried in an amended registration statement from a fertility clinic operator with units in Cambodia and Kyrgyzstan is one […]",
+            "url": "https://news.bitcoin.com/crypto-news/newgenivf-xrp-146432-sold-solana-loss/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-12T21:31:39+00:00",
+            "collected_at": "2026-09-13T02:24:53.073449+00:00"
+        },
+        {
+            "id": "c4d302839498d6f464e853af719154c63e83cf15c09c628576b7a498996bb087",
+            "title": "OpenAI IPO won't happen this year, says Sam Altman",
+            "description": "",
+            "url": "https://www.coindesk.com/markets/2026/09/12/openai-ipo-won-t-happen-this-year-says-sam-altman",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto",
+                "openai"
+            ],
+            "published_at": "2026-09-12T21:09:31+00:00",
+            "collected_at": "2026-09-13T02:24:52.809882+00:00"
+        },
+        {
+            "id": "56f5641b1a24456b5f26338d65060f1b323f78033dfd53be7d930a29758a00f5",
+            "title": "Bitcoin Suisse plans to cut up to half its Swiss jobs as it shifts work abroad",
+            "description": "",
+            "url": "https://www.coindesk.com/business/2026/09/12/bitcoin-suisse-plans-to-cut-up-to-half-its-swiss-jobs-as-it-shifts-work-abroad",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-12T21:09:06+00:00",
+            "collected_at": "2026-09-13T02:24:52.809938+00:00"
+        },
+        {
+            "id": "aafc36eb776613323b67e7afcdde544bd1c15a5002b926e202ddfdf125b9b053",
+            "title": "Optimizing a single Rust Clippy lint by 3133X",
+            "description": "Comments",
+            "url": "https://blog.goose.love/posts/making-a-clippy-lint-faster-by-3133x/",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation",
+                "rust"
+            ],
+            "published_at": "2026-09-12T20:29:09+00:00",
+            "collected_at": "2026-09-13T02:24:36.966072+00:00"
+        },
+        {
+            "id": "9c531c254f4ca75a7e502c3329d5406070effd136db2f724f4d8e7f592dcf1db",
+            "title": "Real-SWE: Benchmarking AI models on private, real-world, enterprise codebases",
+            "description": "Comments",
+            "url": "https://withspecific.com/benchmarks/real-swe",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-12T20:25:48+00:00",
+            "collected_at": "2026-09-13T02:24:36.849303+00:00"
+        },
+        {
+            "id": "f7074888062d42bf21f5a67833619815ad9be8d61c2b6486233106ee32571728",
+            "title": "Polymarket Gives Bitcoin Price a 64% Chance of Reaching $80K This Month",
+            "description": "Traders on Polymarket put a September dip to $75,000 at 68.5% and a touch of $80,000 at 64%, pricing the downside as the likelier of the two with 18 days left on the clock. What the $80,000 Market Actually Asks Polymarket’s “Will Bitcoin reach $80,000 in September?” market resolves yes if even a single one-minute […]",
+            "url": "https://news.bitcoin.com/crypto-news/polymarket-bitcoin-price-odds-80k-75k-september/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-12T20:21:25+00:00",
+            "collected_at": "2026-09-13T02:24:53.073550+00:00"
+        },
+        {
+            "id": "adaebe0c9002dee8b9eb64f36718385a71d8bde35d6a37f08291150727c50469",
+            "title": "OpenAI’s Sam Altman says it would be ‘ill-advised’ to go public in 2026",
+            "description": "While OpenAI has filed confidentially for an IPO, the company will not be going public this year, according to CEO Sam Altman.",
+            "url": "https://techcrunch.com/2026/09/12/openais-sam-altman-says-it-would-be-ill-advised-to-go-public-in-2026/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "openai",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-09-12T20:19:16+00:00",
+            "collected_at": "2026-09-13T02:24:34.996570+00:00"
         },
         {
             "id": "68468b55d82018f3b6fbd0d6eb3f6db788b0ce9f1186eb01785670511c1c7b14",
@@ -143,6 +693,21 @@
             ],
             "published_at": "2026-09-12T19:38:30+00:00",
             "collected_at": "2026-09-12T19:57:34.070038+00:00"
+        },
+        {
+            "id": "1fb14f081c2f19ed06651d05529a2cb79d2eef0217f35c007a8260856cfe6fea",
+            "title": "LG Says We're Fake News [video]",
+            "description": "Comments",
+            "url": "https://www.youtube.com/watch?v=ToP9xfLDSME",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-12T19:35:36+00:00",
+            "collected_at": "2026-09-13T02:24:36.850252+00:00"
         },
         {
             "id": "b7b4c6f0444c06e529c6f6ef819cdbccbe69a36f5715b369c89908385d06550c",
@@ -7756,6 +8321,22 @@
             "collected_at": "2026-09-11T02:19:32.232205+00:00"
         },
         {
+            "id": "70cb7a1738a4e892bb59a2a574b2fa783993f1118da3b244592a262077ce9a6d",
+            "title": "From Git to Fossil",
+            "description": "Comments",
+            "url": "https://lucio.albenga.es/web-en/posts/2025/from-git-to-fossil.html",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "git",
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-10T20:39:03+00:00",
+            "collected_at": "2026-09-13T02:24:36.850083+00:00"
+        },
+        {
             "id": "432786c4f1ef859914ae67cc2f36062b41445d53f944aac6457bd6f02d0c9b3b",
             "title": "Voice Callers Exploit BYOD to Reach Microsoft 365, Corporate Data",
             "description": "Threat actors are leveraging Microsoft's Graph API to identify lucrative targets, then passing their access to extortion groups like ShinyHunters.",
@@ -10181,6 +10762,21 @@
             ],
             "published_at": "2026-09-10T14:47:00+00:00",
             "collected_at": "2026-09-10T20:17:17.603347+00:00"
+        },
+        {
+            "id": "364fa8e36d29c6dcae6ac42bc0dfc79582b9ff3244bc442d0a537ea7d0da4934",
+            "title": "Show HN: See Sounds on Your Webcam",
+            "description": "Comments",
+            "url": "https://soundmap.darebuild.com/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-10T14:43:49+00:00",
+            "collected_at": "2026-09-13T02:24:36.850533+00:00"
         },
         {
             "id": "ec21f606522832baf56df399e025d3a32b9fe827c8ed7ad8288f9385dcfa2ebd",
@@ -13341,6 +13937,21 @@
             "collected_at": "2026-09-10T02:23:55.737190+00:00"
         },
         {
+            "id": "9049f429dc24fcc443bf62d0804c1314fd0db02fb8a952d56bccac37f89fefb7",
+            "title": "Getting 50 GB/S Back from the Apple Neural Engine",
+            "description": "Comments",
+            "url": "https://eiln.github.io/posts/ane-dma.html",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-10T00:16:10+00:00",
+            "collected_at": "2026-09-13T02:24:36.849581+00:00"
+        },
+        {
             "id": "42af236c5e69740d41c2fb184a97710f7165fd39902ecf70ef247d4f91b5da03",
             "title": "Illinois Crypto Tax Faces New Court Bid Before It Hits Residents",
             "description": "Illinois’ 0.2% digital asset tax could cost crypto firms millions and expose them to felony charges for compliance errors, two trade groups warn. They want enforcement blocked before the Jan. 1, 2027 launch produces irreversible costs and customer losses. Crypto Groups Race to Stop Tax Before Illinois Users Pay Illinois crypto users could soon owe […]",
@@ -15437,6 +16048,21 @@
             ],
             "published_at": "2026-09-09T16:59:40+00:00",
             "collected_at": "2026-09-10T02:23:53.825498+00:00"
+        },
+        {
+            "id": "0a36b0187bb929ffac26dff773848a3a4433da987c29f996f5862d6f44485392",
+            "title": "Vintage Scientific Papers with LaTeX",
+            "description": "Comments",
+            "url": "https://github.com/Foadsf/vintage-latex",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-09T16:58:27+00:00",
+            "collected_at": "2026-09-13T02:24:36.849753+00:00"
         },
         {
             "id": "6c9eabae693198ccfb97627177fb1afaf5e4ff28cba97259632da38b7f83b87d",
@@ -20012,6 +20638,21 @@
             ],
             "published_at": "2026-09-09T01:58:31+00:00",
             "collected_at": "2026-09-09T02:24:29.049159+00:00"
+        },
+        {
+            "id": "cb582fe8866219d87e820615fc31e24a7fae8ae718ca2f23d9c052f4f40d2cc3",
+            "title": "Apple iPod Engraver (2019)",
+            "description": "Comments",
+            "url": "https://dunstanorchard.com/apple-ipod-engraver/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-09T01:57:37+00:00",
+            "collected_at": "2026-09-13T02:24:36.849450+00:00"
         },
         {
             "id": "b79780ff2a9cc9e8fa7cb9b32320760e07f22d8f3644f4ca0392927b824bc968",
@@ -26416,6 +27057,21 @@
             ],
             "published_at": "2026-09-08T03:27:24+00:00",
             "collected_at": "2026-09-08T10:22:21.018202+00:00"
+        },
+        {
+            "id": "5791352754f0d97e7f50d2413452cbfb24805e6ba9e3b2c68e7c4aba0e0b1d29",
+            "title": "Tree Calculus",
+            "description": "Comments",
+            "url": "https://olydis.medium.com/a-visual-introduction-to-tree-calculus-2f4a34ceffc2",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-08T03:16:02+00:00",
+            "collected_at": "2026-09-13T02:24:36.850121+00:00"
         },
         {
             "id": "ef7bb06378ffafad7e18ddffac181ae762281762aa8a2cc3750a055cd76809a7",
@@ -105657,6 +106313,53 @@
             ],
             "published_at": null,
             "collected_at": "2026-09-12T19:57:31.452605+00:00"
+        },
+        {
+            "id": "593440c97619d82bd9db9e85df0ee52139043818ed692146ddb4044ee13c99c2",
+            "title": "OpenAI’s rogue AI tried to hack another company in May",
+            "description": "In May, hundreds of malicious and spam packages were uploaded to RubyGems, causing a serious disruption for the host. Now independent researchers have said that a swarm of OpenAI agents were responsible for the attack. Not only that, but the AI tried to steal users' API keys. At the time, RubyGems described it as a […]",
+            "url": "https://www.theverge.com/ai-artificial-intelligence/994383/openais-rogue-ai-rubygems-hack",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "openai",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-09-13T02:24:35.046176+00:00"
+        },
+        {
+            "id": "b10d7fa5e19ae5db423dae2c8e3972cb2a2fce9d46f2fc06a68aea9fdaec211a",
+            "title": "Sam Altman says OpenAI going public in 2026 would be ‘ill-advised’",
+            "description": "OpenAI CEO Sam Altman confirmed that there would be no OpenAI IPO in 2026 during an interview with Fortune. Over the course of 45 minutes, Altman discussed a variety of subjects including the Hugging Face hacking incident, recursive self-improvement, and the possibility of building an AI that was beyond human control. On the latter, he […]",
+            "url": "https://www.theverge.com/ai-artificial-intelligence/994384/sam-altman-no-openai-ipo-ill-advised",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "openai",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-09-13T02:24:35.046279+00:00"
+        },
+        {
+            "id": "7588b9fa1ae76cfca671f77741f0262c7211448c97bdc11e9ac1a85a2e1c08e0",
+            "title": "StarCraft returns in 2030 as an open-world shooter",
+            "description": "Blizzard originally tried to bring the StarCraft universe to the world of 3D shooters way back in 2002 with StarCraft: Ghost. It sat in development hell for years until Blizzard president Mike Morhaime confirmed that it had been canceled in 2014. Now Blizzard is giving it another go with the simply titled StarCraft. Dan Hay, […]",
+            "url": "https://www.theverge.com/games/994371/starcraft-returns-in-2030-as-an-open-world-shooter",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-09-13T02:24:35.046371+00:00"
         }
     ]
 }
