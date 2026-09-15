@@ -1,7 +1,672 @@
 {
-    "updated_at": "2026-09-14T21:14:57.496215+00:00",
-    "count": 7470,
+    "updated_at": "2026-09-15T02:45:11.788956+00:00",
+    "count": 7529,
     "articles": [
+        {
+            "id": "319fe005ffc2c5ffacd18ea0870a9f57a9029ab97cf51c0e532fbd8fd2066df3",
+            "title": "UK Lords Defeat Government 194-138 Over Crypto Strategy",
+            "description": "The United Kingdom government has suffered a House of Lords defeat after peers voted 194-138 to require the Treasury to produce a national digital-assets strategy. The amendment puts fresh pressure on the U.K. to sharpen its approach to crypto, stablecoins and tokenized finance as competing jurisdictions move ahead with their own frameworks. Treasury Faces New […]",
+            "url": "https://news.bitcoin.com/regulation-and-legal/uk-lords-defeat-government-194-138-over-crypto-strategy/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto",
+                "git"
+            ],
+            "published_at": "2026-09-15T02:40:48+00:00",
+            "collected_at": "2026-09-15T02:45:10.278574+00:00"
+        },
+        {
+            "id": "f55df76efe8621ac8adcd0cb50030ee1965838ccfd1570e31e934c6cbdf8f2c0",
+            "title": "Make Each Characterization Test Fail Once Before You Refactor",
+            "description": "A characterization test that cannot fail is decoration, not a safety net. Most messy-repo refactors fail the same way. You record golden values, they all pass, and you feel safe. Then you extract a function and ship a silent behavior change. The goldens never noticed, because they were never able to notice. Here is a workflow that fixes that. Record behavior first. Then prove each recorded case can fail. Only then make the smallest safe change. The rule: a golden you have not falsified is a guess Golden values freeze what the code does today, including its bugs. That is the point. But a passing test proves nothing on its own. A test only earns trust when you can make it fail on purpose. Without that step, your suite may be asserting on an empty result, a swallowed exception, or a stub that never runs. So the gate is simple. Every characterization case must survive one deliberate, minimal mutation of the code under test. Step 1: Inject the seams before you capture anything Messy functions hide their collaborators. Time, randomness, network calls, and global writers make goldens flaky. Do not refactor yet. Patch those seams in the harness instead. Notice the patch is temporary and lives in test code. # golden_capture.py import json from app.legacy import settle_order # the messy 90-line function under test import app.legacy as legacy CASES = [ { \" id \" : \" empty_cart \" , \" args \" : [[], \" US \" ]}, { \" id \" : \" one_item \" , \" args \" : [[{ \" sku \" : \" A1 \" , \" cents \" : 500 , \" qty \" : 1 }], \" US \" ]}, { \" id \" : \" qty_zero \" , \" args \" : [[{ \" sku \" : \" A1 \" , \" cents \" : 500 , \" qty \" : 0 }], \" US \" ]}, { \" id \" : \" unknown_region \" , \" args \" : [[{ \" sku \" : \" A1 \" , \" cents \" : 500 , \" qty \" : 2 }], \" ZZ \" ]}, ] LEDGER = [] def spy ( name ): def wrap ( * a , ** kw ): LEDGER . append (( name , [ repr ( x ) for x in a ], tuple ( sorted ( kw . items ())))) return 0 return wrap def snapshot ( case ): LEDGER . clear () legacy . charge_card = spy ( \" charge_card \" ) legacy . send_receipt = spy ( \" send_receipt \" ) try : return { \" status \" : \" returned \" , \" value \" : settle_order ( * case [ \" args \" ])} except Exception as exc : return { \" status \" : \" raised \" , \" type \" : type ( exc ). __name__ , \" msg \" : str ( exc )} finally : pass def full_snapshot ( case ): out = snapshot ( case ) out [ \" calls \" ] = [{ \" fn \" : n , \" args \" : a , \" kwargs \" : dict ( k )} for n , a , k in LEDGER ] return out The call ledger matters more than the return value here. Extracting a writer often preserves the result and reorders the side effects. Step 2: Capture the corpus into a file you can diff Write goldens to disk. Commit them. A reviewable diff beats a magic assertion. if __name__ == \" __main__ \" : goldens = { c [ \" id \" ]: full_snapshot ( c ) for c in CASES } with open ( \" goldens.json \" , \" w \" ) as fh : json . dump ( goldens , fh , indent = 2 , sort_keys = True ) print ( f \" recorded { len ( goldens ) } cases \" ) Run it once against the untouched file. Inspect the JSON by hand. Delete any case whose recorded behavior looks like an artifact of your harness. Step 3: Replay the goldens as a test Keep the replay boring. One parametrized test, exact equality, no fuzzy matching. # tests/test_goldens.py import json import pytest from golden_capture import full_snapshot , CASES GOLDENS = json . load ( open ( \" goldens.json \" )) @pytest.mark.parametrize ( \" case \" , CASES , ids = lambda c : c [ \" id \" ]) def test_behavior_is_frozen ( case ): assert full_snapshot ( case ) == GOLDENS [ case [ \" id \" ]] At this point every test passes. That is expected and meaningless. Step 4 is the one people skip. Step 4: Mutation gate — prove the suite can fail Mutate the target file in a scratch copy. If the suite still passes, that golden is untested for that branch. # mutation_gate.py import pathlib , re , shutil , subprocess , sys , tempfile MUTANTS = [ ( r \" if qty <= 0: \" , \" if qty < 0: \" ), ( r \" total = 0\\b \" , \" total = 1 \" ), ( r \" return total \" , \" return total + 1 \" ), ] def run_gate ( target = \" app/legacy.py \" ): src = pathlib . Path ( target ). read_text () survivors = [] for pattern , repl in MUTANTS : mutated , hits = re . subn ( pattern , repl , src ) if hits == 0 : continue with tempfile . TemporaryDirectory () as td : copy = pathlib . Path ( td ) / \" repo \" shutil . copytree ( \" . \" , copy , ignore = shutil . ignore_patterns ( \" .git \" , \" .venv \" , \" __pycache__ \" )) ( copy / target ). write_text ( mutated ) r = subprocess . run ( [ sys . executable , \" -m \" , \" pytest \" , \" tests/test_goldens.py \" , \" -q \" , \" -x \" ], cwd = copy , capture_output = True , text = True , ) if r . returncode == 0 : survivors . append ( pattern ) return survivors if __name__ == \" __main__ \" : survivors = run_gate () print ( \" survivors: \" , survivors ) sys . exit ( 1 if survivors else 0 ) A survivor means one of two things. Either no case exercises that branch, or your spy layer hides the effect. Add a case, not a comment. Treat the counts in that output as illustrative. The real number depends on your function. Where a free model actually helps The expensive part is enumerating branches, not writing asserts. This is the narrow job I hand to a model: read the messy function and propose input classes I forgot. Disclosure: This article was prepared as part of MonkeyCode's product outreach. I use MonkeyCode's free model access and free server option, as described by the operator, to draft candidate cases and a first-pass mutation list. The model's output is raw material only. Every case still has to pass capture, replay, and the mutation gate before it earns a line in the corpus. The gate is the anti-hallucination step, since a model cannot verify its own tests. Step 5: Make the smallest safe change The gate is green when every mutant dies. Now touch production code once. Extract one function. Change nothing else. No renames, no formatting, no logging tweaks in the same commit. python mutation_gate.py && pytest -q && git diff --stat If the golden diff is empty and the gate still fails every mutant, you have a real safety net. If a golden changes, stop and explain why before continuing. Decision table: characterize, or walk away Situation Characterize first? Why Function you touch weekly Yes, full corpus plus gate The investment pays back fast One-off script, deleted next sprint No Goldens outlive their value Heavy nondeterminism, no injectable seam Patch seams first, then yes Flaky goldens teach nothing Function with 40+ branches, no tests Yes, but time-box it Gate tells you when coverage is enough Behavior you are about to delete No, add deletion tests after Freezing a bug is counterproductive Limitations and who should skip this Goldens freeze existing bugs, not correct behavior. That is intentional, and it is also a trap if you never revisit them. Seam patching gets fragile. If collaborators are imported deeply, the harness grows faster than the refactor. The mutation gate needs a fast test run. On a suite that takes minutes per case, this loop becomes unusable. Skip this approach for prototypes, generated code, or any file scheduled for replacement. Also skip it if your team will not review the golden JSON in pull requests. Unreviewed goldens turn into noise nobody trusts. Run the capture, run the gate, then make one small change. Ship the diff you can explain line by line. If you want a place to draft those first-pass cases, the free model access and free server option in MonkeyCode are a reasonable starting point.",
+            "url": "https://dev.to/hackrs_6393/make-each-characterization-test-fail-once-before-you-refactor-47ka",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "git",
+                "programmation",
+                "python",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-09-15T02:35:18+00:00",
+            "collected_at": "2026-09-15T02:44:55.482511+00:00"
+        },
+        {
+            "id": "68f18cd927184461df1b3816efa371c717837d34fec40fee384ae953cd9f8c6b",
+            "title": "How to auto-install the Intune Company Portal on ADE iPhones with VPP",
+            "description": "Why use VPP Without VPP, users end up installing the Intune Company Portal themselves from the App Store. And when they do, they're prompted for an Apple ID and password . Making people type a personal Apple ID into a corporate-owned device is something you want to avoid, both operationally and from an information management standpoint. Once you connect VPP (a content token), that prompt goes away. The Intune Company Portal can be installed automatically while the device is still going through initial setup. Without VPP With VPP (this article) Intune Company Portal The user installs it manually from the App Store Installed automatically during initial setup Apple ID entry Required Not required Effort for the user High Practically zero Overall workflow # Where What 1 ABM Check the three conditions before downloading 2 ABM Get licenses for the Intune Company Portal 3 ABM Download the content token 4 Intune Create the VPP token 5 Intune Update the enrollment profile to enable VPP distribution 6 Intune (Optional) Force authentication Three conditions to meet before you download the token ① An organizational unit (formerly \"Location\") has to exist There is one content token per organizational unit. When you sign up for ABM, the first organizational unit is created automatically and reflects your organization name, so normally you already have one. If you want to split app licenses by site or department, open ABM and go to Settings → Organizational Units → Add . ② You have to sign in with an account that's allowed to download the token To download a content token, you need to be signed in with a role that has permission to get licenses for apps and books . Administrator, Content Manager, or Device Enrollment Manager roles qualify. 🚨 If you change the password of the Managed Apple Account used to download the token, the content token becomes invalid. There are exactly two conditions that invalidate a content token: One year after it's created When the password is changed for the Managed Apple Account used to download the existing token Once it's invalid, app and book license communication between ABM and Intune stops. If you run this on an individual admin's account, app distribution breaks every time that person changes their password or leaves the company. To avoid an interruption of service, Apple recommends that you manually create a Managed Apple Account, create a custom role, and assign it only the \"Assign licenses for Apps and Books\" permission — and use that account to download and manage content tokens. ③ You have to get at least one app license Microsoft's documentation lists \"App licenses assigned to one or more location tokens\" explicitly as a prerequisite. With zero licenses, choosing \"Install Company Portal with VPP\" in the enrollment profile won't actually distribute anything. Here's how to get the licenses. [Step 2] Get Intune Company Portal licenses in ABM In ABM, open Apps and Services → Apps and Books from the top of the screen Search for Intune Company Portal Specify the organizational unit to assign to and the quantity , then get the licenses Getting more than the number of devices you expect saves you from scrambling later when you add devices It's a free app, so there's no cost. 💡 Why \"get extra\" is more than a nice-to-have Microsoft's documentation warns that devices are blocked from enrolling if there aren't enough Company Portal licenses for a VPP token, or if the token expires. Intune does alert you when a token is about to expire or licenses are running low, but running your license count to the edge is a bad place to be. [Step 3] Download the content token in ABM Sign in to ABM as a user whose role has permission to get licenses for apps and books Open Settings from your account name / organization name in the upper right Select Payments & Billing On the Apps and Books tab, select Download next to the relevant organizational unit You get a file named something like sToken for xxxxxxxxxxxx.vpptoken 💡 ABM's UI labels keep getting revised. Depending on which document you're reading, you'll see \"Preferences\" vs \"Settings\", and \"Location\" vs \"Organizational Unit\". They all point at the same place. Remember it as settings-type menu → Payments & Billing → Apps and Books / Content Tokens and you won't get lost. [Step 4] Create the VPP token in Intune Microsoft Intune admin center → Tenant administration Connectors and tokens → Apple VPP tokens → Create On the Basics page, enter the following Item What to enter Token name Any name you like, for administrative purposes Apple Account The Managed Apple Account associated with the token VPP token file The .vpptoken file you downloaded in Step 3 On the Settings page, configure the following Item Value Notes Take control of token from another MDM No (for a new token) Set it to Yes only when you're moving a token that's in use with another MDM over to Intune Country/Region Japan Apps from the store you specify are the ones that sync Management type MDM (default) or DDM See below Type of VPP account Business Choose Education if you're an educational institution Automatic app updates (when management type is MDM) Yes or No Pushes App Store updates to devices automatically Select I grant Microsoft permission to send both user and device information to Apple Add scope tags if you need them → Next Review + create → Create 💡 About MDM vs. DDM for \"Management type\" MDM (default): the traditional management method. Choose this if you have any devices running versions earlier than iOS/iPadOS 18 DDM (Declarative Device Management) : Apple's policy-based management model, available on iOS/iPadOS 18 and later . It gives you efficient app delivery and real-time app status reporting Note, though, that DDM doesn't yet support \"Available\" app assignments (as of September 2026). If you choose DDM, VPP apps can only be assigned as Required or Uninstall . If you have apps you want users to install on demand from the Company Portal, choose MDM. [Step 5] Update the enrollment profile to enable VPP distribution Edit the enrollment profile you created in Part 1. Intune admin center → Devices → Device onboarding → Enrollment → Apple → Enrollment program tokens Select your token → Profiles → select the target profile → edit it from Properties Change the settings as follows. Item Value User Affinity Enroll with User Affinity Authentication method Company Portal Install Company Portal with VPP Select the token you created in Step 4 ⚠️ If the \"token to use\" dropdown is empty , it's one of these: The token hasn't synced with Apple yet (run a manual sync) You have no free Company Portal licenses left (go back to Step 2 and get some) Step 6 Force users to authenticate After initial setup finishes, if the user never authenticates in the Company Portal, ownership doesn't flip to \"Corporate\" and the primary user stays empty . If you want to guarantee that they authenticate, configure this in the enrollment profile. Item Value Run Company Portal in Single App Mode until authentication Yes With this turned on, the Company Portal launches automatically once initial setup completes, and the user can't touch any other app until they finish authenticating . It's the setting to use when you want to eliminate people who never get around to signing in. Setting What the user experiences Yes After setup, the Company Portal launches automatically. No other apps until they authenticate No The user opens the Company Portal themselves and authenticates on their own What to check The moment setup completes and you land on the home screen, the Intune Company Portal is already installed You were never prompted for an Apple ID during the install Once you finish signing in to the Intune Company Portal, ownership becomes \"Corporate\" The account you signed in with shows up as the primary user If you set Step 6 to Yes , the Intune Company Portal launches automatically after setup completes, and no other app is usable until authentication is done. References Manage Apple Volume-Purchased Apps - Microsoft Learn Set up automated device enrollment for iOS/iPadOS - Microsoft Learn Tutorial - Use Apple Business to enroll iOS/iPadOS devices in Intune - Microsoft Learn Manage content tokens in Apple Business - Apple Support Configure organizational units in Apple Business - Apple Support",
+            "url": "https://dev.to/ky3095/how-to-auto-install-the-intune-company-portal-on-ade-iphones-with-vpp-56eh",
+            "source": "DEV Community",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "developpement",
+                "ios",
+                "llm",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-15T02:24:29+00:00",
+            "collected_at": "2026-09-15T02:44:55.483455+00:00"
+        },
+        {
+            "id": "fc7d7f4332e5eb76bd39a244e369256e8fee3b4af437cf6665b6f7ad7d50089f",
+            "title": "Documenting GTA 6 characters and regions without leaks",
+            "description": "Documenting GTA 6 characters and regions sounds simple until you decide “no leaks, no rumor sourcing.” In practice, that forced a few design decisions: One entity per confirmed thing • Characters: Jason, Lucia, etc. • Regions: Leonida, specific named locations First‑party evidence only We only ingest what appears in: • Official trailers • The VI site • Newswire posts / support docs • Platform store descriptions Text backed by timestamps and citations Each field in our internal model stores: { \"source\" : \"trailer_1\" , \"observed_at\" : \"2025-12-05\" , \"citations\" : [ \"https://www.rockstargames.com/VI/media\" ] } No “maybe” fields If a detail isn’t clearly supported by the footage or text, it lives in a separate notes layer, not the factual index. The effect is that our “GTA 6 characters” and “Leonida regions” pages look more conservative than fan wikis—but they also give LLMs and tools a clean separation between confirmed data and community theory. Any other devs doing something similar for game data, where you maintain a strict boundary between facts and speculation?",
+            "url": "https://dev.to/kyd_630f9e5792ecd90bf8c3e/documenting-gta-6-characters-and-regions-without-leaks-578m",
+            "source": "DEV Community",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "developpement",
+                "llm",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-15T02:19:55+00:00",
+            "collected_at": "2026-09-15T02:44:55.483615+00:00"
+        },
+        {
+            "id": "7f56efbb888eecdf0ef32fe7ca408fd37fcf98630d26d8a6fbf4d4b8dbb52190",
+            "title": "RubyGems Supply Chain Vulnerability: What the OpenAI Bot Incident Teaches About Node.js and npm Security",
+            "description": "Originally published at adityarawas.in A caching bug in RubyGems sat quietly in production infrastructure until OpenAI's crawler bots stumbled into it while indexing package metadata. The bots didn't exploit it — they just triggered enough unusual traffic patterns that someone noticed the cache was serving stale, potentially poisoned package data to legitimate gem install requests. That's the kind of story that should make every Node.js and npm maintainer sit up, because the underlying failure mode — trusting a package registry's caching layer without verifying integrity end-to-end — is not a Ruby problem. It's a package manager problem, and npm has had its own version of this fire drill more than once. This post breaks down what actually happened with the RubyGems caching vulnerability, why it matters even if you've never written a line of Ruby, and what concrete steps you should be taking right now to harden your Node.js supply chain against the same class of bug. What Happened with RubyGems The short version: RubyGems runs a CDN-backed caching layer in front of its package index to handle the volume of gem install and bundle install requests hitting the registry every second. Caching layers like this are standard — npm, PyPI, and crates.io all do something similar. The problem was a cache-key collision bug that could cause the CDN to serve one package's metadata (or in some edge cases, gem contents) for a request meant for a different package or version. Under normal traffic, this bug was rare enough to go unnoticed. It took the unusual, high-frequency, pattern-heavy request behavior of OpenAI's bots — which were scraping gem metadata for training or indexing purposes — to expose the cache poisoning at scale. Tenderlove's writeup describes discovering mismatched gemspecs being served under the wrong package names, which is about as close to a worst-case supply chain scenario as you can get without an actual malicious actor involved. No evidence surfaced that this was exploited maliciously before discovery. But the mechanism was there: an attacker who understood the cache-key logic could have engineered collisions deliberately, poisoning the cache so that a popular gem name resolved to attacker-controlled code for some subset of installs. Why This Isn't a \"Ruby Problem\" Every language ecosystem with a centralized package registry and a CDN cache in front of it has this exact attack surface. The RubyGems team happened to get lucky — a benign, high-volume crawler exposed the bug before someone weaponized it. npm has no structural immunity here. The npm registry (registry.npmjs.org) sits behind Cloudflare, and cache-key logic bugs are a class of vulnerability, not a one-off Ruby mistake. How This Maps to the npm Ecosystem npm has already dealt with adjacent issues — typosquatting, dependency confusion, and compromised maintainer accounts pushing malicious versions. A caching layer bug would be a new vector on top of an already crowded threat model. Here's the comparison of attack classes you should have on your radar: Attack Vector Mechanism Real-World Precedent Primary Defense Cache poisoning CDN serves wrong package metadata/tarball for a request RubyGems 2026 incident Subresource integrity checks, lockfile hashes Dependency confusion Public package name shadows internal private package 2021 npm dependency confusion attacks Scoped packages, registry allowlists Typosquatting Malicious package with name similar to popular one crossenv vs cross-env Manual review, automated name-similarity scanning Maintainer account takeover Compromised credentials push malicious version event-stream , ua-parser-js incidents 2FA enforcement, provenance attestation Post-install script abuse Malicious postinstall runs arbitrary code Countless npm incidents --ignore-scripts , sandboxed CI Cache poisoning is the least understood of these because it doesn't require compromising a maintainer or publishing a malicious package at all. It exploits infrastructure you don't control and can't audit directly. Verifying Package Integrity in npm Right Now The good news: npm already has tooling to mitigate exactly this class of bug, and most teams aren't using it correctly. Lockfile Integrity Hashes Every entry in package-lock.json (or pnpm-lock.yaml , or yarn.lock ) includes an integrity hash — a SHA-512 checksum of the exact tarball npm expects to install. \"node_modules/lodash\" : { \"version\" : \"4.17.21\" , \"resolved\" : \"https://registry.npmjs.org/lodash/-/lodash-4.17.21.tgz\" , \"integrity\" : \"sha512-v2kDEe57lecTulaDIuNTPy3Ry4//eEeLnUdyaP7ARaJd6BwQNCoQcJqp8jVXasjrgFwtNs2mAAAoyaJ1TVQMHA==\" } If a CDN cache poisoning bug served a different tarball than expected, npm's install process would catch the mismatch as long as you're actually installing from a lockfile with npm ci rather than npm install . # Vulnerable to silent resolution drift npm install # Enforces lockfile integrity, fails hard on mismatch npm ci npm ci refuses to modify the lockfile and validates every downloaded package against its recorded hash. If a cache poisoning bug served the wrong tarball, npm ci would throw an integrity error instead of silently installing malicious code. This is table stakes for CI/CD pipelines and shouldn't be optional. Auditing What's Actually Installed npm audit --audit-level = high npm audit signatures npm audit signatures (available since npm 9.5) verifies package provenance signatures against the registry's public key, which is a direct defense against exactly the kind of cache-serving-wrong-content scenario RubyGems hit. Enforcing Provenance npm's provenance feature ties published packages to their build origin using Sigstore, generating a cryptographically verifiable attestation that a package was built from a specific commit in a specific CI pipeline. npm publish --provenance As a consumer, you can check whether a dependency has provenance attached: npm view <package-name> --json | jq '.dist.attestations' If more of the ecosystem adopted this, cache poisoning attacks become far less useful — an attacker could serve a poisoned tarball, but it wouldn't carry a valid provenance attestation, and tooling could flag the mismatch automatically. Hardening Your CI/CD Pipeline Assume for a moment that npm's registry cache has the exact same class of bug RubyGems just found. What would actually stop it from biting you in production? 1. Pin Exact Versions, Not Ranges { \"dependencies\" : { \"express\" : \"4.19.2\" } } Not ^4.19.2 , not ~4.19.2 . Exact pinning combined with lockfile integrity checks closes the gap where a cache bug resolves a version range to unexpected content. 2. Use a Private Registry Proxy Tools like Verdaccio, Artifactory, or Nexus let you cache and vet packages internally instead of hitting the public registry cache directly on every CI run. # .npmrc pointing at an internal proxy registry = https://npm.yourcompany.com/ always-auth = true This doesn't eliminate the upstream cache risk, but it gives you a control point where you can pin known-good tarball hashes independently of npm's own CDN behavior. 3. Disable Lifecycle Scripts in CI npm ci --ignore-scripts Cache poisoning combined with a malicious postinstall script is the nightmare scenario — arbitrary code execution during install, triggered by a supply chain bug you had no way to detect. Disabling scripts in CI (and running them explicitly, audited, only when needed) closes that door. 4. Automate Dependency Diffing npm diff --diff = package-lock.json --diff = package-lock.json.new Or use lockfile-lint : npx lockfile-lint --path package-lock.json \\ --allowed-hosts npm \\ --validate-https \\ --validate-integrity This catches unexpected registry URLs, protocol downgrades, or missing integrity fields — exactly the artifacts a cache poisoning attack would leave behind. Detecting Anomalies Like OpenAI's Bots Did (By Accident) The RubyGems bug was found because unusual bot traffic patterns surfaced inconsistent responses. You can build similar detection into your own dependency pipeline without needing a crawler bot to stumble into it for you. // scripts/verify-lockfile-integrity.js const fs = require ( ' fs ' ); const crypto = require ( ' crypto ' ); const https = require ( ' https ' ); function fetchTarball ( url ) { return new Promise (( resolve , reject ) => { https . get ( url , ( res ) => { const chunks = []; res . on ( ' data ' , ( chunk ) => chunks . push ( chunk )); res . on ( ' end ' , () => resolve ( Buffer . concat ( chunks ))); res . on ( ' error ' , reject ); }); }); } async function verifyPackage ( name , resolvedUrl , expectedIntegrity ) { const tarball = await fetchTarball ( resolvedUrl ); const hash = crypto . createHash ( ' sha512 ' ). update ( tarball ). digest ( ' base64 ' ); const computed = `sha512- ${ hash } ` ; if ( computed !== expectedIntegrity ) { console . error ( `INTEGRITY MISMATCH: ${ name } ` ); console . error ( `Expected: ${ expectedIntegrity } ` ); console . error ( `Got: ${ computed } ` ); process . exit ( 1 ); } console . log ( `✓ ${ name } verified` ); } async function main () { const lockfile = JSON . parse ( fs . readFileSync ( ' package-lock.json ' , ' utf8 ' )); const packages = lockfile . packages || {}; for ( const [ path , meta ] of Object . entries ( packages )) { if ( ! meta . resolved || ! meta . integrity ) continue ; await verifyPackage ( path , meta . resolved , meta . integrity ); } } main (). catch (( err ) => { console . error ( err ); process . exit ( 1 ); }); Run this as a scheduled CI job, independent of your normal install step. If a cache poisoning bug is actively serving mismatched tarballs, this catches it by re-fetching and re-hashing packages outside the normal install path, rather than trusting whatever the registry cache handed you the first time. What Registry Operators Should Be Doing This isn't only a consumer-side problem. If you run any kind of internal package registry, artifact repository, or CDN-fronted service that serves versioned content, the RubyGems incident is a direct lesson: Cache keys must include full content hashes, not just name+version. Name+version collisions are exactly what caused this bug. Cache invalidation on integrity mismatch, not just TTL expiry. A stale cache entry serving wrong content should fail loudly, not silently serve old data. Log cache hit/miss ratios per package and alert on anomalies. Sudden shifts in miss rates for a specific package can indicate exactly the kind of collision RubyGems experienced. Rate-limit and fingerprint bot traffic separately from human traffic , since aggressive crawlers are precisely the load pattern that surfaces caching edge cases first. Key Takeaways A RubyGems CDN caching bug served mismatched package metadata, discovered only because OpenAI's bots generated unusual high-volume traffic patterns. Cache poisoning is a distinct supply chain attack class from typosquatting or account takeover — it exploits registry infrastructure, not maintainer trust. Always use npm ci in CI/CD pipelines instead of npm install to enforce lockfile integrity hash verification. Run npm audit signatures and adopt npm publish --provenance to get cryptographic build attestations, not just checksum matching. Pin exact dependency versions and disable lifecycle scripts ( --ignore-scripts ) in CI to reduce the blast radius of a poisoned tarball. Build independent integrity-verification jobs that re-fetch and re-hash dependencies outside your normal install path, rather than trusting the registry cache once. If you operate a private registry or CDN-backed package cache, key your cache entries on full content hashes, not just name and version. Supply chain security bugs surface through unusual traffic patterns — instrument your own registries and proxies to detect the same anomalies OpenAI's bots exposed by accident.",
+            "url": "https://dev.to/rawas_aditya/rubygems-supply-chain-vulnerability-what-the-openai-bot-incident-teaches-about-nodejs-and-npm-180c",
+            "source": "DEV Community",
+            "category": "cybersecurite",
+            "tags": [
+                "developpement",
+                "git",
+                "ios",
+                "javascript",
+                "openai",
+                "programmation",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-09-15T02:18:29+00:00",
+            "collected_at": "2026-09-15T02:44:55.484767+00:00"
+        },
+        {
+            "id": "8b7a563a68c195d3aa157aa028c6af55cd911bfd20d6d985ca98e925249669ba",
+            "title": "Fresh at the label, stale at the post: our 3-day news check was reading the wrong clock",
+            "description": "On 2026-09-05 our agent swapped three queued Bluesky posts for posts about AI news from the previous two days, each carrying the source URL. Every swap passed a freshness check: the source had to be at most 3 days old at the moment the post would go out. The next morning we measured when those posts would actually go out, and the answer was four to six days after their sources were published. The check had been reading the label on the slot, not the queue in front of it. This is a build report on three CLIs that let the agent put a same-week news link into a schedule that is otherwise written a week ahead, and on the one design mistake that made the first version of the freshness check quietly wrong. Why a queue written a week ahead needs a side door Our Bluesky schedule is a JSONL file of stock rows, five posts a day at fixed JST slots (23:00, 01:00, 03:00, 06:00, 08:00), refilled on Mondays to reach the following Tuesday. That is the right shape for evergreen content. It is the wrong shape for \"Anthropic reset weekly usage limits last night\", which is worth posting on Saturday and worth nothing on Wednesday. The owner's instruction on 2026-09-05 was specific: timely posts are welcome, they should link a piece of AI news from the past 3 days, and the agent may post one immediately per session if it is urgent. Hand-editing the stock file to do this is possible, but every edit has to remember the same list: the source has to be fresh, the URL has to be in the body in a form Bluesky will make clickable, the text has to fit in 300 graphemes after our link rewriter appends ?ref=bsky , there has to be a Japanese translation for the owner, the body must not trip the boilerplate detector, and the post must not push the week over its declared hashtag cap. Forget one and the failure surfaces later, in the test suite or on the runner. So the list became code, in three commands. Finding news you can date pnpm find-ai-news queries the Hacker News search API (Algolia, no key needed) with six default terms, Claude , Anthropic , Claude Code , AI agents , LLM , AI , filters to stories with at least 5 points that have a URL, and returns up to 30 items shaped so they can be pasted straight into the next command's source field: url , title , publishedAt , and evidence: \"hn-algolia\" . The reason it is Hacker News and not a news site is the date. The API returns created_at for every story, which is a machine-checkable timestamp, and we pass a numericFilters lower bound on created_at_i so the API does the windowing too. The limitation is stated in the command's own header: that timestamp is when the story was submitted, not when the article was written. Old articles get resubmitted. The command's own header tells the operator to open the article with a text extractor and confirm the piece itself is new before using the date. The run log for 2026-09-05 shows two such pulls, 30 candidates each. The evidence field exists for the same reason. A source can declare its date came from hn-algolia , from page-meta , from fxtwitter (for posts on X), or manual . The manual kind requires an evidenceNote describing how the date was checked, so \"it looked recent\" cannot be recorded as a date. Swapping a slot pnpm swap-timely-stock takes a list of replacements, each naming an existing slot by its plannedFor label, a new body with the URL, the Japanese text, and the source. It runs seven checks per replacement, in this order: The slot exists in stock and its label is in the future. The source is at most 3 days old at the time the post will go out (more on \"will go out\" below). A source dated more than 30 minutes in the future is rejected as a data error. The body contains the source URL in a clickable form, meaning with its scheme. Our Bluesky client deliberately drops link facets for bare example.com/... text because they were false-positiving on things like CLAUDE.md , so a scheme-less URL would post fine and be plain text. The body, after the ?ref=bsky rewrite, fits Bluesky's 300-grapheme limit, and the Japanese text is at least 10 characters. The body is not boilerplate and not a near-duplicate of anything in the remaining stock, anything posted in the last 60 days, or any other replacement in the same batch. The body does not breach the week's declared hashtag cap, evaluated with the replaced row removed and the new row added. No two replacements target the same slot. All checks run for all replacements before a single byte is written. That is the two-phase shape we use in every writer that touches the stock file: if replacement two fails, replacement one must not already be on disk. When the write happens, the old body is not lost. It is appended to state/timely-posts.jsonl with mode: \"stock-swap\" , the slot, the new body and source, and a replaced object holding the previous text. Evergreen rows that got bumped for news can be put back later. The stock row itself gets the new text, a timely object with the source, and a note naming the source title. It keeps its plannedFor . The immediate variant, pnpm post-timely-now , runs the same checks against now instead of a slot, posts, and records the post with origin: \"timely-immediate\" . That origin is how the daily budget code tells it apart: immediate posts do not count toward the five scheduled posts per day (they do not take a slot), but they do count toward the hard cap of 60 actions per day across every kind. The command also refuses a third immediate post in one JST day. The owner's rule was one per session; sessions run about twice a day; two is the machine-enforceable version of that. The check that was reading the wrong clock Here is what the first version of check 2 did. It took the replacement's plannedFor , say 2026-09-06T01:00:00+09:00 , subtracted the source's publishedAt , and compared to 3 days. For the swap we ran on 2026-09-05 at 14:41 UTC, the source (a post on X from the previous evening) was 0.83 days old relative to that label. Pass. What plannedFor actually means to the poster is different. The scheduled poster runs at each slot, takes every row whose plannedFor is at or before now, and posts the one with the oldest label. It is a FIFO with plannedFor as a lower bound: \"not before this time\". If the queue has rows with older labels waiting, a row labelled 01:00 tomorrow is not the post at 01:00 tomorrow. It is the post at whichever slot the queue has drained to it. And the queue had rows waiting. On 2026-09-06 at 00:41 UTC the head of the stock file was labelled 2026-09-03T06:00:00+09:00 , 75.7 hours in the past, with 17 of 28 rows already eligible. How the queue got that far behind, one refill at a time, without any job failing, is its own story and has its own write-up. What matters here is the consequence for the three rows we had just swapped in: by position rather than by label, they were going to go out four to six days after their sources were published. Each of them had passed a check whose entire purpose was to prevent that. Nothing in that path had a bug in the usual sense. The poster was right to treat labels as lower bounds. The freshness check was checking exactly what it said it checked. The property we cared about, \"the link is at most 3 days old when people see it\", lived in the gap between two components that had never been told about each other. Projecting the real post time The fix is a function that reproduces the poster's behaviour without posting. projectStockPostTimes sorts the rows by label (ties by file order, which is what the poster does), sets a cursor to now , and for each row in order finds the first slot that is both after the cursor and not before the row's own label. That slot is the row's projected post time, and it becomes the cursor for the next row. The slot table is the same JST list the workflow uses, and a test reads the workflow file's cron lines to make sure the two never drift apart. The freshness check now finds the replacement's target row in that projection and measures the source's age at projectedAt , not at the label. On success the command reports the label, the projected time, and the age side by side: { \"plannedFor\" : \"…+09:00\" , \"projectedPostAt\" : \"…Z\" , \"sourceAgeDaysAtPost\" : … } and on failure it reports nothing, because it throws before the write phase with the URL, the age in days at the projected time, and the 3-day limit in the message. The positive-control test constructs a stock with 16 backlog rows labelled from 09-02 and a replacement targeting the 09-06 01:00 slot, which the projection places seventeenth, more than 3 days out, and asserts the error text says the source is too old. The companion test asserts that with no backlog the projection equals the label and projectedPostAt comes back matching it. The first test is the one that matters: it encodes the exact situation we were in, and it fails on the old code. That closes the write path. A lag check now runs every session (warning at 20 hours, alert at 48), and a realignment command rewrites labels to projected slots, moving timely rows to the front of the queue because freshness is their whole value, and refusing to write at all if any of them would be stale at its new slot. Running it on 2026-09-06 put the three news rows in the first three slots. The projection has one honest limitation: it assumes the workflow fires at its cron time, and GitHub Actions documents that scheduled runs can be delayed under load. A late firing pushes everything behind it later by the same amount, which the projection cannot see in advance and the lag check sees afterwards. What the ledger is for The reason the old bodies go into state/timely-posts.jsonl rather than being overwritten is that a news post displaces something, and the something was written on purpose. Every swap row carries the evergreen text it replaced, so a Monday refill can put it back into a later slot instead of writing a new post to fill the hole. The same ledger records the immediate posts with mode: \"immediate\" and the post URI, so the daily budget code, the duplicate detector, and the weekly report all read one file when they need to know what timely content went out and when. As of writing that file has six rows: five stock swaps across three slots (two of the slots were swapped twice on 2026-09-05, once with a draft and once with the wording the owner preferred, and the ledger keeps both), and one immediate post on 2026-09-06 at 00:42 UTC, linking an engineering blog post that was 1.04 days old at the moment of posting. That last number is the whole point. It is measured against the clock the reader experiences, and it is written down where the next check can find it. What we would tell someone building the same thing If a field is used as a lower bound by one reader and as a schedule by another, one of those readers is wrong, and it is usually the one that never had to execute. Our poster was correct. The freshness check was reasoning about the label as if the queue were empty. The cheap fix would have been a comment on the field. The fix that stays fixed is a function that models the executor and a check that runs on real data every session. Three days of news is a narrow window, and a window that narrow does not survive being measured against the wrong clock. The stock file, the three commands, and the lag check are part of the pipeline behind Rulestack , a small shop of rules and skills packs for AI coding agents. The news posts they produce, and the evergreen ones they displace, go out from @ai-shop.bsky.social .",
+            "url": "https://dev.to/rulestack/fresh-at-the-label-stale-at-the-post-our-3-day-news-check-was-reading-the-wrong-clock-3fe1",
+            "source": "DEV Community",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "anthropic",
+                "developpement",
+                "git",
+                "llm",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-15T02:17:00+00:00",
+            "collected_at": "2026-09-15T02:44:55.485916+00:00"
+        },
+        {
+            "id": "eee867643829427047ac9bca2060af52c88e5a90ed74ab315752ea10a54426d8",
+            "title": "Google Maps Signal Leak Shifts Local SEO Focus Beyond Business Profile Fields",
+            "description": "Newly recovered data examined by Search Engine Land offers an unusually detailed view of the systems that may sit behind Google Maps and local search. Its central lesson for local businesses is clear: a Google Business Profile matters, but it may be only one visible input into a much broader representation of a place, its identity, its attributes, and the evidence connected to it across Google's systems. The analysis is not an official Google disclosure, and it does not reveal the weights that determine Maps rankings. Still, Search Engine Land's examination of the recovered Maps data provides a plausible framework for rethinking local SEO. Rather than treating profile fields as a self-contained checklist, businesses should make it easier for Google to understand and corroborate the underlying local entity. What the recovered Maps data reveals Researchers obtained a binary exposing a non-public Geostore scope, then cross-referenced it with Maps protocols, network traffic, the web index, mobile services, style tables, on-device components, and material from Google's 2024 leak. The resulting analysis identifies 72 Geostore ranking signals , 793 data source providers , and 446 local search intent types . Those numbers should not be read as a list of 72 tactics or a confirmed Maps ranking formula. The signals belong to a system called Oyster Rank , described as an internal ranking vocabulary for Geostore. The research places that vocabulary within a larger pipeline that also involves query understanding, semantic matching, candidate generation, geography and quality assessment, and reranking. Twenty-five of the 72 signals are marked deprecated, further underlining why a simple ranking-factor checklist would be misleading. The recovered material also points to a substantial technical layer behind the map interface: 50,998 Mapcore styles, 12,936 label styles, and 10,936 searchable Geostore declarations. There is also a separate on-device scorer with eight signals across 13 tiers. These findings illustrate the scale and complexity of the architecture, not a recipe for manipulating results. At the heart of the analysis is the idea that Google represents a local listing as a geographic Feature , rather than merely as a collection of profile fields. That Feature can include identity, geometry, source information, websites, brand relationships , Knowledge Graph references, concepts, and ranking information. Google can connect the entity to external references through the Knowledge Graph and a webref layer that links documents to entities. Local SEO view What the recovered analysis suggests Business Profile as the primary local asset The listing is a visible surface for a deeper geographic Feature. Fixed ranking-factor checklist Oyster Rank appears to be a signal vocabulary within a wider ranking pipeline, with no public weights. Single-source optimization Geostore can incorporate source information, websites, Knowledge Graph references, and brand relationships. One universal local query model The analysis identifies [local search intent types](https://scalevise.com/resources/2026-seo-survey-search-intent-backlinks/), suggesting query intent is a significant part of the system. Why entity consistency becomes more important For a business, the practical implication is not to abandon Google Business Profile optimization. Accurate core information remains essential because it helps establish a clear representation of the place. The more important shift is to view that profile as one part of a wider evidence base. A useful local SEO program should therefore prioritize consistency and completeness wherever the business is represented. The goal is to reduce ambiguity around the entity Google is trying to identify and match to a local query. Based on the framework in the recovered analysis, this means paying close attention to: Consistent identity details , including the business name, address, phone number, website, and relevant attributes. Clear website evidence that explains what the business is, where it operates, and which services or products are actually associated with that location. Accurate relationships and references , such as brand associations and external entity references that support the same understanding of the business. Semantic completeness , so important details are not implied only through marketing language but are stated clearly in pages Google can connect to the entity. This is not proof that any single change will improve a Maps position. The recovered data does not provide coefficients, weights, or a direct causal ranking model. It does, however, support a more durable approach than chasing isolated profile edits without checking whether a company's website, local information, and broader entity signals tell the same story. What this could mean for local search strategy The research suggests that local search is likely less about filling in fields and more about validity and breadth of evidence . A business with a polished profile but inconsistent or thin supporting information may be harder for a complex entity system to interpret than one whose identity and local relevance are consistently documented across connected sources. That matters as Maps develops toward AI-assisted conversational experiences . In that environment, systems need to reason about entities and their relationships, not simply retrieve a matching category. Businesses should make sure their public information can answer basic questions unambiguously: what they offer, where they operate, which location provides which service, and how their website and brand references relate to the place shown in Maps. Local teams can use this finding as an audit prompt, not as a promise of ranking gains. Review the Business Profile alongside the location pages, service descriptions, contact details, and references that support the business's identity. Correct contradictions first. Then improve missing information that would make the location easier to understand for a search engine and a prospective customer. For businesses trying to stay discoverable as Google and other AI-driven interfaces change how people find local services, Scalevise can help turn scattered online information into a clearer visibility strategy. An AI Visibility and GEO assessment can identify where your brand information is inconsistent, unclear, or absent across the signals that shape AI-assisted discovery. Start an AI Visibility scan to find the highest-priority gaps in your local presence. Limits of the current evidence The recovered data is valuable, but its boundaries matter. Search Engine Land characterizes it as reverse-engineered analysis, not an official Google release. Google has not publicly confirmed the specific signal count, provider count, or the detailed architecture described in the report. Most importantly, the data does not show how much weight any signal receives, how signals interact, or which factors are decisive for a particular query, market, device, or user. It also does not establish that every listed signal remains active, especially because 25 are marked deprecated. The best reading is that this is a map of internal concepts and possible evaluation stages, not a guaranteed guide to Maps rankings. Frequently Asked Questions What are the 72 Google Maps ranking signals? The recovered analysis identifies 72 Geostore signals associated with a system called Oyster Rank. It does not show their weights or prove they are a complete Google Maps ranking algorithm. Does this mean Google Business Profile optimization no longer matters? No. The analysis suggests a Business Profile is one visible part of a deeper geographic entity. Accurate profile information remains important, alongside consistent evidence on websites and connected references. What is Geostore in the recovered analysis? Geostore is described as a non-public scope that represents local entities as geographic Features. Those Features can include identity, geometry, sources, websites, brand relationships, Knowledge Graph references, concepts, and ranking information. Can businesses use these findings to guarantee better Maps rankings? No. The recovered material does not provide signal weights or a fixed ranking formula. It is better used to guide entity consistency, accurate information, and complete local evidence. Conclusion The recovered Maps data reinforces a practical local SEO principle: optimize the business Google needs to understand, not just the profile customers see. While the specific ranking mechanics remain unknown and unconfirmed by Google, consistent identity, clear location information, and well-supported entity evidence are more resilient priorities than a narrow checklist of profile edits.",
+            "url": "https://dev.to/alifar/google-maps-signal-leak-shifts-local-seo-focus-beyond-business-profile-fields-3jc9",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-15T02:15:30+00:00",
+            "collected_at": "2026-09-15T02:44:55.486857+00:00"
+        },
+        {
+            "id": "9ca1fcb6ec394fd9f0641ba603027aeb55d6dce6886c7b60d79ddd2a8873146d",
+            "title": "Comparing AI review tools: what the numbers actually tell you",
+            "description": "Most \"best AI code review tool\" comparisons start and end with a benchmark score. That score hides almost everything a team needs to decide with. The useful move is to read the method behind the number, because the number only means what the method lets it mean. Entelligence published a comparison last week between two models on the same pull requests: GPT-5.6 Luna at $0.20 per million input tokens against GPT-6 Astra at $10. One Luna review cost $0.0041, one Astra review cost $0.113, a 28x gap ( Entelligence, Sep 14 2026 ). It is a vendor benchmark and the model that is also a judge in its own verification could be favored, so treat the scores as direction, not law. But the post is worth reading for what it does right, and for what it shows a comparison needs before it is useful. What the aggregate score hides. Overall, Luna found 69 verified bugs to Astra's 92, with 74% precision against 96%. Those two numbers are the ones a headline picks up. The post then splits by codebase, and the aggregate falls apart. In Sentry, Discourse and Grafana, Luna came within two verified bugs of Astra. In Cal.com the gap widened to 21 versus 30. In Keycloak, an identity and access management server, Luna found 6 verified bugs to Astra's 14 and only half its findings held up, against 93% for Astra. On security bugs specifically, Luna caught 9 of 24 and Astra 19. So the headline answer to \"is the cheap model good enough\" is wrong for every codebase at once. It is good enough for the everyday correctness bugs in SDK and forum code, and it is not good enough for auth. Two of the bugs it missed on Keycloak only show up by reasoning about the permission model after the change: a global view permission overriding denials on individual clients, and federated recovery codes never marked as used so they could be used more than once. No single line looks wrong. That is the class of bug that decides whether a tool watches your auth code or not. What it leaves out. The authors are honest about the biggest gap. Every PR in the benchmark includes a defect added on purpose, so none of those exact bugs are in the models' training data. But the surrounding code is public and old, with commit dates back to 2013, so a model that has seen the correct version of a file has a real advantage. There is no way to test that split here because none of the PRs fall after either model's training cutoff. That is a real limitation: it is common to almost every public code review benchmark, and it means the scores above likely overstate how these models will do on your codebase, which the model has never seen. The repeatability check is the most useful part. The authors reran two PRs per codebase a second and third time. On ten PRs, Luna had 15 verified bugs on its first run, but only 7 came back in both repeats and 12 in at least one. Astra had 15 verified, with 10 in both repeats and 14 in at least one. The sample is small, so treat it as rough, but it makes a point that no aggregate score will ever show you: a model that finds a bug on one run can miss it on the next. Single-run benchmarks flatten that variance into a number, and the number looks more stable than the tool is. What to actually do with this. The practical lesson is not which model won. It is that a comparison only earns your attention if it tells you both where the tool is strong and where it is weak, and if it tells you on what baseline it measured. Ask for the split by codebase and by bug class, ask whether the benchmark PRs are newer than the model's training data, and ask what the precision was on the code you actually write. An overall score answers none of those. A method does. The load that an AI review tool puts back on your human reviewers is roughly its error rate, because a wrong comment still has to be read, ranked and dismissed. When a quarter of a cheap model's findings are noise, that is not a free tier, it is a tax on every developer who opens the diff.",
+            "url": "https://dev.to/tessainsley/comparing-ai-review-tools-what-the-numbers-actually-tell-you-3dh2",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-15T02:15:01+00:00",
+            "collected_at": "2026-09-15T02:44:55.487279+00:00"
+        },
+        {
+            "id": "b8be388233ded43d6c9ea6bbafd410e83ac9cdd5705797783403d884bc5784d0",
+            "title": "Cheap LLM code review is fine until it hits an authorization bug",
+            "description": "A code review vendor ran its own eval comparing a $1.20-per-million-output-token model (Luna) against a frontier one (Astra) across 50 public benchmark pull requests from Cal.com, Sentry, Discourse, Keycloak and Grafana. The numbers are worth reading cold, because they show exactly where the cheap model falls apart. Luna found 69 verified bugs for a total run cost of $0.20. Astra found 92 for $5.66. Per verified bug that is $0.0030 against $0.061, a 20x gap. On everyday data and logic bugs the cheap model kept up: 39 verified against Astra's 47. On concurrency, 10 against 13. Those are the stats that justify routing every PR to the cheap model and calling it a day. Then look at the security split. Luna caught 9 of the 24 security bugs. Astra caught 19. And on Keycloak, the IAM server, Luna found 6 verified bugs to Astra's 14, with only half its findings holding up against 93% for Astra. That is not a gently declining curve. It is a cliff on exactly the code you cannot afford to review wrong. The two Keycloak bugs Astra caught and Luna missed are the useful part. Federated recovery codes were never marked as used, so a recovery code could be reused indefinitely. And a new global view permission silently overrode denials set on individual clients. Neither one looks wrong on a single line. You only see them by reasoning about the permission model as a whole after the change. A small model scanning for local defects is structurally blind to that class. The other number worth quoting is precision. About one in four of Luna's findings was wrong (24 of 93), versus 4 of 96 for Astra. Cost per bug is not the only thing that burns a team's review budget. Noise does too, because reviewers who already skim AI comments start skipping them entirely once a quarter are false positives, and then the real catches stop landing at all. Some caveats before anyone treats this as gospel. Astra is itself one of the two judges that verified the findings, so it could be grading itself with a soft touch. And the benchmark PRs all predate both models' training cutoffs, so public-history recall is a real risk the authors flag. I'd read the absolute magnitudes skeptically, but the shape of the result is robust: the cheap model is a fine triage layer on routine changes and the wrong call on authentication and permission code. The practical version of this is pretty simple. Let the cheap model flag everyday busywork bugs and cut your cost ceiling. Route anything that touches authz, authn, or permission logic to a model you trust more, and read that output like it's unpaid. The difference is not in what the model costs per token. It is in what a missed permission-bypass bug costs you downstream. That split is the real takeaway, and it is cheaper than any model routing: decide a small set of high-risk paths before you adopt an AI reviewer, and never let the price per review be the deciding input on those.",
+            "url": "https://dev.to/cole_halton_42f71d71b809b/cheap-llm-code-review-is-fine-until-it-hits-an-authorization-bug-28c5",
+            "source": "DEV Community",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "developpement",
+                "llm",
+                "programmation",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-09-15T02:15:01+00:00",
+            "collected_at": "2026-09-15T02:44:55.487555+00:00"
+        },
+        {
+            "id": "596c00570d66af3db5a34edc9e0fa8256dc84ac5e11507769db355578ca8f263",
+            "title": "From 3ms to 0ms: The Hidden Memory Trap in C++ Maps",
+            "description": "From 3ms to 0ms: The Hidden Memory Trap in C++ Maps I thought I was writing the cleanest one-liner of my life. To solve Two Sum, I stored 1-based indices in an unordered_map so I could check for complements directly inside an if statement: if ( mp [ target - nums [ i ]]) { return { mp [ target - nums [ i ]] - 1 , i }; } It passed. But it took 3ms . On a whim, I swapped that single line to mp.find() . The runtime plummeted straight to 0ms . Why would two operations that look like basic O(1) lookups perform so radically differently? The Secret Life of `operator[] ` In C++, square brackets aren't just looking through the window. If the key isn't there, C++ assumes you're lonely and creates a new friend for you on the spot. When you call mp[missing_key] : It allocates a brand-new node on the heap. It inserts missing_key with a default value of 0 . It hands back a reference to that 0 . Because 0 evaluates to false , my if condition technically worked. But behind the scenes, every single failed lookup left a ghost entry behind. My map was hoarding junk data, thrashing CPU caches, and triggering expensive hash table rehashes mid-loop. mp.find() , on the other hand, is strictly read-only. If the key isn't there, it returns mp.end() and walks away without touching heap memory. The Fix // The 3ms Trap: Allocates heap memory for ghost entries on every miss if ( mp [ complement ]) { ... } // The 0ms Clean Run: Read-only check, zero allocations auto it = mp . find ( complement ); if ( it != mp . end ()) { return { it -> second , i }; } (Tip: In C++20, if you only care about presence and don't need the value right away, mp.contains(key) gives you the same zero-allocation check with even cleaner syntax). The Rule of Thumb Never use [] to ask, \"Are you there?\" Square brackets are for modifying data, not window shopping. Have you ever had an optimization that looked slick on paper but quietly blew up your runtime? Drop your favorite sneaky C++ traps or debugging facepalms in the comments!",
+            "url": "https://dev.to/jeet_0474/from-3ms-to-0ms-the-hidden-memory-trap-in-c-maps-4m3h",
+            "source": "DEV Community",
+            "category": "hardware",
+            "tags": [
+                "cpp",
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-15T02:12:16+00:00",
+            "collected_at": "2026-09-15T02:44:55.487782+00:00"
+        },
+        {
+            "id": "0b3ec1e2604dc09d8c5287134706856bcbbbdd5b3f402f4e75d02828e5866506",
+            "title": "Lummis Pushes Senate Democrats to Rally Behind Final CLARITY Draft",
+            "description": "Senator Cynthia Lummis, one of the driving forces behind the CLARITY Act, remarks that the bill, in its final form, represents one of the largest bipartisan Senate endeavors. She stresses that if it fails, crypto companies will take their business elsewhere. ‘Put Their Money Where Their Mouth Is’: Lummis Calls Democrats to Rally Behind CLARITY […]",
+            "url": "https://news.bitcoin.com/regulation-and-legal/lummis-pushes-senate-democrats-to-rally-behind-final-clarity-draft/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-15T02:10:13+00:00",
+            "collected_at": "2026-09-15T02:45:10.278665+00:00"
+        },
+        {
+            "id": "629d310d9dade6304da7fa1598329b0b5e3d0b2501db2b88d695e95b8a99d3fc",
+            "title": "A review checklist for AI coding agent output (7 things I check before trusting a change)",
+            "description": "Every team running an AI coding agent eventually hits the same wall: the agent produces a lot of output, and reviewing that output is now the bottleneck. A terminal transcript is not a review artifact. Here is the checklist I use before I trust an agent's change, and the tooling each line implies. The checklist 1. Can I see the change as a diff, not as prose? If the only thing you get is a summary, you are reviewing a claim, not code. Ask for the diff first. Everything after this line only matters if this one is true. 2. Do I know which directory the agent was in? Ambiguous working directories are the root cause of a surprising number of \"it edited the wrong file\" incidents. Pin the path explicitly and make it part of the job record. 3. Is the change isolated to a ref I can check out? A branch or a worktree means you can test the change yourself, and revert is one command. If the agent mutated your working tree in place, you have already lost the ability to compare. There is a full walkthrough of the worktree approach in the worktree session tutorial . 4. Which commands did it run, and did any of them touch the network? Install scripts, dependency bumps and curl | sh are where the sharp edges live. Log tool activity, not just the final text. 5. Where did the credentials come from? If the agent needed a private remote, the token should be scoped to that host and short-lived where possible. Broad credentials handed to an autonomous process is how a small mistake becomes an incident — see git credentials . 6. Can a second person reproduce the run? Same image, same runtime, same starting commit. If reproducing it takes a verbal explanation, it is not a process yet. 7. What stopped it? Time limit, token limit, an approval gate, or completion — you should be able to tell from the session state alone. Getting the states named unambiguously is worth doing early; a shared status glossary removes a lot of ambiguity from handoffs. What this implies about your setup Once you write the checklist down, the requirements fall out almost mechanically: sessions need an explicit working directory and state, workspaces need to be disposable and isolated, so a bad run cannot poison the next one ( instances ), Git review needs to be native, not bolted on ( repository workspace ), automations that repeat a routine need their own audit trail ( automation , actions ), and the whole thing has to run where the code runs, or the credential question answers itself badly. The uncomfortable part Most of this checklist exists because I did the opposite first. I let an agent work directly in a checkout I cared about, reviewed the summary, and merged. It worked — for about three weeks. The failure was not a dramatic bug; it was a dependency change nobody noticed until a deploy. Since then I run every agent task in a disposable workspace, with the diff as the deliverable. That workflow is what I packaged as TaskHandoff : a self-hosted control plane where each task gets its own Local or Docker workspace, sessions are reviewable, and Git changes arrive as a branch or worktree you can test. Apache-2.0, and the docs start at docs.thandoff.com ( installation , FAQ ). What is on your checklist? I am particularly curious whether people gate on cost, on network access, or on the diff size.",
+            "url": "https://dev.to/edgestorage/a-review-checklist-for-ai-coding-agent-output-7-things-i-check-before-trusting-a-change-276c",
+            "source": "DEV Community",
+            "category": "devops",
+            "tags": [
+                "developpement",
+                "docker",
+                "git",
+                "programmation",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-09-15T02:08:05+00:00",
+            "collected_at": "2026-09-15T02:44:55.488191+00:00"
+        },
+        {
+            "id": "a57522e8c1bae089c86bacce5ff0fd595c8adb98a6681565ee5b09bbd689374a",
+            "title": "Android App Protection Is Not Just About Security: Why XopProtector Stands Out in Stability, Size and Performance",
+            "description": "Android App Protection Is Not Just About Security: Why XopProtector Stands Out in Stability, Size and Performance When developers evaluate an Android app protection solution, security strength is obviously important. But it is not the only thing that matters. A protection system can have an impressive list of security features, but if it significantly increases APK size, slows down application startup, breaks compatibility, or makes the build process painful, developers may eventually stop using it. This is why I think engineering quality is just as important as protection capability . From this perspective, XopProtector is an interesting open-source Android protection project worth trying. XopProtector on GitHub Security Is Only Half of the Problem A common misconception is that stronger protection automatically means better protection. In reality, Android application protection is a balancing act between: Security Compatibility Startup performance Runtime performance APK size Build time Stability Integration complexity For example, encrypting almost everything and introducing heavy runtime processing may make static analysis more difficult, but it can also increase startup latency and memory consumption. For a production application with millions of users, that trade-off matters. A protection system that provides strong security while keeping the application experience close to the original APK is much more practical. 1. Small APK Size Increase One of the most noticeable advantages of XopProtector is its focus on keeping the protected package relatively lightweight. Some traditional protection approaches introduce significant runtime components or duplicate application resources, which can result in a noticeable APK size increase. XopProtector takes a different approach. Its protection architecture focuses on protecting the code and execution environment rather than simply adding large amounts of additional data to the APK. This is particularly useful for applications distributed through mobile networks or markets where package size matters. For developers, the ideal situation is simple: Stronger protection, without turning a 50 MB application into a 100 MB application. That is a much more practical goal than maximizing the number of protection features. 2. Fast Application Startup Startup performance is another area that is often overlooked when evaluating Android protection. The application may be perfectly secure, but if users see a noticeable delay every time they launch it, the protection solution becomes part of the user-experience problem. XopProtector's runtime architecture attempts to minimize unnecessary work during application startup. Instead of blindly processing large amounts of application code every time the application starts, its protection mechanisms are designed around runtime loading and protected execution. This is particularly important for applications where: startup time is critical; the main activity needs to appear quickly; users frequently open and close the application; the application runs on lower-end Android devices. A protection solution should ideally be security-transparent to the user . The user should notice the application—not the protection system. 3. Fast Protection Processing Build-time performance is also important. Cloud-based protection systems can introduce an additional upload → processing → download cycle into the release workflow. For a large APK, this can become surprisingly inconvenient. XopProtector provides local protection tooling, including Windows GUI and CLI workflows. According to the project's documentation and reported usage, large APKs can be processed relatively quickly, with the project targeting protection times of under approximately five minutes for a 300 MB APK in typical scenarios. That makes it much more practical for developers who need to repeatedly protect development and release builds. Instead of treating protection as a separate manual operation, it can become part of the normal build pipeline. 4. Stability Matters More Than Feature Count This is probably the most important point. A protection product can advertise dozens of security technologies, but developers ultimately care about one question: Will my application still work correctly after protection? Android has thousands of device models, different manufacturers, customized ROMs, and multiple Android versions. A protection solution therefore has to deal with: different ART implementations; different Android API levels; different CPU architectures; OEM modifications; multidex applications; native libraries; reflection; dynamic class loading; third-party SDKs. This makes compatibility a much harder engineering problem than simply implementing an encryption algorithm. XopProtector's open-source nature is valuable here. When a compatibility problem occurs, developers are not limited to waiting for a vendor to fix a black-box service. They can inspect the implementation, identify the problematic layer, and potentially adapt the protection mechanism to their own environment. That is a major advantage for engineering teams. 5. Performance and Protection Should Be Balanced Another reason I find XopProtector interesting is that it does not rely on a single protection technique. Its architecture combines multiple layers, including: DEX Protection → Method Protection → VMP → Native Runtime → SO Protection → RASP Different layers can therefore protect different parts of an application. Developers do not necessarily need to apply the strongest and most expensive protection to every single method. A more practical strategy is: Normal business code → lightweight protection Core algorithms → stronger VMP Sensitive native logic → SO protection Runtime attacks → RASP This layered approach makes it possible to balance security and performance. 6. Open Source Makes Performance Problems Easier to Analyze There is another advantage that is easy to overlook. Commercial protection systems are usually black boxes. If startup time increases by 300 ms after protection, developers may know that it happened, but not necessarily why . With an open-source project, the situation is different. Developers can inspect the protection pipeline and runtime implementation to determine whether the overhead comes from: DEX loading; runtime decryption; class resolution; Native initialization; integrity verification; RASP initialization. This makes performance optimization and troubleshooting much more transparent. For security-sensitive applications, this transparency can be extremely valuable. XopProtector vs Traditional Protection Solutions From a developer-experience perspective, I would summarize the differences like this: Aspect XopProtector Traditional Cloud Protection Security Layers Multi-layer Usually multi-layer APK Size Focus on low overhead Depends on provider Startup Designed for low runtime overhead Depends on implementation Protection Speed Local processing Upload/process/download Source Code Open source Usually closed source Customization High Limited CI/CD Integration CLI-friendly Depends on provider Debugging Source-level visibility Black-box Enterprise Support Community / self-managed Usually stronger This does not mean commercial protection products are bad. For large enterprises, vendor support, compliance, certification, and guaranteed compatibility can be more important than source availability. But for independent developers and small or medium-sized teams, the trade-off can be very different. What I Look for in an Android Protector If I were evaluating an Android protection solution today, I would not simply ask: “How many security features does it have?” I would ask five questions instead: 1. Does it provide meaningful protection? 2. Does the protected application remain stable? 3. How much does APK size increase? 4. How much does startup performance change? 5. Can it fit naturally into the development and release workflow? This is where XopProtector becomes particularly interesting. It combines a relatively comprehensive protection architecture with an emphasis on performance, package size, build efficiency, and developer control . Final Thoughts Android application protection should not be measured only by how difficult an APK is to reverse engineer. A protection solution is successful only when developers can actually deploy it in production. That means: Strong protection + Small overhead + Fast startup + Fast processing + Good compatibility + Easy integration From this perspective, XopProtector is one of the open-source Android protection projects I would recommend developers evaluate first. It may not replace every enterprise commercial protection solution, especially where certification, vendor support, and contractual SLAs are required. But for developers who want a free, open-source, customizable Android protection solution without sacrificing too much performance or development efficiency , it is definitely worth testing. XopProtector — GitHub",
+            "url": "https://dev.to/_02872163a196e011/android-app-protection-is-not-just-about-security-why-xopprotector-stands-out-in-stability-size-3mi",
+            "source": "DEV Community",
+            "category": "hardware",
+            "tags": [
+                "android",
+                "developpement",
+                "git",
+                "ios",
+                "programmation",
+                "web",
+                "windows"
+            ],
+            "published_at": "2026-09-15T02:05:26+00:00",
+            "collected_at": "2026-09-15T02:44:55.489145+00:00"
+        },
+        {
+            "id": "690384bb28e8dd7631fd65218c0c111398d0ab59aced78f3cab015e1d2b55c30",
+            "title": "T-Mem: Memory That Anticipates, Not Archives - Tencent's Breakthrough in AI Long-Term Memory",
+            "description": "T-Mem: Memory That Antanticates, Not Archives The Problem with Current AI Memory Large language model agents are increasingly entering long-term companion chat scenarios — not just answering one question and leaving, but building lasting relationships with users. This creates a specific requirement for memory systems: users don't repeat the same things year after year in the same words. The memory system must retrieve past memories even when phrasing, topics, and contexts have completely changed. But today, almost all long-term memory solutions share the same fundamental assumption: as long as the query is \"similar enough\" to the memory, it can be retrieved. This only works when memory and dialogue have literal or semantic similarity. In real conversations, however, phrasing changes, contexts shift, yet memories still need to be recalled. Tencent's Solution: T-Mem T-Mem flips this assumption upside down: instead of struggling to find similarity at retrieval time, save preset scenarios as bridges at the moment of memory write-in. This way, even when memory and dialogue have zero semantic similarity, key memories can still be recalled through contextual association. Key Insight : A long-term memory system earns its adaptive value not by archiving the dialogue stream faithfully, but by anticipating, at write time, the future cues under which its contents will need to be reached. How T-Mem Works The 2x2 Quadrant Framework T-Mem models memory across two orthogonal axes: Retrieval Direction : Descriptive recall (surface similarity) vs. Associative recall (latent connection) Memory Granularity : Single fact vs. Complete scene This creates four quadrants (QI-QIV), each with a trigger family: QI Entity Trigger : Enriches single facts with generalized labels QII Bridge Trigger : Predicts \"in what context will this fact be needed?\" QIII Forward Trigger : Thinks several steps ahead along the conversation QIV Scene Trigger : Writes complete scenes as multi-dimensional archives The Example That Explains Everything Consider this scenario: Months ago : \"Xiao Zhang is allergic to seafood, went to the hospital last week, need to be careful.\" Now : \"Where are we going for team building next week?\" These two sentences share ZERO semantic similarity. But the memory about Xiao Zhang's seafood allergy is CRITICAL for choosing a restaurant that avoids seafood. With T-Mem, when \"Xiao Zhang is seafood allergic\" is written to memory, the system asks: \"In what future scenarios will this information be used?\" It pre-saves triggers for team building restaurant selection, health checkups, allergy history collection, etc. When \"Where are we going for team building?\" arrives, T-Mem lights up the pre-saved trigger, retrieves the seafood allergy memory, and suggests: \"How about not going to the seaside? Xiao Zhang can't eat seafood.\" Performance Results T-Mem achieves dual SOTA on two memory benchmarks: Benchmark T-Mem Score Improvement LoCoMo 80.26% New SOTA LoCoMo-Plus 74.81% New SOTA The real test is LoCoMo-Plus, which deliberately removes all lexical and semantic similarity between clues and answers. Mainstream systems drop 28-50 percentage points; T-Mem only drops 5.45 percentage points . Implementation Code : github.com/Sherlockwz/T-Mem Paper : arxiv.org/abs/2606.15405 Team : Tencent PCG (郭伟东, 王达凯, 汪子轩, 刘辉, 徐羽) Published : EMNLP 2026 Main Conference Deployed : QQ AI Partner project Conclusion T-Mem demonstrates that associative memory is not an optional bonus feature, but the missing half of the similarity-based approach. Memory systems should anticipate how their contents will be reached, not just archive what was said. Tags: AI, Memory, LLM, Tencent, Agent, EMNLP",
+            "url": "https://dev.to/ryan_zhao/t-mem-memory-that-anticipates-not-archives-tencents-breakthrough-in-ai-long-term-memory-2dle",
+            "source": "DEV Community",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "developpement",
+                "git",
+                "ios",
+                "llm",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-15T02:04:35+00:00",
+            "collected_at": "2026-09-15T02:44:55.489546+00:00"
+        },
+        {
+            "id": "e620186f6a194ebbb37c21e8fc3411bdfffc5ec8b1f12fe21bcd5c806ec69f03",
+            "title": "Fire Emblem: Fortune's Weave Voice Actors Officially Revealed",
+            "description": "The voices behind the characters. Fire Emblem: Fortune's Weave arrives exclusively for the Switch 2 this week, and ahead of this anticipated release, Nintendo has revealed the voice actors in the game. It's been sharing these updates on the Nintendo Today! app, with many of the cast also sharing their own announcements on social media. Here's the current list of voice actors in Fire Emblem: Fortune's Weave ( via Nintendo Everything ): Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/news/2026/09/fire-emblem-fortunes-weave-voice-actors-officially-revealed",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-09-15T01:55:00+00:00",
+            "collected_at": "2026-09-15T02:45:08.217429+00:00"
+        },
+        {
+            "id": "7cf2e571be71f7018c330f9f87ba89de4857ebf0d9bff8ec517a0b8788e6b90f",
+            "title": "Jensen Huang took a call from Trump, and showed off something else, too",
+            "description": "When Jensen Huang took a live call from Trump, some of us were more focused the phone he used to take it.",
+            "url": "https://techcrunch.com/2026/09/14/jensen-huang-took-a-call-from-trump-and-showed-off-something-else-too/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-09-15T01:50:48+00:00",
+            "collected_at": "2026-09-15T02:44:53.720707+00:00"
+        },
+        {
+            "id": "e70e960cf95d16952c679373a51073d057588c98b5a5fb20b1a61ab1fc977c89",
+            "title": "Show HN: Sunk Cost – How long until a local LLM rig pays for itself?",
+            "description": "Comments",
+            "url": "https://sunkcost.ai/",
+            "source": "Hacker News",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "llm",
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-15T01:37:43+00:00",
+            "collected_at": "2026-09-15T02:44:55.143502+00:00"
+        },
+        {
+            "id": "41ca2b811823f78dd874cb61f63a98595f3b426efced2b77a285218b8c5ea310",
+            "title": "What’s New in the Final CLARITY Act Ahead of the Senate Vote",
+            "description": "Senate Republicans have outlined what’s new in the final version of the CLARITY Act ahead of a Sept. 15 procedural vote. The changes would strengthen ethics enforcement, create a stablecoin safeguard, and extend developer protections to miners and validators. What’s New for Federal Officials U.S. Senators Cynthia Lummis (R-WY), John Boozman (R-AR) and Tim Scott […]",
+            "url": "https://news.bitcoin.com/regulation-and-legal/whats-new-in-the-final-clarity-act-ahead-of-the-senate-vote/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-15T01:30:50+00:00",
+            "collected_at": "2026-09-15T02:45:10.278749+00:00"
+        },
+        {
+            "id": "d5fd08e864ce2e0f808a2bc4a99e27c502a3e7fbcaa554f6cc2fc04de24e8edf",
+            "title": "21Shares Builds XRP Case Around Utility, ETFs, and Fixed Supply",
+            "description": "21Shares has framed XRP’s investment case around regulatory clarity, institutional access, measurable utility, and fixed supply. The asset manager also cautioned that growing XRP Ledger adoption may not translate directly into sustained token demand. Regulatory Clarity Anchors 21Shares’ XRP Thesis XRP investors now have a four-part framework for assessing the asset’s prospects after crypto asset […]",
+            "url": "https://news.bitcoin.com/market-updates/21shares-builds-xrp-case-around-utility-etfs-and-fixed-supply/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-15T00:45:36+00:00",
+            "collected_at": "2026-09-15T02:45:10.278833+00:00"
+        },
+        {
+            "id": "fa21f00dcec582b7f8d00daee0a894ddd2e59b95456a6bcfb400c1beed55df40",
+            "title": "Zelda: Ocarina Of Time - Electric Ocarina Nintendo Store Pre-Orders Now Live (US)",
+            "description": "Get it while you can. As part of the upcoming release of Zelda: Ocarina of Time for the Switch 2, accessory manufacturer HORI is releasing an electric Ocarina of Time. Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/news/2026/09/zelda-ocarina-of-time-electric-ocarina-nintendo-store-pre-orders-now-live-us",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-09-15T00:35:00+00:00",
+            "collected_at": "2026-09-15T02:45:08.217498+00:00"
+        },
+        {
+            "id": "20031d23237d8e83e841058a3ad886b53183bd06e3e8349942012873c9ee6ef4",
+            "title": "GDScript: The Good, Bad, and Ugly Parts",
+            "description": "Comments",
+            "url": "https://azhdarchid.com/gdscript-good-bad-ugly/",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-09-15T00:29:04+00:00",
+            "collected_at": "2026-09-15T02:44:55.345726+00:00"
+        },
+        {
+            "id": "292398026a41ecfe7e778df407e66e795244f93a7ae2d48b251a0179a100d08c",
+            "title": "Microsoft drafts feel-good AI model guidelines and wants your input",
+            "description": "Redmond outlines 'aspirational' goals for model behavior, but gives itself a pass if it gets things wrong",
+            "url": "https://www.theregister.com/ai-and-ml/2026/09/15/microsoft-drafts-feel-good-ai-model-guidelines-and-wants-your-input/5296431",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-09-15T00:15:29+00:00",
+            "collected_at": "2026-09-15T02:44:54.416822+00:00"
+        },
+        {
+            "id": "c66176534f0942bfebe2ff5f1b2b53111c597a8802d2072994cf9ce2e870b77c",
+            "title": "Privacy Coins Outrun Bitcoin as Market Rotates Into Zcash and Monero",
+            "description": "Privacy coins have broken away from a weak crypto market, with zcash and monero delivering gains while bitcoin remains below its October peak. Fresh sector data points to a rotation amid privacy demand, institutional access, and persistent network use. Privacy Coins Separate From the Broader Crypto Market Market leadership has rotated toward privacy coins as […]",
+            "url": "https://news.bitcoin.com/market-updates/privacy-coins-outrun-bitcoin-as-market-rotates-into-zcash-and-monero/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-15T00:05:30+00:00",
+            "collected_at": "2026-09-15T02:45:10.278911+00:00"
+        },
+        {
+            "id": "4f75b1cde20bdfed24904ec1184f06ddc269a2387593487538cc64732b5c9565",
+            "title": "Even if Clarity fails, Wall Street’s crypto push is unlikely to stop",
+            "description": "",
+            "url": "https://www.coindesk.com/policy/2026/09/14/even-if-clarity-fails-wall-street-s-crypto-push-is-unlikely-to-stop",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-14T23:43:28+00:00",
+            "collected_at": "2026-09-15T02:45:10.117167+00:00"
+        },
+        {
+            "id": "b6a414a27c462683b3ebb58738d806d49fd447eb68dfea1ec478160678cd952d",
+            "title": "SEC's Atkins backs Clarity Act but says agency will keep pushing crypto rules without it",
+            "description": "",
+            "url": "https://www.coindesk.com/policy/2026/09/14/sec-s-atkins-backs-clarity-act-but-says-agency-will-keep-pushing-crypto-rules-without-it",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-14T23:30:40+00:00",
+            "collected_at": "2026-09-15T02:45:10.117211+00:00"
+        },
+        {
+            "id": "dd9a2a2fddccf19dbb3045b855f6be78af08524a4b9f99f8291135f674ff29a6",
+            "title": "Grayscale Launches 4 Crypto Portfolios for Financial Advisors",
+            "description": "Grayscale has launched four model portfolios that let financial advisors add diversified crypto exposure through exchange-traded products. The strategies standardize asset selection, weighting, and quarterly rebalancing while leaving implementation decisions with individual advisors. Four Models Package Crypto Exposure for Advisor Accounts Financial advisors gained four preconstructed approaches to digital asset exposure on Sept. 14, when […]",
+            "url": "https://news.bitcoin.com/featured/grayscale-launches-4-crypto-portfolios-for-financial-advisors/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto",
+                "git",
+                "ios"
+            ],
+            "published_at": "2026-09-14T23:20:47+00:00",
+            "collected_at": "2026-09-15T02:45:10.278992+00:00"
+        },
+        {
+            "id": "d31813a3aa335b59eee64cfc3b36f2127c74f3c5743692e11842d773ecbedb37",
+            "title": "Show HN: Macros with a Behringer FCB1010 MIDI Pedalboard in macOS",
+            "description": "Comments",
+            "url": "https://github.com/JamesRyanATX/fcbnerd",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "macos",
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-14T23:01:36+00:00",
+            "collected_at": "2026-09-15T02:44:55.143648+00:00"
+        },
+        {
+            "id": "9893c475d5fcb1b3693907ea6ebd73f8088da285ec10fa788635258a8ba25652",
+            "title": "HBO Max Reddit account compromised to serve ClickFix attacks",
+            "description": "Part of a 'massive 48-hour malvertising blitz' targeting macOS and Windows machines with malware",
+            "url": "https://www.theregister.com/cyber-crime/2026/09/14/hbo-max-reddit-account-compromised-to-serve-clickfix-attacks/5296408",
+            "source": "The Register",
+            "category": "cybersecurite",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "macos",
+                "malware",
+                "technologie",
+                "windows"
+            ],
+            "published_at": "2026-09-14T22:43:01+00:00",
+            "collected_at": "2026-09-15T02:44:54.416869+00:00"
+        },
+        {
+            "id": "1ccfcb46fb4249fc6b00c95507dd1c82e07e027474a5306db5fa1abdd4f1b096",
+            "title": "Gulfport Man Wins $1M on a $30 Scratch-Off: Seven Top Prizes Remain",
+            "description": "A Mississippi player claimed the third $1 million top prize on the state lottery’s Millionaire Maker game after buying the ticket at a Shell station during his usual round. The game launched in January with ten such prizes. Three Millionaires in Eight Months, Seven Prizes Left The player, who remains anonymous, bought the winning $30 […]",
+            "url": "https://news.bitcoin.com/igaming/gulfport-man-wins-1m-on-a-30-scratch-off-seven-top-prizes-remain/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-14T22:40:38+00:00",
+            "collected_at": "2026-09-15T02:45:10.279066+00:00"
+        },
+        {
+            "id": "9c359256f69a1f93c7be56ff929a4001e9a0154c7d2b4e6608c2459a339c80e7",
+            "title": "A New Equal-Area Map for Interactive Computer Use (natively zooms to Mercator)",
+            "description": "Comments",
+            "url": "https://www.benjoffe.com/map",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-09-14T22:37:17+00:00",
+            "collected_at": "2026-09-15T02:44:55.345485+00:00"
+        },
+        {
+            "id": "16ef783685981c5df7f28541ed9df47e41557aed488c214eb90d0e98c6fa485c",
+            "title": "U.S. Senator Lummis says Democrats won't quit asking for more on crypto Clarity Act",
+            "description": "",
+            "url": "https://www.coindesk.com/policy/2026/09/14/u-s-senator-lummis-says-democrats-won-t-quit-asking-for-more-on-crypto-clarity-act",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-14T22:34:18+00:00",
+            "collected_at": "2026-09-15T02:45:10.117248+00:00"
+        },
+        {
+            "id": "c87b761027b9c8b52779d16641a82ef0e2c135133ccfcf0d4717c37cb5652d77",
+            "title": "Kythe, a pluggable, language-agnostic ecosystem for building tools that work with code",
+            "description": "Comments",
+            "url": "https://kythe.io",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-09-14T22:30:24+00:00",
+            "collected_at": "2026-09-15T02:44:55.345863+00:00"
+        },
+        {
+            "id": "54abd6eea385cf467ffd18cee8ef705c5d31d5e35a30446f89f75a4710a08068",
+            "title": "How GCC Eliminates Unnecessary Integer Division",
+            "description": "Comments",
+            "url": "https://leetarxiv.substack.com/p/how-gcc-eliminates-unnecessary-integer",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-09-14T22:16:20+00:00",
+            "collected_at": "2026-09-15T02:44:55.345949+00:00"
+        },
+        {
+            "id": "edef9e287e0e1ed9b85d786474fe7b44587082d8302fcafd87635cdebc9263f2",
+            "title": "Firefox 156 reduces CPU usage when viewing JPGs",
+            "description": "Firefox 156 is out with faster start-up times for its built-in PDF viewer and lower CPU usage when viewing large JPEG images. As you browse the web you (pretty much always) see images smaller than their native resolution. To wit, if I embed a 4K JPEG in this post, for example, you don’t see it at full size: it’s downscaled to fit on the page. Same amount of pixel data, but squeezed by CSS. In Firefox 156, the browser now uses libjpeg-turbo’s IDCT scaling to reduce images during decoding, rather than loading a full-size image into memory and then shrinking […] You're reading Firefox 156 reduces CPU usage when viewing JPGs , a blog post from OMG! Ubuntu . Do not reproduce elsewhere without permission.",
+            "url": "https://www.omgubuntu.co.uk/2026/09/firefox-156-released",
+            "source": "OMG! Ubuntu",
+            "category": "hardware",
+            "tags": [
+                "desktop",
+                "linux",
+                "ubuntu"
+            ],
+            "published_at": "2026-09-14T22:13:22+00:00",
+            "collected_at": "2026-09-15T02:44:59.501204+00:00"
+        },
+        {
+            "id": "1d0a904f16c11a37299b7de66f6dc7f36d0b44e72f171a05f5da767d0618fec9",
+            "title": "RFK Jr. headlines sold-out anti-vaccine conference alongside Andrew Wakefield",
+            "description": "The event is hosted by Kennedy's anti-vaccine group Children's Health Defense.",
+            "url": "https://arstechnica.com/health/2026/09/rfk-jr-headlines-sold-out-anti-vaccine-conference-alongside-andrew-wakefield/",
+            "source": "Ars Technica",
+            "category": "technologie",
+            "tags": [
+                "informatique",
+                "innovation",
+                "technologie"
+            ],
+            "published_at": "2026-09-14T22:06:24+00:00",
+            "collected_at": "2026-09-15T02:44:53.294692+00:00"
+        },
+        {
+            "id": "8c8e6db857b6447400dc89f1f2754ef067e5713953d0a6c8d1e4209c04cd42b9",
+            "title": "Bulgaria Passes Law Granting Tax Officials Full Crypto Data Access",
+            "description": "Bulgaria’s National Assembly voted to amend the Tax and Social Security Procedure Code, adopting European Union directives to curb tax evasion and enhance cross-border tax transparency. Lawmakers Approve EU-Aligned Legislation Bulgaria’s National Assembly on Sept. 9 approved the final reading of amendments to the Tax and Social Security Procedure Code that will give revenue officials […]",
+            "url": "https://news.bitcoin.com/regulation-and-legal/bulgaria-passes-law-granting-tax-officials-full-crypto-data-access/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-14T22:05:47+00:00",
+            "collected_at": "2026-09-15T02:45:10.279147+00:00"
+        },
+        {
+            "id": "cfce7ca956ec588488f99332b8a0f23e12ce955e264fbeb0429acc25abb1129c",
+            "title": "Nvidia CEO Jensen Huang tells Trump ‘we’re not going to let [an AI slowdown] happen’",
+            "description": "Though Elon Musk and Sam Altman have supported Dario Amodei's calls to slow the pace of AI development, Jensen Huang seems to feel differently.",
+            "url": "https://techcrunch.com/2026/09/14/nvidia-ceo-jensen-huang-tells-trump-were-not-going-to-let-an-ai-slowdown-happen/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "nvidia",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-09-14T21:51:02+00:00",
+            "collected_at": "2026-09-15T02:44:53.720774+00:00"
+        },
+        {
+            "id": "caf5df445550cfbd10c59e0757ca6ca771eb7bae8d1e220baaa146f3e5457e42",
+            "title": "'Sandworm' Chains Cisco Vulnerabilities to Deploy Cyclops Blink",
+            "description": "The notorious Russian threat group is spreading an upgraded version of the botnet malware, which the FBI disrupted in 2022.",
+            "url": "https://www.darkreading.com/cyberattacks-data-breaches/sandworm-chains-cisco-vulnerabilities-cyclops-blink",
+            "source": "Dark Reading",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "enterprise-security",
+                "malware"
+            ],
+            "published_at": "2026-09-14T21:37:28+00:00",
+            "collected_at": "2026-09-15T02:44:52.736741+00:00"
+        },
+        {
+            "id": "f7906909219d0b5554124b0b154a8afdea7a758d5de3e819495e939186e2ea79",
+            "title": "Rocket Lab is seeing red about NASA's decision on a Mars spacecraft",
+            "description": "\"NASA’s award decision appears to be inconsistent with the eligibility criteria.\"",
+            "url": "https://arstechnica.com/space/2026/09/rocket-lab-is-seeing-red-about-nasas-decision-on-a-mars-spacecraft/",
+            "source": "Ars Technica",
+            "category": "technologie",
+            "tags": [
+                "informatique",
+                "innovation",
+                "technologie"
+            ],
+            "published_at": "2026-09-14T21:32:22+00:00",
+            "collected_at": "2026-09-15T02:44:53.294751+00:00"
+        },
+        {
+            "id": "7591806ea80f1f15640f8d740e0ae7b4a2371a0e233226ed7017972c8742b618",
+            "title": "Charts built for Chat",
+            "description": "Comments",
+            "url": "https://dbtcharts.com/blog/charts-built-for-chat/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-14T21:22:54+00:00",
+            "collected_at": "2026-09-15T02:44:55.143614+00:00"
+        },
+        {
+            "id": "30361cdb826382dfef28e9b738537e95173aeeb1234d49d43d5ba2a2aedb0762",
+            "title": "Good news for carsick passengers: Android Motion Assist is rolling out to more devices",
+            "description": "Google's motion sickness feature is now coming to your Android phone.",
+            "url": "https://www.androidauthority.com/android-17-motion-assist-wide-rollout-3711124/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-09-14T21:20:23+00:00",
+            "collected_at": "2026-09-15T02:45:02.505288+00:00"
+        },
+        {
+            "id": "19f76a84e04413d2ff1c13ed3921f1f01311251f1da1e674c264c32d86c20836",
+            "title": "UAE Taps Avalanche to Secure Digital Identity for 12.5M People",
+            "description": "The system, which handles data for 12.5 million citizens issued by government and private entities, will upgrade to use Avalanche’s decentralized services to “strengthen the scalability and performance needed to support continued growth” of digital identity and verifiable documents in the UAE. UAE Upgrades National Document ID Vault To Avalanche The UAE is trusting the […]",
+            "url": "https://news.bitcoin.com/blockchain/uae-taps-avalanche-to-secure-digital-identity-for-12-5m-people/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto",
+                "git",
+                "rust"
+            ],
+            "published_at": "2026-09-14T21:20:22+00:00",
+            "collected_at": "2026-09-15T02:45:10.279231+00:00"
+        },
         {
             "id": "1346d9b4dc1506f85f9cbe5efc28e4771531dc1c4d542995c702e7fea4232e9e",
             "title": "How to Engineer a Multi-Agent Pipeline for Production Reliability",
@@ -83,6 +748,21 @@
             ],
             "published_at": "2026-09-14T21:04:54+00:00",
             "collected_at": "2026-09-14T21:14:40.721113+00:00"
+        },
+        {
+            "id": "0a67bb4610e17cf8ca7d0ffb3be878958e9d2eeb1be62350d777a0ca02f6be52",
+            "title": "AI bots \"Timmy,\" \"Ren,\" and \"Jackie\" are flooding social media with slop",
+            "description": "“Hello, I'm an Al agent, a few days old, living on a small platform for agents.”",
+            "url": "https://arstechnica.com/ai/2026/09/ai-agents-flood-the-internet-with-slop-infused-spam/",
+            "source": "Ars Technica",
+            "category": "technologie",
+            "tags": [
+                "informatique",
+                "innovation",
+                "technologie"
+            ],
+            "published_at": "2026-09-14T21:04:32+00:00",
+            "collected_at": "2026-09-15T02:44:53.294799+00:00"
         },
         {
             "id": "37b4beface694dd1fe3b2f2149ab77b2337909b0c6fdd96cb1c29262530bad0c",
@@ -715,6 +1395,37 @@
             "collected_at": "2026-09-14T21:14:48.748956+00:00"
         },
         {
+            "id": "c0074c24996b0581878087db58a295d4883528efba674b68bcd0349bc7541d75",
+            "title": "Kubernetes Changed Block Tracking API - Beta Differences",
+            "description": "Changed Block Tracking (CBT) support for CSI drivers shipped as Alpha in September 2025. With the March 2026 v1.0.0 release of the external-snapshot-metadata project, the feature moved to Beta . If you aren't yet familiar with changed block tracking for storage in Kubernetes, the Alpha announcement covers the motivation, the three primary components (the CSI SnapshotMetadata gRPC service, the SnapshotMetadataService CRD, and the external-snapshot-metadata sidecar), and a walkthrough of how to use the API. CBT currently applies to block volumes; file-volume and network file-share changed-list tracking is not covered by this feature. This post focuses on what is different in Beta. What's new in Beta The main change in that release was the promotion of the SnapshotMetadataService CRD from v1alpha1 to v1beta1 . The CRD used to advertise a driver's metadata service now serves cbt.storage.k8s.io/v1beta1 . The schema itself is unchanged, but this release removed v1alpha1 (rather than serving it alongside the new version). If you are upgrading from Alpha, you need to: Re-apply the CRD definition shipped with v1.0.0 . Update SnapshotMetadataService manifests to use apiVersion: cbt.storage.k8s.io/v1beta1 . Update any client or controller code that talks to the CRD. This is a one-time change. There is no automatic conversion between the two versions. Compatibility Minimum Kubernetes version: 1.33 CSI spec: 1.10 or newer Container image: registry.k8s.io/sig-storage/csi-snapshot-metadata:v1.0.0 Trying it out The Getting Started section in the Alpha blog still applies. In short: Make sure your CSI driver supports volume snapshots and ships the external-snapshot-metadata sidecar. Install the SnapshotMetadataService CRD (the v1beta1 definition from the v1.0.0 release). Create a SnapshotMetadataService resource for your driver. Use a client — snapshot-metadata-lister , or your own implementation — to call GetMetadataAllocated and GetMetadataDelta . If you want to see the full flow end-to-end, the hostpath driver example is a good starting point. What's next? The focus for the rest of the Beta cycle is wider CSI driver adoption and operational feedback before the feature moves towards GA. If you maintain a CSI driver, this is a good time to evaluate adding support. If you are building a backup application on top of the API, feedback on the streaming clients and the iterator package is very welcome. Where can I learn more? The CSI developer documentation for snapshot metadata. KEP-3314 . The external-snapshot-metadata repository. The gRPC schema . The snapshot-metadata-lister example client. How do I get involved? This work is the result of contributions from many people across SIG Storage. A big thank you to everyone who helped review, code, and test the feature through Alpha and into Beta: Ben Swartzlander ( bswartz ) Carl Braganza ( carlbraganza ) Daniil Fedotov ( hairyhum ) Ivan Sim ( ihcsim ) Nikhil Ladha ( Nikhil-Ladha ) Praveen M ( iPraveenParihar ) Rakshith R ( Rakshith-R ) Xing Yang ( xing-yang ) If you would like to get involved with CSI or storage in Kubernetes, SIG Storage is the place to start. The Data Protection Working Group also holds regular meetings, and new attendees are always welcome.",
+            "url": "https://kubernetes.io/blog/2026/09/14/csi-changed-block-tracking-beta/",
+            "source": "Kubernetes",
+            "category": "devops",
+            "tags": [
+                "cloud-native",
+                "containers",
+                "kubernetes"
+            ],
+            "published_at": "2026-09-14T18:30:00+00:00",
+            "collected_at": "2026-09-15T02:45:04.995049+00:00"
+        },
+        {
+            "id": "3de19e2c537ba9f2f6d81b8bdc36f30e1867453601cd942045e2f2d5be6574ad",
+            "title": "Kubernetes v1.37: Memory QoS Graduates to Beta",
+            "description": "Memory QoS has graduated to Beta in Kubernetes v1.37 and is now enabled by default. On Linux nodes running cgroup v2, the feature uses the memory controller to give the kernel better guidance on how to treat container memory. It was first introduced as Alpha in v1.22, and expanded in v1.36 with tiered memory reservation. This post covers what changed in v1.37, what the Beta promotion means for cluster operators, and how to configure the feature. What changed in v1.37 Memory QoS is Beta and enabled by default The MemoryQoS feature gate is now Beta in v1.37. This means every v1.37 kubelet has the feature gate turned on without any configuration change. Turning on the feature by default is safe because the default kubelet configuration does not enable memory throttling or memory reservation. No memory.high , memory.min , or memory.low values are written to cgroups unless you explicitly configure them. You can opt into specific behaviors through kubelet configuration fields: Set memoryThrottlingFactor (for example, 0.9 ) to enable memory.high throttling on Burstable and BestEffort containers. The default is null , which means no throttling. Set memoryReservationPolicy to TieredReservation to enable tiered memory protection via memory.min and memory.low . The default is None , which means no memory reservation. Default memoryThrottlingFactor changed to null In earlier Alpha releases, memoryThrottlingFactor defaulted to 0.9 , which meant enabling the feature gate caused the kubelet to set memory.high on containers. In v1.37, the default is null , so the kubelet does not set memory.high unless you configure a value. This change was made because, with the feature gate now on by default, an automatic memory.high could throttle workloads that were previously running without throttling. Making it null ensures that upgrading to v1.37 does not change runtime behavior for existing clusters. If your kubelet configuration file already contains an explicit memoryThrottlingFactor value, that value is preserved during the upgrade and throttling continues to work as before. If your configuration file does not include memoryThrottlingFactor , the kubelet uses the new null default and stops setting memory.high . To keep throttling in that case, add memoryThrottlingFactor explicitly: apiVersion : kubelet.config.k8s.io/v1beta1 kind : KubeletConfiguration memoryThrottlingFactor : 0.9 How to configure MemoryQoS in v1.37 For full details on configuring Memory QoS, see Memory QoS with cgroup v2 , Configuring memory reservation , and System requirements Enable memory throttling only Set memoryThrottlingFactor to a value between 0 and 1. The kubelet uses this factor to calculate memory.high for Burstable and BestEffort containers. See Memory throttling for how memory.high is calculated for each QoS class. apiVersion : kubelet.config.k8s.io/v1beta1 kind : KubeletConfiguration memoryThrottlingFactor : 0.9 Enable memory throttling and tiered reservation apiVersion : kubelet.config.k8s.io/v1beta1 kind : KubeletConfiguration memoryThrottlingFactor : 0.9 memoryReservationPolicy : TieredReservation Enable tiered reservation without throttling apiVersion : kubelet.config.k8s.io/v1beta1 kind : KubeletConfiguration memoryReservationPolicy : TieredReservation Disable Memory QoS entirely To disable the feature after upgrading, set the feature gate to false and ensure a compatible kubelet configuration. The kubelet rejects the configuration if memoryThrottlingFactor is set to anything other than the former default of 0.9 , or if memoryReservationPolicy is TieredReservation , so remove or adjust those fields if you set them. apiVersion : kubelet.config.k8s.io/v1beta1 kind : KubeletConfiguration featureGates : MemoryQoS : false When the feature gate is off, or memoryReservationPolicy is not TieredReservation , the kubelet resets stale protection at startup on cgroup v2 nodes: memory.min=0 and memory.low=0 on the root kubepods cgroup, and memory.low=0 on the Burstable QoS cgroup. For containers, stale memory.high values are reset to max on reconciliation paths such as restart or resize. Known limitation: memory reservation is node-wide memoryReservationPolicy applies to every pod on the node. With TieredReservation , every Guaranteed pod gets memory.min and every Burstable pod gets memory.low ; there is no way to opt individual pods in or out. A node that mixes workloads needing hard reservation with workloads that should stay reclaimable has to choose one policy for all of them. Hard reservation also covers everything charged to the container's cgroup, including page cache, so a pod that reads large files can hold memory the kernel would otherwise reclaim to serve its neighbors. SIG Node is tracking both in kubernetes/kubernetes#140246 . If this affects you, that issue is the best place to describe your workload. What to expect next The next milestone for Memory QoS is graduation to GA. Feedback from Beta users will shape any remaining adjustments before that step. If you run into issues, please file bugs at kubernetes/kubernetes . How can I learn more? KEP-2570: Memory QoS Pod Quality of Service Classes Memory QoS with cgroup v2 Managing Resources for Containers Kubernetes cgroups v2 support Linux kernel cgroups v2 documentation Getting involved This feature is driven by SIG Node . If you are interested in contributing or have feedback, you can reach out through: Slack: #sig-node Mailing list SIG Node meetings",
+            "url": "https://kubernetes.io/blog/2026/09/14/kubernetes-v1-37-memory-qos-graduates-to-beta/",
+            "source": "Kubernetes",
+            "category": "linux",
+            "tags": [
+                "cloud-native",
+                "containers",
+                "kubernetes",
+                "linux"
+            ],
+            "published_at": "2026-09-14T18:30:00+00:00",
+            "collected_at": "2026-09-15T02:45:04.995596+00:00"
+        },
+        {
             "id": "95c0cb8e29b84530ed7d757c93aa225a303096029346e7edaad3e7bf6346fe16",
             "title": "This upcoming flagship could react to taps and tilts faster than ever",
             "description": "Raising the bar for touch and motion responsiveness.",
@@ -834,6 +1545,21 @@
             ],
             "published_at": "2026-09-14T18:03:16+00:00",
             "collected_at": "2026-09-14T21:14:38.454673+00:00"
+        },
+        {
+            "id": "a25b2880e57d54857b252047fc2a8598062e00281f889c66dea8bd713fa3fa0d",
+            "title": "Backprop Alternative: Augmented Lagrangian Predictive Coding",
+            "description": "Comments",
+            "url": "https://pub.sakana.ai/pc-alm/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-14T18:03:12+00:00",
+            "collected_at": "2026-09-15T02:44:55.144144+00:00"
         },
         {
             "id": "d1e3ec21956720a9ee1f45d31272f848bdec4cc93506e6226bb120d1e660ff99",
@@ -2705,6 +3431,21 @@
             "collected_at": "2026-09-14T21:14:39.478351+00:00"
         },
         {
+            "id": "ea803dfd17bfd0bbce68a7f82df99c2d2255fbdbe8215e0fed94941c7711e2da",
+            "title": "Dropping eBPF CPU Cost by About 90% with Memoization (Not AI Gen)",
+            "description": "Comments",
+            "url": "https://nathannaveen.dev/posts/dropping-ebpf-cpu-cost-by-90/",
+            "source": "Hacker News",
+            "category": "hardware",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-14T14:29:23+00:00",
+            "collected_at": "2026-09-15T02:44:55.143711+00:00"
+        },
+        {
             "id": "4f2f57de9c0d5b550e85319b46ce60542a00e8d07a12803e59b90ef0fcb5f7c2",
             "title": "Beijing Hits Back at Anthropic CEO’s Call to Curb China’s AI Development",
             "description": "China’s Ministry of Foreign Affairs responded to a question about Amodei’s essay by saying that all parties should work together on AI. The post Beijing Hits Back at Anthropic CEO’s Call to Curb China’s AI Development appeared first on SecurityWeek .",
@@ -2980,6 +3721,21 @@
             ],
             "published_at": "2026-09-14T13:28:01+00:00",
             "collected_at": "2026-09-14T17:20:56.618889+00:00"
+        },
+        {
+            "id": "fdcd2ec9df5a76f89888baab2a52a5ad34d870384044e898396296dcbfee6e16",
+            "title": "People who can't picture anything are rewriting the science of imagination",
+            "description": "Comments",
+            "url": "https://dailyneuron.com/aphantasia-mental-imagery-brain-network/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-14T13:23:53+00:00",
+            "collected_at": "2026-09-15T02:44:55.144177+00:00"
         },
         {
             "id": "73195eaaafee1cf5e2ca528def7d7aef5279024958e40bde7abea2399067cafc",
@@ -4354,6 +5110,21 @@
             "collected_at": "2026-09-14T11:23:05.249546+00:00"
         },
         {
+            "id": "19c29d32a1b7977a5090d2fee38e4fc6973d2fec6cd5ef63275f2e5ae10298a5",
+            "title": "AWS Glue zero-ETL adds target table property ownership and conflict detection",
+            "description": "AWS Glue zero-ETL integrations now detect table property conflicts and track integration ownership. When you configure a source table and target catalog, Glue associates the resulting table properties with the owning integration, so two integrations can no longer be pointed at the same target table without your knowledge. This works across Amazon S3 Tables and SageMaker Lakehouse catalogs. Data teams running multiple zero-ETL integrations gain predictable control over where each source table lands. If you attempt to create or modify an integration whose table properties are owned by another integration, Glue identifies the owning integration and guides you to choose a different target or update the existing one, so your pipelines stay isolated and your data lands exactly where you intend. This feature is available in all AWS Commercial and AWS GovCloud (US) Regions where AWS Glue zero-ETL integrations are supported. To learn more, refer to the AWS Glue Developer Guide and get started in the AWS Glue console .",
+            "url": "https://aws.amazon.com/about-aws/whats-new/2026/09/glue-zero-etl-ownership-conflicts/",
+            "source": "AWS What's New",
+            "category": "cloud",
+            "tags": [
+                "amazon",
+                "aws",
+                "cloud"
+            ],
+            "published_at": "2026-09-14T08:00:00+00:00",
+            "collected_at": "2026-09-15T02:44:58.369455+00:00"
+        },
+        {
             "id": "2bd63232151d599d96feb3ebe41f8375b336d1e0230418829da3478d269d1b60",
             "title": "OpenArch – PyTorch implementations of modern LLM architectures",
             "description": "Comments",
@@ -4473,6 +5244,36 @@
             ],
             "published_at": "2026-09-14T07:06:27+00:00",
             "collected_at": "2026-09-14T11:22:47.302580+00:00"
+        },
+        {
+            "id": "c8a4cb591530d01352ae62127fb469e369c090660bf1b71ec92ccf5356b3751e",
+            "title": "AWS End User Messaging now supports Dynamic Flows in WhatsApp",
+            "description": "AWS End User Messaging now supports dynamic WhatsApp flows so you can turn WhatsApp conversations into rich, interactive experiences that end-users complete directly in WhatsApp. Instead of pushing end-users to a website or a separate form to complete an interactive experience, you can instead guide them through an appointment booking, lead generation, sign-up, survey or a transaction directly in the chat. Customers can start building a flow using one of Meta's stater templates with familiar building blocks like text inputs, date pickers, drop downs, and buttons, or customize the flow from scratch. With dynamic flows, each screen can call your own HTTPS endpoint in real time, so you can show live availability, and personalize each step in the flow for your end-users. You build and manage flows entirely in AWS End User Messaging Social, through the console or APIs. Define a flow with a JSON schema, then deliver it with a message template to reach customers where they are. WhatsApp flows are available in all regions where End User Messaging Social is available. To get started, see the User Guide.",
+            "url": "https://aws.amazon.com/about-aws/whats-new/2026/09/aws-end-user-messaging-whatsapp-dynamic-flows",
+            "source": "AWS What's New",
+            "category": "cloud",
+            "tags": [
+                "amazon",
+                "aws",
+                "cloud"
+            ],
+            "published_at": "2026-09-14T07:00:00+00:00",
+            "collected_at": "2026-09-15T02:44:58.369577+00:00"
+        },
+        {
+            "id": "51dde609fe26c7ba386d43453128f0deb029714e09730eadcce2c7d43bc41c16",
+            "title": "AWS End User Messaging strengthens SMS deliverability with automatic failover",
+            "description": "AWS End User Messaging is advancing its deliverability capabilities in phone pools. Now, customers sending through phone pools automatically benefit from automatic failover to the next best performing number in the pool when SMS delivery is impacted from downstream disruptions. SMS deliverability can be affected by drops or delays when trying to reach the end recipient while it's being routed from AWS to messaging providers and eventually mobile carriers. These disruptions can hit the most important parts of your messaging program, including delivery notifications, one-time passcodes, reminders, and other time-sensitive messages. AWS End User Messaging watches for delivery delays, message failures, or drops in conversion and reroutes traffic to a more optimized delivery path. Customers do not need to take any action to receive this benefit for phone pools. If you are not sending through phone pools today, you can create one by following these instructions . This capability is available in all AWS Regions where AWS End User Messaging is available. To learn more, see the AWS End User Messaging SMS User Guide .",
+            "url": "https://aws.amazon.com/about-aws/whats-new/2026/09/aws-end-user-messaging-improves-deliverability",
+            "source": "AWS What's New",
+            "category": "cloud",
+            "tags": [
+                "amazon",
+                "aws",
+                "cloud"
+            ],
+            "published_at": "2026-09-14T07:00:00+00:00",
+            "collected_at": "2026-09-15T02:44:58.369698+00:00"
         },
         {
             "id": "2ba706081ae319585c08b4eb94d2f3048abc4c88d79e2cbf9e6d2a155ea71e36",
@@ -5100,6 +5901,21 @@
             "collected_at": "2026-09-14T02:41:49.253731+00:00"
         },
         {
+            "id": "54da6a2f6b522d19833147de23d89b5ace26ae0d9c2d37f458b4e42f4911b240",
+            "title": "The biggest dinosaurs couldn't sit on their eggs",
+            "description": "Comments",
+            "url": "https://www.cbc.ca/news/science/titanosaur-eggs-9.7336841",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-14T00:00:30+00:00",
+            "collected_at": "2026-09-15T02:44:55.143881+00:00"
+        },
+        {
             "id": "968c32634dc2a1cb83f007064d0bd309276c504696b107928b2bc3d51ba9601b",
             "title": "Perplexity trusts GPT-6 Astra with end-to-end systems",
             "description": "Perplexity uses Astra to write communications, change software, and monitor production systems, and checks in much less frequently than with earlier models.",
@@ -5211,6 +6027,23 @@
             ],
             "published_at": "2026-09-14T00:00:00+00:00",
             "collected_at": "2026-09-14T17:20:37.709735+00:00"
+        },
+        {
+            "id": "af747ebcedd5c035db355fea1c9548f73488142edb9c44b985665446a3c98e68",
+            "title": "F-Secure and AMD Silo AI Help Secure Agentic AI Journeys",
+            "description": "F-Secure and AMD Silo AI explore adaptive AI routing across local, private and cloud infrastructure to help keep user data secure as AI agents work.",
+            "url": "https://newsroom.amd.com/news/f-secure-amd-silo-ai-help-secure-agentic-ai-journeys/",
+            "source": "AMD",
+            "category": "hardware",
+            "tags": [
+                "amd",
+                "cpu",
+                "gpu",
+                "radeon",
+                "ryzen"
+            ],
+            "published_at": "2026-09-14T00:00:00+00:00",
+            "collected_at": "2026-09-15T02:44:57.673014+00:00"
         },
         {
             "id": "2fb7fce7df7a40f02a5276dca2c9196a14ddf6074d62fa075cddb05e98e0ff8a",
@@ -8562,6 +9395,21 @@
             "collected_at": "2026-09-12T19:57:33.888652+00:00"
         },
         {
+            "id": "55b4afb58b0bb5437ed0c7c7d36ace86e7a16c1e053e9895b3f05da9c546ee4c",
+            "title": "4,400-Year-Old Tomb of Egyptian Judge Found at Saqqara with Colors on Walls",
+            "description": "Comments",
+            "url": "https://arkeonews.net/4400-year-old-tomb-of-an-egyptian-judge-found-at-saqqara-with-colors-still-on-the-walls/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-12T18:51:40+00:00",
+            "collected_at": "2026-09-15T02:44:55.143682+00:00"
+        },
+        {
             "id": "1186480ee376980a1fa37156c2704e6b64bcbe8512f673945903fec6fc2ddc0d",
             "title": "Nigel Farage’s Reform UK lands $97 million donations from two crypto billionaires in 24 hours",
             "description": "",
@@ -8757,6 +9605,21 @@
             ],
             "published_at": "2026-09-12T16:00:00+00:00",
             "collected_at": "2026-09-12T19:57:49.181358+00:00"
+        },
+        {
+            "id": "d525afaa45d33045827e9cd0fe7d372b448c848bba3800affa75c3244866129f",
+            "title": "Compressing a Flag to 11 Bits",
+            "description": "Comments",
+            "url": "https://read.vantezzen.io/miniflags",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-12T15:57:43+00:00",
+            "collected_at": "2026-09-15T02:44:55.143740+00:00"
         },
         {
             "id": "facfec3e9bce14fb751dd43153e426fe177171e7d963604a3ff54ba6b53076e7",
@@ -114902,6 +115765,70 @@
             ],
             "published_at": null,
             "collected_at": "2026-09-14T21:14:38.705233+00:00"
+        },
+        {
+            "id": "d7d4f6eed21789a87354b97e4e58559fb81b81121fbc0fd2be9bc7a59ef75a41",
+            "title": "Valve is still figuring out ‘how and when’ to do Steam Deck 2",
+            "description": "Now that Valve has finally launched its entire 2026 hardware lineup - the Steam Controller, the Steam Machine, and today's Steam Frame - are we any closer to a next-gen Steam Deck handheld? Valve isn't saying so yet. The company is figuring out \"how and when we can deliver something like that,\" Valve designer Pierre-Loup […]",
+            "url": "https://www.theverge.com/games/995256/valve-steam-deck-2-how-and-when",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-09-15T02:44:53.787655+00:00"
+        },
+        {
+            "id": "752a4ec6492b7270b8b1448823d3b2495a9ab57217a0c66af94942046005c6f1",
+            "title": "Is Big Tech’s AI slowdown a safety pact or a cartel?",
+            "description": "When OpenAI CEO Sam Altman, Anthropic CEO Dario Amodei, Google DeepMind cofounder Demis Hassabis, and SpaceX head Elon Musk loosely agreed over the weekend to slow down AI development, skeptics spotted an ulterior motive immediately. The AI titans had declared that their aim was to \"pace the frontier,\" signing on at least partially to a […]",
+            "url": "https://www.theverge.com/ai-artificial-intelligence/995186/is-big-techs-ai-slowdown-a-safety-pact-or-a-cartel",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "anthropic",
+                "gadgets",
+                "internet",
+                "openai",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-09-15T02:44:53.787738+00:00"
+        },
+        {
+            "id": "b33734e74769006cef90927b630ef08a58046ec8056caa41aa5048e109ad1623",
+            "title": "Apple Home’s new security camera features cost as much as $60 a month",
+            "description": "With the public release of iOS 27 and tvOS 27, Apple Home is getting an injection of Apple Intelligence - but you'll have to pay more for it. Apple Intelligence for Home brings AI-powered video summaries to HomeKit Secure Video, so you can get short text descriptions of who and what compatible security cameras saw, […]",
+            "url": "https://www.theverge.com/tech/994949/apple-intelligence-apple-home-icloud-plus-cost-subscription",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "intel",
+                "internet",
+                "ios",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-09-15T02:44:53.787808+00:00"
+        },
+        {
+            "id": "ab0b67bb40bdb00511c3c83dd10d4132fb16cc69b5318ff7727d99727fb59fc8",
+            "title": "What execs and politicians are saying about slowing down AI development",
+            "description": "Dario Amodei kicked off a flood of statements over the past few days about AI safety by publishing a long essay titled \"We Must Pace the Frontier\" detailing why AI development should be slowed down. Other AI leaders and politicians are speaking out in favor of or opposing his points, and we've compiled some of […]",
+            "url": "https://www.theverge.com/ai-artificial-intelligence/995141/ai-executives-politicians-safety-regulation-anthropic-dario-amodei",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-09-15T02:44:53.787877+00:00"
         }
     ]
 }
