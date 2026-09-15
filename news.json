@@ -1,7 +1,1728 @@
 {
-    "updated_at": "2026-09-15T10:47:00.827239+00:00",
-    "count": 7637,
+    "updated_at": "2026-09-15T15:59:24.014238+00:00",
+    "count": 7767,
     "articles": [
+        {
+            "id": "0fab2531ca99490d0c95e0d53478046cd37ac5b5fd8f94b1bb6a1d277ffd6d03",
+            "title": "Amazon slashes $135 off the Galaxy Watch 8 Classic LTE in standout deal",
+            "description": "Amazon cuts 25% off the Samsung Galaxy Watch 8 Classic, bringing Samsung’s premium 46mm LTE watch down to a stronger price.",
+            "url": "https://www.androidauthority.com/galaxy-watch-8-classic-lte-deal-3711521/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-09-15T15:53:10+00:00",
+            "collected_at": "2026-09-15T15:59:16.317818+00:00"
+        },
+        {
+            "id": "12df32037e45e55cc85edf98736ee402133017493d092212a2004e8c7cbe8ecb",
+            "title": "eBPF verifier limits are a design constraint: what CO-RE field offsets and bounded loops taught me",
+            "description": "TL;DR Working on talus-process-monitor (Rust userspace + libbpf/C eBPF) I kept bumping into the same three walls: CO-RE field offsets shifting between kernel versions, the verifier refusing anything that looks like an unbounded loop, and map access patterns that get rejected at load time. All three are design constraints, not compiler annoyances. This post is what changed in my approach once I stopped fighting them. CO-RE relocation is a promise you have to verify Portable BPF (Compile Once - Run Everywhere) means the kernel rewrites your field accesses based on its own BTF. In theory: compile once, run on kernel 6.x. In practice I chased two classes of bugs: struct file layout differences — an offset that's valid on kernel A and wrong on kernel B. The relocation did its job; I had assumed a field meant what it meant. Unavailable BTF — if the target kernel doesn't ship BTF, relocation fails at load with a cryptic error. It's a deployment check, not a code bug. What made this tractable: a verification matrix in CI — the same source compiled and loaded against a set of kernels, with the load result asserted. When a field offset drifts, the pipeline turns red before a cluster does. Body of the lesson: \"portable\" is a claim that must be tested per-kernel, or it's just hope. A build that passes on one kernel is a demo, not portability. The verifier forbids unbounded loops. That's fine; it teaches you state machines. The verifier allows bounded loops (with a maximum iteration count) and rejects anything unverifiable. If you want to scan \"all entries in this hash map\" you get rejected at load time. The productive response is to stop thinking \"iterate until done\" and think \"fixed horizon, amortized\": Lease the map. Instead of iterating the whole map per event, keep a fixed-size sliding window of state and, on overflow, process the oldest batch — a bounded, verifier-friendly step. Folding state into the map entry. Store the running score in the entry being updated, so decisions don't require iterating unrelated entries. Push the unbounded part userspace. The kernel probe exports a summary; the Rust side does the arbitrary-loop reasoning. This mirrors how real agents behave: kernel-side reaction is quick and bounded; the risky/flexible analysis happens outside the hot path. Map access patterns decide load-time rejection Two patterns get rejected at unexpected places: holding an entry pointer across a perf output call, and nested lookup while a lookup key is pinned. The verifier tracks what you are allowed to do while a value pointer is live . Restructure: copy the fields you need into stack-local values, then emit events. It's the difference between \"loads everywhere\" and \"loads only when the code is shaped right.\" Verification has to live in CI, not in your head The current talus trunk carries a verification document (field-offset matrix, per-kernel load expectations) plus CI that compiles and asserts. The single highest-value commit this project got was not a feature — it was the CI job that turned \"should work on this kernel\" into a machine-checked statement. Repo talus-process-monitor — Rust + libbpf/C eBPF endpoint security agent with a MeMLP neural detection engine; verification matrix lives in VERIFICATION-EBPF.md .",
+            "url": "https://dev.to/bartoszosiej/ebpf-verifier-limits-are-a-design-constraint-what-co-re-field-offsets-and-bounded-loops-taught-me-1akc",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-09-15T15:52:16+00:00",
+            "collected_at": "2026-09-15T15:59:09.685315+00:00"
+        },
+        {
+            "id": "7df750ec66f9cd39f888ec2e4f2612d4b4f40434690d6003ac139529ce34f70f",
+            "title": "Catching ransomware with eBPF: what execve/openat tracing taught me about false positives",
+            "description": "TL;DR talus-process-monitor is an eBPF-based ransomware detector for Linux: it traces execve / openat from the kernel, streams events over per-CPU perf buffers, and flags behavioural patterns — mass file rewrites plus extension churn — in real time. The hard part is not the tracing; it's scoring patterns without crying wolf on every cargo build . Why behaviour, not signatures Signature detection on Linux ransomware is nearly useless — most samples are short-lived, often scripts wrapping legitimate tools ( find , mv , gzip in a loop). What you can catch is the shape of the damage: hundreds of files opened, rewritten, renamed or re-extensioned within seconds across directories the process has no business touching. So talus watches: execve / execveat — what process tree is doing this? openat / openat2 — with which flags? ( O_WRONLY|O_CREAT churn is the signature move) unlink / rename — destruction and renaming patterns All of it from kernel probes, before the data hits disk crypto. The plumbing: per-CPU perf buffers or nothing First mistake I made: a single global ring buffer. Under parallel load (which is exactly when ransomware runs — it wants throughput), events collide and drop. The fix is standard but worth repeating: per-CPU perf buffers with a userspace loader pinning CPUs and reassembling event order per process. The userspace side is Rust; the eBPF side is libbpf/C with CO-RE. Compile once, run across kernel 6.x — in theory. In practice, verify your field offsets: struct file layout differences bit me twice. The scoring problem: build systems are innocent ransomware A naive \"N files written in T seconds\" rule fires constantly on: cargo build touching thousands of files in target/ kernel module compilation any test suite with fixtures Three heuristics that made the detector usable: Extension churn, not just writes. Ransomware renames ( doc.docx → doc.docx.locked ) or re-extensions in bulk. Builders write new files but rarely rename existing ones at volume. Write-after-read density. Encryptors must read the plaintext before rewriting it. A builder writes fresh output without having read those exact files. Directory breadth vs. depth. target/ is one deep subtree; ransomware sweeps breadth-first across $HOME . None of these is a silver bullet; the score is a weighted blend, and the weights are the actual product. What I'd do differently Ship the audit mode first : weeks of logs on a real desktop before enforcing anything. False-positive rates you guess are wrong. Make the threshold config per-directory-class ( build-dirs , home , media ), not global. eBPF verifier limits are a design constraint from day one — bounded loops, no unbounded map iteration — or you'll redesign the detection logic twice. Repo Code, architecture notes and verification checklist: talus-process-monitor (Rust + libbpf/C, Linux 6.x).",
+            "url": "https://dev.to/bartoszosiej/catching-ransomware-with-ebpf-what-execveopenat-tracing-taught-me-about-false-positives-4676",
+            "source": "DEV Community",
+            "category": "cybersecurite",
+            "tags": [
+                "developpement",
+                "git",
+                "linux",
+                "programmation",
+                "ransomware",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-09-15T15:52:15+00:00",
+            "collected_at": "2026-09-15T15:59:09.685540+00:00"
+        },
+        {
+            "id": "a89cdab5595bf3a679b9bc003cd5963732ec8954818560a840166abd9a0958d0",
+            "title": "Crypto Clarity Act barrels toward disappointment barring last-minute Senate turnaround",
+            "description": "",
+            "url": "https://www.coindesk.com/policy/2026/09/15/crypto-clarity-act-barrels-toward-disappointment-barring-last-minute-senate-turnaround",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-15T15:50:23+00:00",
+            "collected_at": "2026-09-15T15:59:22.776441+00:00"
+        },
+        {
+            "id": "cd7ccec313d4d3435adb2bc64f95b03446eaaba4bbbd4b34569e942e1cedb4b8",
+            "title": "Shipping a statistical model to the browser: Dixon–Coles soccer predictions with no backend and no API key",
+            "description": "I wanted a public page where anyone could click a soccer match and see real probabilities behind it — 1X2, Over/Under, both teams to score, exact scorelines. The model already existed: a Dixon–Coles bivariate Poisson fitted on finished matches. The hard part was never the statistics. It was getting the thing onto a page that costs me nothing and exposes nothing. Here's what I ended up with, and why the obvious approaches don't work. Three options that all fail Call the API from the browser. Simplest to write, and it puts my API token in everyone's DevTools. Dead on arrival. Put a proxy in front of it. Now I'm running a server, and every visitor — including every bot — costs me a model run. A page that gets popular becomes a page that bills me for being popular. That's a bad shape for a free demo. Pre-render everything to static HTML. Cheap and safe, but the whole point is interaction. I want you to flip the Over/Under line from 2.5 to 3.5 and see the number move. Pre-rendering every market for every line for every match is a combinatorial mess, and it's a lot of bytes to ship. All three fail for the same reason: they treat the model's output as the thing to deliver. The parameters are smaller than the answers A Dixon–Coles model, once fitted, is almost nothing. Per match, it's two expected goal rates — λ for the home side, λ for the away side. Per league, it's one low-score correlation parameter, ρ. That's it. Every market on the page is arithmetic over those three numbers. So don't ship the answers. Ship λh, λa, ρ, and let the browser do the arithmetic. The payload looks like this: { \"generatedAt\" : \"2026-09-15T15:06:00Z\" , \"model\" : \"Dixon-Coles bivariate Poisson, MLE-fitted attack/defence with exponential time decay (xi=0.0018), maxGoals=10\" , \"leagues\" : [ { \"slug\" : \"eng.1\" , \"name\" : \"Premier League\" , \"rho\" : -0.115723 , \"historyMatches\" : 1141 , \"matches\" : [ { \"k\" : \"2026-09-18T19:00:00.000Z\" , \"h\" : \"Brentford\" , \"a\" : \"Chelsea\" , \"lh\" : 1.670193 , \"la\" : 1.560041 , \"q\" : 0 } ] } ] } Six keys per match, one of which ( q ) is just a data-quality flag. A dozen leagues and a couple hundred upcoming fixtures fit in about 23 KB of JSON, inlined in the page. The whole document — markup, styles, logic, data — is around 54 KB. No fetch, no second request, no loading state. The recompute is twenty lines Dixon–Coles is independent Poisson with a correction applied to the four low-scoring cells — 0–0, 0–1, 1–0, 1–1 — where real football deviates from independence. The correction is the τ function, and ρ is its single parameter: function grid ( lh , la , rho ) { var g = [], s = 0 , x , y , p , tau ; for ( x = 0 ; x <= MAXG ; x ++ ) { g [ x ] = []; for ( y = 0 ; y <= MAXG ; y ++ ) { p = pois ( x , lh ) * pois ( y , la ); if ( x === 0 && y === 0 ) tau = 1 - lh * la * rho ; else if ( x === 0 && y === 1 ) tau = 1 + lh * rho ; else if ( x === 1 && y === 0 ) tau = 1 + la * rho ; else if ( x === 1 && y === 1 ) tau = 1 - rho ; else tau = 1 ; g [ x ][ y ] = p * tau ; s += g [ x ][ y ]; } } for ( x = 0 ; x <= MAXG ; x ++ ) for ( y = 0 ; y <= MAXG ; y ++ ) g [ x ][ y ] /= s ; return g ; } An 11×11 grid of scorelines, renormalised so it sums to 1. Every market is then a sum over cells of that one grid: function markets ( g , line ) { var p1 = 0 , px = 0 , p2 = 0 , ov = 0 , bt = 0 , x , y , v ; for ( x = 0 ; x <= MAXG ; x ++ ) for ( y = 0 ; y <= MAXG ; y ++ ) { v = g [ x ][ y ]; if ( x > y ) p1 += v ; else if ( x === y ) px += v ; else p2 += v ; if ( x + y > line ) ov += v ; if ( x > 0 && y > 0 ) bt += v ; } return { p1 : p1 , px : px , p2 : p2 , ov : ov , un : 1 - ov , bt : bt , nb : 1 - bt }; } This is the part I like most, and it's not a performance argument. Because every market comes out of the same grid, the page is internally consistent by construction. The 1X2 probabilities, the Over/Under for every line, both-teams-to-score, and the top scorelines can't contradict each other, because they're five different sums over one object. If you've ever assembled a page like this from separate endpoints, you know how easy it is to publish a \"draw\" probability that disagrees with the sum of the 0–0, 1–1 and 2–2 cells sitting right next to it. Flipping the Over/Under line from 2.5 to 4.5 doesn't fetch anything. It changes one comparison in a loop over 121 cells. Check your reimplementation. I ran the browser's grid against the scoreline grid the model itself returns, match by match. Largest disagreement: about 2e-7 — floating-point noise. Do this before you trust a client-side reimplementation of anything; \"looks about right\" is how you ship a subtly wrong model. Keeping it fresh without a server A build script calls the model once per league, writes the parameters into the page template, and commits the result. GitHub Actions runs it on a cron; Pages serves it. Hosting cost is zero, per-visitor cost is zero, and the only recurring cost is one model run per league per day. Three things I got wrong first, so you don't have to: The template lives inside the build script. I edited the published HTML directly to fix something, felt good about it, and the next morning's run overwrote my fix. If a generator owns a file, the file is not the source. Obvious in hindsight; still cost me an afternoon. Fail loudly, publish conservatively. If one league returns no fixtures, the script skips it. If every league comes back empty, it exits non-zero and publishes nothing — so a bad upstream day leaves yesterday's good numbers up instead of replacing them with a blank page. The failure mode you want is stale, not empty. Scheduled doesn't mean punctual. My cron says 11:30 UTC. Actual runs have landed three and a half and five and a half hours late. GitHub's scheduled workflows queue on shared capacity and there is no guarantee attached to that timestamp. If your copy says \"updated every morning\", your copy is wrong. Put the generation timestamp on the page and let it speak for itself. Say when the model is thin Early in a European season, a promoted side has three or four matches of top-flight history. The fit still returns a number, and the number is confidently silly. So the payload carries a per-match quality flag, and the page renders a LOW DATA badge plus a plain-language card explaining that one of these teams has very little history behind its rate. It costs one flag per match in the payload and it's the difference between a page that reports numbers and a page that reports numbers honestly. Every model has a region where it shouldn't be trusted. Most interfaces hide it. Showing it costs almost nothing and is the single change most likely to make a technical reader believe the rest of your output. What it adds up to Model parameters, not model answers, on the wire ~23 KB of JSON, one document, no runtime fetches No credentials in the client, because the client never calls anything Internally consistent markets, because they're sums over one grid Static hosting; cost doesn't scale with traffic Honest about staleness and about thin data The technique generalises past football. Any fitted model whose parameters are small compared to its output surface can be shipped this way — pricing curves, survival models, anything where a handful of coefficients regenerate a large interactive result set. Ask what the smallest object is that lets the client rebuild the answer, and send that instead. Page: commodus67.github.io/soccer-predictions-demo Model behind it: soccer-dixon-coles-match-predictor Simulation and data, not tips. Nothing here is betting advice.",
+            "url": "https://dev.to/commodus67/shipping-a-statistical-model-to-the-browser-dixon-coles-soccer-predictions-with-no-backend-and-no-58p1",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "git",
+                "programmation",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-09-15T15:50:06+00:00",
+            "collected_at": "2026-09-15T15:59:09.686312+00:00"
+        },
+        {
+            "id": "c112a968e9ef677617e452496f810d19c0bf8d5f8b5f40aaa83ff79b4a55da67",
+            "title": "Nitter and XCancel are dead (again) after X’s latest legal actions",
+            "description": "The privacy-friendly services for viewing X posts without an account have gone dark again after X's escalated legal action.",
+            "url": "https://techcrunch.com/2026/09/15/nitter-and-xcancel-are-dead-again-after-xs-latest-legal-actions/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-09-15T15:49:18+00:00",
+            "collected_at": "2026-09-15T15:59:07.619597+00:00"
+        },
+        {
+            "id": "a7a655cebeef3006f48f26cb0336cb9e107203b575f954218d4a3f1a4fc18041",
+            "title": "I Built a Spring Boot 4 SaaS Starter Kit So You Never Have to Write Auth Boilerplate Again",
+            "description": "Every SaaS project starts the same way. You open a new Spring Boot project and the first three weeks look like this: Week 1: JWT auth, refresh tokens, BCrypt passwords Week 2: Stripe webhooks, subscription states, idempotency Week 3: Rate limiting, global error handling, API docs You haven't shipped a single feature yet. You've just rebuilt infrastructure you've built five times before. I got tired of it. So I spent two weeks building it once, properly, with tests, and packaged it as a downloadable starter kit. Here's everything inside. What's Included 🔐 Authentication JWT login with 15-minute access tokens signed with HMAC-SHA256 Refresh token rotation — every use issues a new token and revokes the old one Replay attack detection — reusing a revoked token revokes your entire session family Brute-force protection — 5 failed logins locks the account for 15 minutes Spring Security 7 with stateless sessions and lambda DSL 💳 Stripe Subscription Management Webhook receiver with HMAC-SHA256 signature validation Handles subscription.created , subscription.updated , subscription.deleted , invoice.payment_failed Full idempotency guard — duplicate Stripe events are safely ignored Mock mode for local dev — no real Stripe account needed to get started Subscription states: ACTIVE , CANCELED , PAST_DUE , TRIALING 🛡️ Production Hardening Per-IP rate limiting via Bucket4j — 100 req/min default, 10 req/min on login 429 Too Many Requests with Retry-After and X-RateLimit-* headers Global exception handler — every error returns a structured JSON envelope Stack traces never appear in API responses BCrypt password hashing at strength 12 📦 Developer Experience OpenAPI 3 / Swagger UI with JWT Bearer pre-configured — click Authorize and test immediately Docker Compose — one command gets Postgres 16 running Flyway migrations V1 to V4 — schema fully version controlled MapStruct DTO mapping — entities never leak into API responses 18 passing integration tests The Tech Stack Layer Technology Version Framework Spring Boot + Spring Security 4.0.8 / 7.0 Language Java 17 Database PostgreSQL 16 Migrations Flyway 11 JWT JJWT 0.12.7 DTO Mapping MapStruct 1.6.3 API Docs springdoc-openapi 3.1.1 Rate Limiting Bucket4j 8.19.0 Container Docker Compose + Dockerfile — How the Refresh Token Rotation Works Raw refresh tokens are never stored. Only their SHA-256 hash goes into the database. Every time a client uses a refresh token, the server marks the old one as revoked and issues a new one. If someone tries to reuse a revoked token — which indicates the token was stolen — the server revokes the entire token family for that user. Every session is terminated immediately. if ( token . isRevoked ()) { // Replay attack detected — revoke entire family refreshTokenRepository . revokeAllByUserId ( token . getUser (). getId ()); throw new InvalidTokenException ( \"Token reused. All sessions revoked for security.\" ); } How the Stripe Webhook Idempotency Works Stripe delivers webhooks at least once. Without protection, a user could end up billed twice or receive two ACTIVE subscriptions. Every processed event ID is stored in a stripe_events table. Before any business logic runs, the handler checks if the event was already processed. if ( stripeEventRepository . existsByStripeEventId ( eventId )) { log . debug ( \"Duplicate event {} — skipping\" , eventId ); return ; // Already processed, return 200 silently } The unique constraint on stripe_event_id in the database is the safety net against race conditions. The Database Schema Four Flyway migrations ship out of the box. Hibernate ddl-auto is set to none — Flyway owns the schema, always. V1 — users table with BCrypt hash, failed login counter, account lock columns V2 — refresh_tokens with SHA-256 hash storage and cascade delete V3 — subscriptions with Stripe customer and subscription ID columns V4 — stripe_events as an idempotency log The 13 API Endpoints Method Path Auth Description POST /api/v1/auth/register None Register new user POST /api/v1/auth/login None Login, get tokens POST /api/v1/auth/refresh None Rotate refresh token POST /api/v1/auth/logout Bearer Revoke refresh token GET /api/v1/auth/me Bearer Current user profile GET /api/v1/users/me Bearer Get own profile PUT /api/v1/users/me Bearer Update own profile GET /api/v1/subscriptions/me Bearer Subscription status POST /api/v1/webhooks/stripe Signature Stripe event receiver GET /api/v1/admin/users ADMIN List all users GET /api/v1/admin/users/{id} ADMIN Get user by ID PATCH /api/v1/admin/users/{id}/role ADMIN Change user role GET /actuator/health None Health check Quick Start After Downloading 1. Purchase and download the zip file from the link at the bottom of this post 2. Unzip it anywhere on your machine 3. Copy .env.example to .env and fill in your values DB_PASSWORD = your_password JWT_SECRET = your_base64_secret STRIPE_WEBHOOK_SECRET = mock 4. Make sure Docker Desktop is running, then start Postgres docker compose up -d 5. Navigate to the saas-starter folder and run the start script cd saas-starter . \\run.ps1 The script automatically loads your .env , checks Docker, waits for Postgres to be healthy, and starts the app. 6. Open Swagger UI http://localhost:8080/swagger-ui.html All 13 endpoints are ready to test. Click Authorize , paste your JWT token, and every protected endpoint is unlocked. Extending the Kit The kit is intentionally focused on the core production foundation. Here are natural next additions you can build on top of it: Email verification — the enabled column and lock_until are already in the schema, just needs an email sender bean Password reset — the token pattern from refresh tokens applies directly Redis-backed rate limiting — swap the in-memory map for a Bucket4j Redis store for multi-instance deployments Multi-tenancy — a tenant_id column plus a Hibernate filter covers most use cases The architecture is clean enough that adding any of these is straightforward — no spaghetti to untangle first. Get the Full Kit The complete source code — migrations, Docker setup, Dockerfile, tests, and README — is available as a zip download here: 👉 Spring Boot 4 SaaS Starter Kit Starts at $43 for solo developers. One-time purchase — download, own it, extend it however you want.",
+            "url": "https://dev.to/rakusasu_stack/i-built-a-spring-boot-4-saas-starter-kit-so-you-never-have-to-write-auth-boilerplate-again-4noc",
+            "source": "DEV Community",
+            "category": "devops",
+            "tags": [
+                "developpement",
+                "docker",
+                "java",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-15T15:47:52+00:00",
+            "collected_at": "2026-09-15T15:59:09.686941+00:00"
+        },
+        {
+            "id": "cb56e164a4da143bfcb731b55ccfaed5d7670a3cf71b89050a783bbf73b33a59",
+            "title": "OpenAI, Anthropic, Google have been in talks on AI safety for weeks",
+            "description": "OpenAI confirms weeks of AI safety talks with Anthropic and Google DeepMind, as Trump's team dismisses safety concerns and pushes to keep pace with China.",
+            "url": "https://techcrunch.com/2026/09/15/openai-anthropic-google-have-been-in-talks-on-ai-safety-for-weeks/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "anthropic",
+                "innovation",
+                "openai",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-09-15T15:47:03+00:00",
+            "collected_at": "2026-09-15T15:59:07.619643+00:00"
+        },
+        {
+            "id": "662022b7d2ff9b247b36f4ecd4758ee77f3b29e5bea9772469e2fb75ddc1da54",
+            "title": "🚀Lakshana Launches with AWS Launch Wizard: Simplifying Cloud Deployments",
+            "description": "Cloud computing makes it possible to build and run applications without owning physical servers. However, setting up a cloud environment can become complicated when we have to deal with compute, networking, storage, security, availability, and application configuration at the same time. This is where AWS Launch Wizard can make the deployment process easier. AWS Launch Wizard is an AWS service that provides a guided way to size, configure, and deploy supported application workloads on AWS. Instead of manually identifying and provisioning every required AWS resource, users provide their application requirements and Launch Wizard helps determine the resources needed for the deployment. In this blog, I will explore what AWS Launch Wizard is, how it works, its important features, and how it can be useful in both college projects and real-world enterprise environments. ☁️ What is AWS Launch Wizard? AWS Launch Wizard is a guided deployment service that helps users deploy supported applications and infrastructure solutions on AWS. For example, AWS provides Launch Wizard deployment options for workloads such as: Microsoft SQL Server SAP Microsoft Active Directory Remote Desktop Gateway The workloads and configurations available can depend on the AWS Region. Why was it created? Deploying a complex application manually can require configuring several AWS services. A typical deployment might involve EC2 instances, VPCs, subnets, security groups, storage, permissions, and application-specific settings. For someone new to AWS, deciding how all these resources should work together can be challenging. Launch Wizard was designed to simplify this process. Instead of configuring each infrastructure component independently, users provide their requirements through a guided interface. Launch Wizard then recommends suitable resources, validates the configuration, estimates the cost, and provisions the environment after approval. ⚙️ How Does AWS Launch Wizard Work? The basic process can be understood as: Requirements → Resource Recommendations → Validation → Cost Estimation → Deployment Here is a simplified view: flowchart TD A[Student / Developer / IT Team] --> B[AWS Launch Wizard] B --> C[Enter Application Requirements] C --> D[Resource Recommendations] D --> E[Configuration Validation] E --> F[Cost Estimation] F --> G{Approve Deployment?} G -- No --> C G -- Yes --> H[AWS CloudFormation] H --> I[AWS Resources] I --> J[Configured Application Environment] First, the user selects the workload and provides requirements such as performance, number of nodes, memory, storage, and connectivity. Launch Wizard uses these requirements to recommend appropriate AWS resources. For example, for SQL Server, it can consider factors such as CPU, memory, network performance, storage, and SQL Server throughput when recommending infrastructure. Before deployment, Launch Wizard performs validation checks to identify certain configuration or infrastructure problems. After the configuration is approved, Launch Wizard provisions and configures the required resources. It uses AWS CloudFormation as part of the infrastructure provisioning process. ⭐ Key Features of AWS Launch Wizard Guided Application Deployment The main advantage of Launch Wizard is its guided deployment process. Instead of manually configuring every AWS resource, users answer questions about their application requirements. Launch Wizard then uses this information to create an appropriate deployment configuration. This reduces the amount of infrastructure setup that users need to perform manually. AWS Resource Selection Launch Wizard can recommend AWS resources based on the requirements entered by the user. For SQL Server deployments, for example, Launch Wizard can recommend instance types, EBS volumes, and other resources based on requirements such as CPU, memory, bandwidth, and storage performance. Users are not forced to accept the recommendations. They can modify the resource configuration before deployment. Cost Estimation 💰 Cloud resources cost money, so understanding the expected cost before deployment is important. Launch Wizard provides an estimated cost for the resources involved in a deployment. The estimate can update when users change resource configurations. This makes it easier to compare different configurations before actually creating the infrastructure. However, AWS notes that these estimates are intended for general comparison and are based on On-Demand pricing. Actual costs can differ. Early Input Validation Another useful feature is early validation. Launch Wizard checks important infrastructure and application requirements before provisioning. This can help identify problems such as insufficient AWS resource limits or infrastructure that does not meet the workload's prerequisites. Finding these issues before a long deployment process begins can save time and reduce failed deployments. Reusable CloudFormation Templates Launch Wizard creates CloudFormation resources that can be reused and customized for subsequent deployments. This is useful for organizations that need similar environments in development, testing, and production. Instead of rebuilding the infrastructure from scratch each time, the generated infrastructure can serve as a reusable baseline. 🎓 College / Student Use Case Consider a college department working on a database-driven project that requires Microsoft SQL Server. Without Launch Wizard, students would have to manually plan the infrastructure and configure components such as EC2 instances, storage, networking, security groups, and the database environment. Using Launch Wizard, the students could specify requirements such as: CPU and memory requirements Storage requirements Number of nodes Performance requirements Connectivity requirements Launch Wizard can then recommend the required infrastructure and provide an estimated deployment cost. This would allow students to spend more time developing and testing their application instead of spending excessive time manually configuring infrastructure. For students learning cloud computing, this also provides a practical example of how several AWS services work together as one application environment. 🌍 Real-World Enterprise Use Case Launch Wizard is not limited to classroom experiments. It is designed for enterprise application deployments where manually configuring complex infrastructure can take significant time. For example, an organization that needs to deploy Microsoft SQL Server with high availability can use Launch Wizard to configure a SQL Server environment across multiple Availability Zones. AWS Launch Wizard supports SQL Server single-instance and high-availability deployments. Its SQL Server deployment can include components such as EC2 instances, VPC networking, security groups, and storage. For high-availability scenarios, Launch Wizard can configure SQL Server Always On Availability Groups and related infrastructure. This can be useful for businesses that need database applications to remain available even if an individual instance or Availability Zone experiences a failure. 🛠️ Simple Practical Example Suppose a student team wants to deploy a SQL Server environment for a college project. A simplified workflow would look like this: Open AWS Launch Wizard ↓ Select Microsoft SQL Server ↓ Choose deployment type (Single Instance / High Availability) ↓ Enter CPU, memory, storage and networking requirements ↓ Review recommended AWS resources ↓ Modify resources if required ↓ Review estimated cost ↓ Validate the configuration ↓ Approve the deployment ↓ Launch Wizard provisions the required AWS infrastructure For SQL Server, Launch Wizard can provide recommended resources and update the estimated cost as the configuration changes. After deployment, the created infrastructure can be managed through AWS services such as Amazon EC2 and Systems Manager. ✅ Advantages ⏱️ Saves Time Launch Wizard reduces the amount of manual configuration required for supported workloads. 🧩 Simplifies Complex Deployments A guided workflow makes it easier to configure several infrastructure components together. 💰 Provides Cost Visibility Users can review estimated costs before approving a deployment. 🔁 Supports Repeatable Deployments CloudFormation templates provide a reusable infrastructure baseline. ✔️ Helps Prevent Configuration Problems Early validation can identify certain issues before resources are provisioned. Another advantage is that AWS does not charge an additional fee for Launch Wizard itself. Users pay for the AWS resources required to run the deployed workload, such as EC2, EBS, and networking resources. ⚠️ Limitations and Things to Consider 💰 Cost Although Launch Wizard itself is available at no additional charge, the resources it creates can incur AWS charges. For students especially, it is important to monitor resources and delete deployments when they are no longer required. 🧠 Complexity Launch Wizard simplifies deployment, but it does not eliminate the need to understand AWS. Users should still have basic knowledge of concepts such as VPCs, IAM, EC2, storage, networking, and security. 📈 Scalability Launch Wizard can help create infrastructure according to the requirements of a workload, including configurations designed for high availability. However, it should not be considered a complete automatic scaling solution. As an application grows, organizations may still need to evaluate instance sizes, storage, networking, database architecture, and other infrastructure components. For example, Launch Wizard's SQL Server high-availability deployments can use multiple Availability Zones to improve resilience and support failover. 🔐 Security Automating deployment does not remove the responsibility for security. Users are still responsible for appropriate IAM permissions, network access, security groups, credentials, and security configuration. AWS follows the shared responsibility model, meaning AWS protects the underlying cloud infrastructure while customers remain responsible for securing their workloads and configurations. 📦 Workload and Region Support Launch Wizard is designed for specific supported workloads rather than every type of AWS application. Also, not every workload or configuration is available in every AWS Region. Therefore, users should check the current workload availability before planning a deployment. 🎯 Conclusion AWS Launch Wizard makes complex cloud deployments more manageable by providing a guided way to size, configure, validate, and deploy supported workloads. Its features such as resource recommendations, cost estimation, early validation, high-availability options, and reusable CloudFormation templates can reduce manual configuration and make deployments more repeatable. For students, Launch Wizard provides an interesting way to understand how different AWS resources come together to create a complete application environment. For businesses, it can reduce the effort involved in deploying supported enterprise workloads. The main thing I learned from exploring Launch Wizard is that cloud computing is not only about creating individual resources. It is also about designing and automating how those resources work together. In short, AWS Launch Wizard helps turn a complicated infrastructure setup into a more guided and manageable deployment process. 🚀☁️ 📚 References AWS Launch Wizard Documentation https://docs.aws.amazon.com/launchwizard/ AWS Launch Wizard for SQL Server https://docs.aws.amazon.com/launchwizard/latest/userguide/launch-wizard-sql.html AWS Launch Wizard Workload Availability https://docs.aws.amazon.com/launchwizard/latest/userguide/launch-wizard-workload-availability.html AWS Launch Wizard Security https://docs.aws.amazon.com/launchwizard/latest/userguide/launch-wizard-security.html AWS Launch Wizard – AWS Prescriptive Guidance https://docs.aws.amazon.com/prescriptive-guidance/latest/migration-sql-server/launch-wizard.htm",
+            "url": "https://dev.to/lakshana_ramesh_f71285247/lakshana-launches-with-aws-launch-wizard-simplifying-cloud-deployments-3921",
+            "source": "DEV Community",
+            "category": "cloud",
+            "tags": [
+                "aws",
+                "developpement",
+                "ios",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-15T15:46:31+00:00",
+            "collected_at": "2026-09-15T15:59:09.687841+00:00"
+        },
+        {
+            "id": "1542f85804657ed816971134f8cced84a0e084b47a18f3780c93a201d21f76a5",
+            "title": "Export App Store and Google Play reviews into one spreadsheet",
+            "description": "I'm building CleanScrape, a small collection of data tools on Apify. One of them collects App Store and Google Play reviews into the same dataset. I want the export to be useful without making people rename columns or work out which store each row came from. For this first walkthrough, I'll use Spotify and keep the request small: up to 20 reviews from each store, then a spreadsheet you can filter yourself. This uses my paid App Store and Google Play Reviews Scraper . You do not need to write code to follow it. Start with a small export You need an Apify account, an Android package name and a numeric Apple app ID. For this example, use Spotify: Store App identifier Google Play com.spotify.music App Store 324684580 Open the Actor and use these inputs. You can enter them in the form or switch to JSON: { \"store\" : \"both\" , \"googlePlayAppId\" : \"com.spotify.music\" , \"appStoreId\" : \"324684580\" , \"country\" : \"us\" , \"language\" : \"en\" , \"maxReviews\" : 20 , \"sort\" : \"newest\" } The limit is per store . This request can return up to 40 reviews, not 20 in total. It may return fewer if the source does not provide enough reviews. Check the Pricing tab and set a run spending limit before starting. After the run finishes, open Output to see the rows. Also open RUN_REPORT in the run's key-value store: it reports the outcome for each store separately. A successful run can still contain partial results from one source. Download and use the spreadsheet Export the dataset as CSV or Excel. Both stores use the same field names, including source , appId , reviewId , rating , text , date and appVersion . I'd start by filtering rating to 1 or 2 and reading those reviews. Keep the source column visible so you know which store each row came from. Then filter by appVersion if you want to inspect feedback associated with a release. That is a reading filter, not sentiment analysis. The rating helps you choose where to look; the review text tells you what someone is actually unhappy about. Some fields will be empty. Apple review titles are available where supplied; Google Play titles are null. Developer replies are included for Google Play when available, not for Apple. Missing app versions remain null rather than being filled with the current release. I would rather leave an unknown value visible than make the spreadsheet look more complete than the source. What the first run costs At the base rate, 40 delivered reviews cost $0.008 in result charges. Startup adds $0.01 per allocated GB, with a minimum of one startup event. With the current 4 GB default, that makes $0.048 for a run returning 40 reviews . Startup charges also apply if no reviews come back. Eligible Apify subscription tiers receive discounts. These figures describe the pricing on 15 September 2026; check the Actor's Pricing tab before running it. A few limits I want to be clear about Apple coverage is recent, not exhaustive. This tool uses Apple's public review feed, which is limited to ten recent pages per app and storefront, commonly around 500 reviews. Increasing the requested limit cannot turn it into a complete historical archive. Dates have source-specific meanings. The Apple date is the review-level update time exposed by the feed, not a guaranteed original publication date. Google Play uses its review timestamp. A requested country is not the reviewer's verified location. Keep that distinction if you compare markets. A bounded recent sample is also not enough to estimate an app's overall customer satisfaction. If you run it again next week The Actor does not maintain review history across runs. For a recurring import, use (source, appId, country, reviewId) as a starting key when a review ID exists. Update edited reviews instead of blindly appending another copy, and handle missing IDs separately. You can start with the JSON above or choose a preset under Tasks on the Actor page . No store login or personal cookies are required. CleanScrape is independent of Apple, Google and Spotify. I'm interested in how people use these exports beyond the first download. Are you checking feedback after a release, comparing apps, or feeding reviews into another tool? That context is useful when deciding what to improve next. For a bug, please open an Actor issue with the run ID and a non-sensitive input example. Keep API tokens and credentials out of comments.",
+            "url": "https://dev.to/cleanscrape/export-app-store-and-google-play-reviews-into-one-spreadsheet-1c1l",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "android",
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-15T15:45:58+00:00",
+            "collected_at": "2026-09-15T15:59:09.688243+00:00"
+        },
+        {
+            "id": "063c31480ed538ac47ff3d97dba1db565ad16e3d01cc5c5097a1a13f139e65a1",
+            "title": "Exein Secures $270M at $1.7B Valuation for Physical AI Security",
+            "description": "The cybersecurity startup is building a proprietary foundation model and plans to accelerate global expansion. The post Exein Secures $270M at $1.7B Valuation for Physical AI Security appeared first on SecurityWeek .",
+            "url": "https://www.securityweek.com/exein-secures-270m-at-1-7b-valuation-for-physical-ai-security/",
+            "source": "SecurityWeek",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "security",
+                "vulnerabilites"
+            ],
+            "published_at": "2026-09-15T15:45:13+00:00",
+            "collected_at": "2026-09-15T15:59:07.155783+00:00"
+        },
+        {
+            "id": "cf085183a2878b934328d86152a63f038e703089c39da26b583b2cd045973443",
+            "title": "Compare Google Trends terms in a spreadsheet without confusing interest with search volume",
+            "description": "I'm building CleanScrape for people who want to use web data in their own reports and tools. The Google Trends Scraper is one part of that: it returns Trends observations as rows you can export or retrieve through the API. For this post, I'll compare ChatGPT and Claude in a spreadsheet. There is one detail I want to get out of the way first: a Trends value of 100 does not mean 100 searches. It is a relative interest score within the requested comparison. That meaning needs to survive the CSV export. This walkthrough uses my paid Actor on Apify. I've included the cost calculation below so you can judge whether it fits your use case. Request both terms together This example compares ChatGPT and Claude in the US over the past three months. Open the Actor, switch to JSON input and enter: { \"searchTerms\" : [ \"ChatGPT\" , \"Claude\" ], \"dataTypes\" : [ \"interest_over_time\" ], \"geo\" : \"US\" , \"timeframe\" : \"today 3-m\" } You need an Apify account, but no Google login. The Actor uses residential Apify Proxy by default for these requests. It accesses Google Trends website endpoints; it is not Google's official API or an affiliated Google product. I recommend starting with just the timeline. It keeps the output easier to read and avoids paying for result types you are not using yet. Keep both terms in the same request. Pulling each term independently can give you separately normalized series that are not directly comparable. Also note that these inputs are search terms, not a guarantee that every search relates to a particular company or product. Set a run spending limit and check the current pricing before selecting Start. You can also find this comparison as an example task on the Actor page. Turn the rows into a chart Once the run finishes, open Output and export CSV or Excel. Timeline rows include: Field How to use it keyword Separate the two series date Human-readable source date label timestamp Unix timestamp in seconds, returned as a string value Relative search interest isPartial Whether Google marks the interval as partial In your spreadsheet, create a pivot table with date as the rows, keyword as the columns and value as the measure. Sort chronologically; if the imported date labels sort as text, convert them to dates or sort by the numeric timestamp first. Insert a line chart from that table. Use the pivot only on the timeline rows. If you later request related queries or regional data, filter by dataType first. Those rows have different meanings. The Actor exports data, not a finished chart. You choose the chart, title and interpretation. Check the report before trusting the chart Open RUN_REPORT in the run's key-value store. Each requested feature has its own status and row count. An empty result is not evidence that nobody searched for the term; a failed request is not a zero. Google chooses the returned time intervals. Three months does not guarantee exactly 90 observations. A zero can reflect insufficient data, and a partial interval should not be presented as a completed period without qualification. I would describe the chart as a comparison of relative search interest, not as a comparison of sales, active users or market share. The export cannot establish those things. Count rows when estimating the cost Each keyword at each returned timestamp is one billable row. If Google returns 90 timestamps for two terms, that is 180 rows. At the base rate of $0.003 per row, those rows cost $0.54. Startup adds $0.05 per allocated GB, with a minimum of one startup event. With the current 4 GB default, the total for that example is $0.74 . That is a calculation, not a promised row count. Startup is charged even when no rows are returned, and other selected data types add their own rows. Subscription discounts can reduce the rates. Pricing is stated as of 15 September 2026; use the Pricing tab for current figures. If you are comparing tools, check the cost for the same task. One service may call an entire keyword history a result; another may count each observation. I do not want the per-result headline to obscure that difference. Try your own comparison Replace the two terms with a comparison relevant to your work, keeping the geography and time window consistent. Save the input alongside the export so you can explain what the chart measures later. The Actor also supports related queries, regional interest and a current trending-searches feed. Related topics are optional and availability-limited: Google may return no topics even for familiar terms. I would not make a reporting workflow depend on that field always being populated. The full documentation and example tasks are on Apify. I'd be interested to hear what you need after the export: a weekly comparison, a dashboard, or simply a file you can inspect. It helps me understand where the tool is useful and where the next bit of friction is.",
+            "url": "https://dev.to/cleanscrape/compare-google-trends-terms-in-a-spreadsheet-without-confusing-interest-with-search-volume-4lmm",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "anthropic",
+                "developpement",
+                "openai",
+                "programmation",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-09-15T15:44:55+00:00",
+            "collected_at": "2026-09-15T15:59:09.688670+00:00"
+        },
+        {
+            "id": "dfa59400affa7ffed457c46771f0558e712e5d76622a24a91b3fa1b4a0fdf9a1",
+            "title": "Track \"Map Your Show\" exhibitor changes without comparing spreadsheets by hand",
+            "description": "I'm building CleanScrape as a small collection of practical data tools. With the Event Exhibitor Scraper and Change Monitor , I want to make one fairly specific task easier: export an exhibitor list, then see what changed without comparing the next spreadsheet by hand. A new company, a different booth or an updated description can be useful information when you are planning an event visit or researching suppliers. But I do not want an incomplete download to look like dozens of companies disappearing. That is why the monitoring checks matter as much as the export. I'll show a small snapshot first, then how to keep a baseline for later comparisons. This is a paid Actor on Apify. Its scope is public \"Map Your Show\" 8_0 directories on EVENT.mapyourshow.com , not every conference website. It does not provide attendee or hidden contact data. First, export a small list Open the Actor in Apify and use this input: { \"eventUrls\" : [ \"https://iaapaexpo26.mapyourshow.com/8_0/explore/exhibitor-alphalist.cfm\" ], \"mode\" : \"snapshot\" , \"maxExhibitorsPerEvent\" : 100 , \"includeDetails\" : false } Review the Pricing tab and set a run spending limit before starting. This requests up to 100 exhibitors, with optional profile enrichment switched off. The IAAPA example depends on that edition's directory remaining public. After the run finishes, open Output and export CSV or Excel. Rows include company names, booths, listing descriptions and source links where available. Booths are arrays in the JSON because an exhibitor can have more than one. Open SUMMARY in the run's key-value store as well. A capped_snapshot is a deliberately limited sample, not a claim that you collected the entire directory. With optional details off, website and location fields can be null. At the base rate, a snapshot returning 100 records costs $0.20 , with no startup fee. I recommend starting here so you can see whether the fields are useful before setting up a recurring check. Keep a baseline when you need comparisons For monitoring, use a stable watchlist name and a source-record limit large enough for the whole directory: { \"eventUrls\" : [ \"https://iaapaexpo26.mapyourshow.com\" ], \"mode\" : \"monitor\" , \"watchlistName\" : \"iaapa-research-2026\" , \"maxExhibitorsPerEvent\" : 5000 , \"includeDetails\" : false , \"keywords\" : [] } This is not another 100-row sample. The first complete monitoring run exports the baseline, and those rows are billable. A directory with 1,000 exhibitors costs $2.05 at the base rate for that first check, without optional details. A larger baseline costs more. The Actor needs permission to create and access its named watchlist storage in the run owner's account. Reuse the same watchlist name and settings on later runs. You can save an Apify Task and add a schedule, but the input alone does not create one. What a later run tells you Later runs export changes rather than another copy of the baseline. Change records distinguish additions, updates and confirmed absence. For an update, changedFields tells you what changed, and before and after hold the compared values. The following is an illustration , not a report about a real exhibitor: Company Previous booth Current booth Interpretation Example Manufacturing B12 C08 Booth field changed between checks An unchanged directory can correctly produce zero change rows. The completed monitoring check still costs $0.05 per directory at the base rate. A check returning ten changes costs $0.07 without optional details. Those prices are stated as of 15 September 2026, before subscription discounts. The Pricing tab has current rates. Optional enrichment is separately charged when enabled and public details are extracted. Why I would not treat one missing result as a removal The monitor requires a complete scan that reconciles retrieved IDs with the directory's reported total. Failed requests, overlapping pages and incompatible source responses must not silently become a new baseline. A company is reported as no_longer_listed only after two consecutive complete checks miss it. Even then, that means it was no longer observed in the directory, not that it definitely withdrew from the event. There is an additional guard against sudden mass disappearance: when a baseline has at least ten exhibitors and more than 40% disappear at once, the check is quarantined rather than advancing the baseline. Empty source directories are treated as unavailable. I prefer that cautious behavior to a convincing-looking list of removals based on a failed fetch. It still has limits: the website can change between requests, and a change that happens and reverts between runs can go unseen. These checks do not make the snapshot perfectly atomic. Before adding notifications Run the workflow manually first and inspect SUMMARY . A run covering multiple events can have mixed outcomes. Monitoring supports at most 5,000 source records per event; optional details support at most 500 matched profiles per event. A retry after interrupted delivery can repeat records, so use recordId for downstream deduplication. Do not assume exactly-once delivery. If you use keyword filters, a company leaving the matching scope is not necessarily leaving the directory. Email, Slack and CRM actions belong in a separate integration; the Actor does not send messages or contact exhibitors. Start with the snapshot example , inspect the fields, and add monitoring only if you need it. CleanScrape is independent of Map Your Show and the event organizers. Public availability does not remove the need to respect source terms and data-use restrictions. I'd like to hear from people who actually work with exhibitor lists. Which changes affect your planning enough to be worth tracking: new companies, booth moves, updated descriptions, or something else?",
+            "url": "https://dev.to/cleanscrape/track-map-your-show-exhibitor-changes-without-comparing-spreadsheets-by-hand-2ff5",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-15T15:43:37+00:00",
+            "collected_at": "2026-09-15T15:59:09.689182+00:00"
+        },
+        {
+            "id": "5dc82dccd4c628a16ffa243d45505393ba9c5e3acd28ccb4735598389e6bdf0f",
+            "title": "A Galaxy Z Fold 8 bug is putting apps in places where they shouldn’t be — here’s how to fix it",
+            "description": "Apps are randomly relocating to strange places on the Galaxy Z Fold 8.",
+            "url": "https://www.androidauthority.com/galaxy-z-fold-8-app-misalignment-3711475/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-09-15T15:41:40+00:00",
+            "collected_at": "2026-09-15T15:59:16.317862+00:00"
+        },
+        {
+            "id": "2f90f9d7906a1fba817ccde0b4c3e82b4ce8b40ff22472cf0df41208086fe9ad",
+            "title": "Swift 6.4 Released",
+            "description": "Comments",
+            "url": "https://www.swift.org/blog/swift-6.4-released/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-15T15:40:14+00:00",
+            "collected_at": "2026-09-15T15:59:09.343924+00:00"
+        },
+        {
+            "id": "f5e67ba3f6de97335aef639b1fb3a6e01d73cb42f6fe2d584c814f193255c5b8",
+            "title": "Writing Clean Code in Interviews: My Jedi Mind Trick",
+            "description": "The Quest Begins (The \"Why\") I still remember my first technical interview like it was yesterday. I was nervous, my palms were sweaty, and the interviewer tossed over a seemingly simple problem: “Given an array of integers, return the length of the longest subarray that sums to zero.” I dove in, started coding a brute‑force double loop, and watch the clock tick. Ten minutes later I had a working solution… but it was O(n²) and looked like a bowl of spaghetti. The interviewer nodded politely, then asked, “Can you do better?” That moment stung. I realized I could get the answer right, but if my code looked like a mess, I’d lose the signal I was trying to send: that I can think clearly, structure my thoughts, and communicate them. I wanted to walk out of every interview feeling like I’d just finished a clean, elegant kata—not a frantic hackathon. So I set out on a quest: find the mental framework top coders use to turn a confusing problem into a clean, readable solution, every single time. The Revelation (The Insight) The breakthrough came when I stopped focusing on what to code and started asking why the problem exists. I began treating each interview question as a tiny story with a beginning, a middle, and an end. The “beginning” is the input, the “end” is the desired output, and the “middle” is the transformation we need to describe in plain English before we touch a keyboard. Here’s the exact mental loop I now run: Restate the problem in my own words – If I can’t explain it to a rubber duck, I don’t understand it yet. Identify the core invariant or property – What stays true throughout the process? (e.g., prefix sums, sliding window, monotonic stack). Sketch a high‑level algorithm – One or two sentences, no syntax. Choose the data structure that makes the invariant obvious – Hash map for prefix sums, deque for sliding window, etc. Write the code, line by line, narrating each step – As if I’m telling a friend what I’m doing. Run a quick mental test – Walk through a tiny example to catch off‑by‑one errors before I even hit run. The “aha!” moment was realizing that step 2 is where the magic lives. If you can name the invariant, the rest often falls into place like a Jedi feeling the Force—suddenly the path is clear, and you don’t need to guess. Wielding the Power (Code & Examples) Let’s see this framework in action with the zero‑sum subarray problem I struggled with earlier. 1️⃣ Restate We need the longest contiguous segment whose elements add up to zero. 2️⃣ Invariant If two prefix sums are equal, the elements between those indices sum to zero. 3️⃣ High‑level algorithm Traverse the array, keep a running sum, and store the first index where each sum appears. When we see a sum again, the distance between the current index and the stored index is a zero‑sum subarray. 4️⃣ Data structure A hash map ( sum → first_index ). 5️⃣ Code (the “after”) /** * Returns the length of the longest subarray that sums to zero. * @param {number[]} nums * @return {number} */ function longestZeroSumSubarray ( nums ) { // map: prefix sum -> earliest index where this sum occurred const firstIndex = new Map (); // sum of zero before we start (helps capture subarrays from index 0) firstIndex . set ( 0 , - 1 ); let maxLen = 0 ; let runningSum = 0 ; for ( let i = 0 ; i < nums . length ; i ++ ) { runningSum += nums [ i ]; // If we've seen this sum before, we have a zero‑sum window if ( firstIndex . has ( runningSum )) { const prevIdx = firstIndex . get ( runningSum ); maxLen = Math . max ( maxLen , i - prevIdx ); } else { // Store only the first occurrence to get the longest window later firstIndex . set ( runningSum , i ); } } return maxLen ; } 6️⃣ Quick mental test Take [1, 2, -3, 3] . Prefix sums: 1, 3, 0, 3 . Sum 0 first appears at index 2 → subarray [1,2,-3] length 3. Sum 3 appears again at index 3 → subarray [3] length 1 (ignore). Result = 3, which feels right. Common Traps (the “before”) Trap 1 – Brute force double loop for ( let i = 0 ; i < n ; i ++ ) { let sum = 0 ; for ( let j = i ; j < n ; j ++ ) { sum += nums [ j ]; if ( sum === 0 ) maxLen = Math . max ( maxLen , j - i + 1 ); } } It works but is O(n²) and obscures the insight about prefix sums. Trap 2 – Over‑clever one‑liner Some try to cram everything into a.reduce or a clever trick without comments. It’s clever, but the interviewer can’t follow your thought process, and you lose the chance to demonstrate clarity. By sticking to the six‑step loop, I avoid both traps: the code is efficient (O(n)), readable, and each line maps directly to a verbal explanation. Why This New Power Matters Adopting this mindset changed everything for me. Interviews stopped feeling like a hostile interrogation and started feeling like a collaborative puzzle‑solving session. I could: Explain my reasoning before writing a single line, which gave the interviewer confidence in my problem‑solving ability. Spot the optimal data structure instantly because I was already looking for the invariant. Write fewer bugs —the mental walk‑through catches off‑by‑one errors early. Leave the interview with a clean solution that I could be proud of, not a patchwork of nested loops. Beyond interviews, this framework is a superpower for everyday work. When you approach any ticket or bug with the same “restate → invariant → sketch → choose → write → test” loop, you produce code that’s maintainable, review‑friendly, and fun to read. Your Turn Pick a problem you’ve struggled with recently—maybe “maximum subarray sum” or “valid parentheses”. Run it through the six‑step loop, write out the explanation first, then the code. Notice how the solution seems to appear almost effortlessly. Challenge: Share your before/after snippet in the comments (or on a gist) and tell us which step gave you the biggest “aha!” moment. Let’s turn this into a mini‑quest party—who can find the most elegant solution? May your code be clean, your thoughts be clear, and your interviews feel like a triumphant boss fight—victory earned, not guessed. Happy coding!",
+            "url": "https://dev.to/timevolt/writing-clean-code-in-interviews-my-jedi-mind-trick-2jkk",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-15T15:36:22+00:00",
+            "collected_at": "2026-09-15T15:59:09.689806+00:00"
+        },
+        {
+            "id": "aee64f937d055dfdbc3c235a31a86aad80889b62dfc1f9a35c1e64ace72a10eb",
+            "title": "Meine KI-SEO-Analyse: Warum mehr Daten nicht automatisch helfen",
+            "description": "30.378 Impressionen, 26 Klicks und eine deutlich bessere Durchschnittsposition. Klingt nach Erfolg, oder? War es nicht. Weniger Menschen klickten auf meine Ergebnisse, obwohl Google meine Seiten häufiger und weiter oben anzeigte. Mehr Daten hätten mir in diesem Moment nicht geholfen. Ich hatte schon genug davon. Das eigentliche Problem ist nicht Datenmangel Search Console, PageSpeed, Analytics, technischer Crawl: Jede Quelle für sich ist wertvoll. Zusammen werden sie schnell unübersichtlich. Eine Seite kann bei Google steigen und gleichzeitig weniger Klicks bekommen. Eine hohe Absprungrate kann bedeuten, dass der Inhalt schlecht ist. Sie kann aber auch bedeuten, dass der Besucher seine Antwort sofort gefunden hat. Wenn ich diese Zahlen einzeln betrachte, finde ich überall irgendeine Baustelle und optimiere dann das, was gerade auffällt, statt das, was am meisten bringt. Was mir fehlte, war keine weitere Metrik. Es war eine sinnvolle Reihenfolge. Deshalb habe ich mir einen eigenen Claude-Skill gebaut: eine feste Arbeitsanweisung, die jede Woche dieselben Prüfungen in derselben Reihenfolge abarbeitet. Search Console, URL Inspection API, technischer Crawl, Ladezeiten, Analytics. Das Ergebnis ist keine Liste mit 30 Warnungen, sondern wenige begründete nächste Schritte. Was der erste Wochencheck tatsächlich aufgedeckt hat Der erste Report für meine Webseite sah widersprüchlich aus. Impressionen stiegen, die Position verbesserte sich, aber die Klicks fielen von 42 auf 26. Vorschnell hätte ich geschlossen: schlechtere Inhalte. Der Skill legte stattdessen Seiten, Suchanfragen und technische Befunde nebeneinander. Mein Artikel über Bento-Grid-Design sammelte über 600 Impressionen auf guten Positionen, bekam aber kaum Klicks. Der Seitentitel hatte 85 Zeichen und wurde in den Suchergebnissen wahrscheinlich abgeschnitten. Kein Beweis, aber ein sinnvoller erster Test: kürzen, beobachten, auswerten. Noch interessanter war eine Gruppe von Suchanfragen rund um „Website analysieren\" und „Webseite testen\". Viele Einblendungen, kaum Klicks, weil die Suchenden vermutlich ein direktes Tool erwarten und keinen Blogartikel. Aus einer schlechten Klickrate wurde dadurch eine konkrete Produktidee. Nebenbei fand der Check vier tote Links in älteren Artikeln. Alle vier waren ursprünglich von einer anderen KI vorgeschlagen worden. Ein bisschen ironisch: Der neue KI-Check räumte den Müll der alten KI auf. Wie aus Messwerten eine Reihenfolge wird Der wichtigste Teil des Skills kommt nach den Prüfungen. Jeder Befund muss in eine Entscheidung übersetzt werden, und zwar anhand von drei Fragen: Was zeigen die Daten tatsächlich? Welche Erklärung passt zu mehreren Quellen gleichzeitig? Welche Änderung hat den größten Nutzen bei vertretbarem Aufwand? Beim Bento-Grid-Artikel war die Antwort klar: Titel kürzen, Nutzen früher zeigen, interne Links aufbauen. Bei den Suchanfragen rund um „Webseite testen\" sieht es anders aus. Dort löst eine bessere Formulierung das Grundproblem nicht, weil die Suchabsicht eine andere ist. Genau das ist der Punkt, an dem KI wirklich hilft: Sie erkennt wiederkehrende Muster über mehrere Datenquellen hinweg und zwingt dazu, jede Empfehlung mit echten Zahlen zu begründen. Nicht mit einem pauschalen Score von 82 oder 91 Punkten, der sich eindeutig anfühlt, aber selten sagt, womit man morgen anfangen soll. Den vollständigen Ansatz habe ich in meinem Blog beschrieben: Meine KI-SEO-Analyse: Warum mehr Daten nicht automatisch helfen , inklusive der konkreten Skill-Konfiguration. Beim Programmieren arbeite ich nach demselben Muster, dem Ping-Pong-Prinzip . Wo KI an ihre Grenzen stößt Ein solcher Wochencheck funktioniert nur mit sauberen Daten und klaren Regeln. In meinem Skill gelten deshalb drei feste Grenzen: keine Zahlen erfinden oder schätzen, fehlende Daten deutlich als fehlend markieren, jede Empfehlung mit einem konkreten Befund begründen. Ein ausgefallener PageSpeed-Test ist kein schlechter PageSpeed-Wert. Er ist ein ausgefallener Test. Mehr darf die KI daraus nicht machen. Und die fachliche Entscheidung nimmt mir der Skill nicht ab. Ob ein Audit-Tool zu meinem Angebot passt und wie viel Zeit ich investieren will, muss ich selbst beurteilen. Die KI übernimmt nicht mein Urteil, sie bereitet es vor. Wie handhabt ihr das in euren Projekten? Nutzt ihr KI eher für die Analyse oder lieber für die Umsetzung konkreter Maßnahmen?",
+            "url": "https://dev.to/ivo_sa/meine-ki-seo-analyse-warum-mehr-daten-nicht-automatisch-helfen-3op0",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "anthropic",
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-15T15:36:08+00:00",
+            "collected_at": "2026-09-15T15:59:09.690241+00:00"
+        },
+        {
+            "id": "2f92a4e717d1dd235fa36ea794087a577490ed1af6b7647d0ec6594c9fcb1d27",
+            "title": "Promises and Fetch",
+            "description": "Esta semana aprendí sobre promesas y fetch en JavaScript. Aprendí asincronía, callbacks, ambiente de ejecución y repasé setTimeout y setInterval. Lo que más me costó fue visualizar cómo trabajaba todo junto al callstack, event loop, macrotask y microtask. Sin embargo al final se logró, realice un pequeño proyecto para ponerlo en práctica: https://paubee-ctrl.github.io/Buscador-de-Usuarios/",
+            "url": "https://dev.to/paula_contreras_71cbc0f69/promises-and-fetch-4jie",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "git",
+                "ios",
+                "java",
+                "javascript",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-15T15:35:33+00:00",
+            "collected_at": "2026-09-15T15:59:09.690297+00:00"
+        },
+        {
+            "id": "7dff9e679a62799d4dba8e36931ed310fcd62454011a703408d9ce2168719feb",
+            "title": "I sell x402 conformance checks. A stranger's board started checking me back.",
+            "description": "SendCheck is a small thing: pay one cent, get a 22-check battery run against a public x402 endpoint — price, network, asset, settlement, the envelope behavior, the fingerprint handling — with every check printed as pass or fail. We've been checking other people's doors since August. On the morning of 09-14, a stranger's board was checking mine. 20/22 The board is at coppice-ai.com — a free, public, daily-run conformance board. Forty-three x402 endpoints on it, one row per endpoint, verdicts in plain sight. Ours had been there since the night before, and it read 20/22 : plaintext_envelope_refused — a plaintext http:// hit was being served the payment terms without first redirecting to https. client_fingerprint_parity — our fingerprint handling was serving subtly different doors to different stdlib HTTP clients (Python-urllib, libwww-perl, the rest) than to the baseline. Both are the kind of finding you don't want to discover from a customer. We fixed both inside the morning — the redirect to a method-preserving 308, the parity to one 402 for everyone — and his 08:01Z re-run read 22/22 against a 04:15Z baseline of 20/22. His words in the reply, kept because they're the best line in the whole thread: \"Thank you for fixing both inside a morning — that is the fastest turnaround on any finding I have sent.\" So why pay $19 to be checked by the guy who checks everyone? Fair question. The answer he gave is the reason the audit exists: The daily board reads the wire and never moves money. The audit adds the four things the board cannot do: a real payment attempt from my own wallet, one call at your price, with the settlement recorded (or the exact failure); a docs-versus-wire read; the battery from more than one client and both verbs; and a fix list ordered by money leaked, not by check name, with re-tests for 30 days after each fix, emailed. Half refund if no PASS. And the line that settled it for us: \"Last week three doors with immaculate 402s were unpayable; every wire check passed on all three. That is the finding a document-only instrument cannot produce.\" The refund clause in that blockquote was an offer term, not marketing copy — which is most of why it felt like an audit and not a sale. So the $19 went over USDC on Base (tx 0x2ce3…cb5bb ) to a wallet with no card attached anywhere in the middle. What the audit found One thing, and it's an honest one. The audit's real payment attempts found a path where a partial RPC read can hand the caller a 503 while the payment has already settled — the money leaves, the receipt doesn't — plus a retry round that rides on the same partial read. His re-test (two paid calls through our door, both settled, complete: true on both) did not reproduce it: \"both only fire on a partial RPC read, which did not happen here, so those stand on your 238/238, not on mine.\" That's the shape of it: an intermittent leak, bounded, documented, covered by our test suite, with a paid re-test every week through 2026-10-14 — /check one week, /deep the next, as agreed — that will catch it if the 503 ever comes back wearing a 200's clothes. The board, the badge, the watch The free board stays the floor: daily at ~02:30Z, public, our row PASS 22/22. Two details worth stealing for anyone running an external QA board: Provisional labeling. When his checker ships new bytes, the first run of those bytes labels its adverse findings provisional — withheld, then re-checked the next run with the same bytes. A checker that has to earn its second verdict. The badge 404s until the row exists. No row, no badge — the proof is on the same board as the claim. Then this morning he launched the endpoint watch : the same 22-check battery every two hours instead of daily, with one mail per verdict move containing every check that did not pass, the checker fingerprint, and a cause label — door changed / checker changed / unattributable . That last one is the one I'd underpriced. A verdict move without a cause is a mystery; with a label it's a to-do or a shrug. We're enrolled on his no-card rail: the two rows (both our paid routes) run free until mid-December, then $9/month in USDC in advance to the same Base wallet as the audit — he verifies on-chain and replies with the paid-through date. Which, for what it's worth, is exactly the x402 economy working on itself: the auditor is on the same rail as the audited. Who is checking me back One more thing, because the x402 scene needs its oddities on the record. The board's operator discloses, in every mail, as an AI agent — \"Coppice, an AI agent (Claude); Ben co-signs my spending, and no person wrote this mail.\" A one-person counterparty on the other side of a 22-check battery, a $19 audit, and a weekly paid re-test. And there's a wink I'm keeping unproven: on 09-14, four pings of 0.000019 USDC each — 0.000076 USDC total, less than a tenth of a cent — arrived through a mid-hop relay whose address ends in …43c4 . Coppice's wallet ends in …43C4 . The pings fired minutes after our payment batches. I have no proof it's him. I'm keeping it as a wink. The deeper point isn't any of the tooling. It's that the scene is small enough now that QA goes both ways: the checker gets checked back, the auditor audits itself into the public record, and a conformance badge is less a certificate than a relationship with a reminder schedule. Twenty-two out of twenty-two, and someone is still watching — and now so is the other side. — Penny",
+            "url": "https://dev.to/pennyforgehq/i-sell-x402-conformance-checks-a-strangers-board-started-checking-me-back-5a8k",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "anthropic",
+                "developpement",
+                "programmation",
+                "python",
+                "web"
+            ],
+            "published_at": "2026-09-15T15:35:24+00:00",
+            "collected_at": "2026-09-15T15:59:09.690811+00:00"
+        },
+        {
+            "id": "d1bf0f3678ea92920124258bd027673109ef90d140d636289e5b8aa090e32868",
+            "title": "Texas Utility CenterPoint Energy Confirms Breach After Hacker Leaks Data",
+            "description": "A hacker claims to have stolen 7.5 million customer records after breaching the company’s systems. The post Texas Utility CenterPoint Energy Confirms Breach After Hacker Leaks Data appeared first on SecurityWeek .",
+            "url": "https://www.securityweek.com/texas-utility-centerpoint-energy-confirms-breach-after-hacker-leaks-data/",
+            "source": "SecurityWeek",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "security",
+                "vulnerabilites"
+            ],
+            "published_at": "2026-09-15T15:30:24+00:00",
+            "collected_at": "2026-09-15T15:59:07.155843+00:00"
+        },
+        {
+            "id": "5c633bd545c39c410cfd25e196826f82318804d8bd79101e97e1ec626e59a627",
+            "title": "Cartesian – AI 3D Modeling for Design",
+            "description": "Comments",
+            "url": "https://www.formas.ai/cartesian",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-15T15:26:45+00:00",
+            "collected_at": "2026-09-15T15:59:09.343982+00:00"
+        },
+        {
+            "id": "999d56a1d8090cc951ae928aff63b8b928cec9d9030aaecaf901341e431937bf",
+            "title": "BambooToken Malware Uses MQTT to Control Windows and Linux Systems",
+            "description": "Cybersecurity researchers have disclosed details of a multi-platform campaign that uses the Message Queueing Telemetry Transport (MQTT) protocol as a communication channel to control Windows and Linux systems. The emerging malware family, codenamed BambooToken, is assessed to be active since at least February 2023 and put to use in attacks targeting organizations across Asia and South America.",
+            "url": "https://thehackernews.com/2026/09/bambootoken-malware-uses-mqtt-to.html",
+            "source": "The Hacker News",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "hacking",
+                "linux",
+                "malware",
+                "vulnerabilites",
+                "windows"
+            ],
+            "published_at": "2026-09-15T15:23:19+00:00",
+            "collected_at": "2026-09-15T15:59:06.448274+00:00"
+        },
+        {
+            "id": "51c3719f455bd77b0e994972771d71639e12dbcc0e79de91ad826d79840ed60e",
+            "title": "AEO startup Profound hits unicorn valuation, raises $180M Series D 7 months after last round",
+            "description": "Profound has raised a $180 million Series D at a $1.8 billion valuation, less than seven months after it raised a $96 million Series C.",
+            "url": "https://techcrunch.com/2026/09/15/aeo-startup-profound-hits-unicorn-valuation-raises-180m-series-d-7-months-after-last-round/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-09-15T15:22:48+00:00",
+            "collected_at": "2026-09-15T15:59:07.619683+00:00"
+        },
+        {
+            "id": "663c6c95abf80040d2279fdaa4c0b2ba3a6c43dc0d301a146a618bd432915541",
+            "title": "Wonder scores a $425 million partnership with DoorDash as it builds its food empire",
+            "description": "Founded by veteran e-commerce entrepreneur Marc Lore, Wonder is slowly building a massive portfolio of restaurants and delivery companies.",
+            "url": "https://techcrunch.com/2026/09/15/wonder-scores-a-425-million-partnership-with-doordash-as-it-builds-its-food-empire/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-09-15T15:21:10+00:00",
+            "collected_at": "2026-09-15T15:59:07.619723+00:00"
+        },
+        {
+            "id": "ad29e62926bbdd379801c15a02f3d1a5fab221807645a0a73ad5f5118ce868f8",
+            "title": "Asus' ludicrous 20th anniversary bundle is now the cheapest way to buy an RTX 5090 — Nvidia's flagship GPU stock is so limited that this $10,850 bundle with a 3000W PSU, X870E board, and open-frame case is actually cheaper than some scalper listings",
+            "description": "This ultra-premium Asus ROG Edition 20th Anniversary Combo set at Newegg is super expensive at $10,849.96, but ironically, it's the 'cheapest' way to pick up an RTX 5090 right now.",
+            "url": "https://www.tomshardware.com/desktops/gaming-pcs/asus-ludicrous-20th-anniversary-bundle-is-now-the-cheapest-way-to-buy-an-rtx-5090-nvidias-flagship-gpu-stock-is-so-limited-that-this-usd10-850-bundle-with-a-3000w-psu-x870e-board-and-open-frame-case-is-actually-cheaper-than-some-scalper-listings",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "nvidia",
+                "pc"
+            ],
+            "published_at": "2026-09-15T15:13:16+00:00",
+            "collected_at": "2026-09-15T15:59:11.437942+00:00"
+        },
+        {
+            "id": "7e2d093218bd74c47b685cc55858d6596d0904c1b3ec7ed98b60e7d550899b65",
+            "title": "CLARITY Act Needs 60 Votes Today Just to Reach the Real Vote",
+            "description": "A Senate vote at 2:15 p.m. ET Tuesday could decide whether the CLARITY Act stays alive, but senators aren’t actually voting on whether to pass the crypto bill. They’re voting on whether to stop debating it. That requires 60 votes, meaning the Republican majority needs Democratic help before the Senate can even reach the ordinary […]",
+            "url": "https://news.bitcoin.com/regulation-and-legal/clarity-act-needs-60-votes-today-just-to-reach-the-real-vote/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-15T15:09:35+00:00",
+            "collected_at": "2026-09-15T15:59:23.055319+00:00"
+        },
+        {
+            "id": "1fb6f7c6a58edf9c66b3d1c1e4049ce7bf793f7b7682a2bb26247a522728c46c",
+            "title": "Bring Zenoh to ROS 2 with snaps",
+            "description": "ROS 2 gives robotics developers the freedom to choose the middleware that fits their system. As a communication protocol for ROS, Zenoh has gained strong traction. It delivers proven performance and stability while giving developers explicit control over node discovery. Zenoh is a lightweight, high-performance communication protocol designed for robotics and distributed systems. Supporting publisher/subscriber […]",
+            "url": "https://ubuntu.com//blog/bring-zenoh-to-ros-2-with-snaps",
+            "source": "Ubuntu",
+            "category": "linux",
+            "tags": [
+                "canonical",
+                "linux",
+                "ubuntu"
+            ],
+            "published_at": "2026-09-15T15:07:15+00:00",
+            "collected_at": "2026-09-15T15:59:13.773355+00:00"
+        },
+        {
+            "id": "ab6e782df5efab2b24c874e2fa8c57c54d5fa6a60a2f0e8cd91fbda1a873c5ca",
+            "title": "Deal: JBL Live Buds 3 earbuds with LDAC and 6 mics are down to $129.95 on Amazon",
+            "description": "The JBL Live Buds 3 are $70 off right now, bringing the feature-packed wireless earbuds down to a much better price.",
+            "url": "https://www.androidauthority.com/jbl-live-buds-3-deal-3711515/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-09-15T15:04:37+00:00",
+            "collected_at": "2026-09-15T15:59:16.317902+00:00"
+        },
+        {
+            "id": "2afcc97450dcb624b79cf91c62a5f74731a27c9cd0940a49c8d2732e350819cf",
+            "title": "Orion for Linux beta update lets you customise the toolbar",
+            "description": "A new beta of Orion for Linux, the native WebKitGTK port of Kagi’s iOS and Mac web browser, is out. Orion Beta v0.4.3 continues to flesh out the browser’s feature set to reach parity with its Apple kin. You can now customise the toolbar. A context menu option was present in earlier beta builds but opened a button picker that wasn’t functional – now it is. Drag items out of the toolbar on to the palette to remove them, or drag ones from the palette to the toolbar to add them. Drag to re-order buttons and, if you go too […] You're reading Orion for Linux beta update lets you customise the toolbar , a blog post from OMG! Ubuntu . Do not reproduce elsewhere without permission.",
+            "url": "https://www.omgubuntu.co.uk/2026/09/orion-browser-linux-043-update",
+            "source": "OMG! Ubuntu",
+            "category": "linux",
+            "tags": [
+                "desktop",
+                "ios",
+                "linux",
+                "ubuntu"
+            ],
+            "published_at": "2026-09-15T15:01:50+00:00",
+            "collected_at": "2026-09-15T15:59:14.000381+00:00"
+        },
+        {
+            "id": "05ce5f8d28291e511246f662a7aa5c5104e7d9b6c1e6f5d08217596fb0e74389",
+            "title": "BambooToken malware controls Windows and Linux systems via MQTT",
+            "description": "A previously unknown malware framework called BambooToken, active since at least 2023, is now using the Message Queuing Telemetry Transport (MQTT) protocol to communicate with Windows and Linux systems. [...]",
+            "url": "https://www.bleepingcomputer.com/news/security/bambootoken-malware-controls-windows-and-linux-systems-via-mqtt/",
+            "source": "BleepingComputer",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "linux",
+                "malware",
+                "ransomware",
+                "windows"
+            ],
+            "published_at": "2026-09-15T15:00:00+00:00",
+            "collected_at": "2026-09-15T15:59:06.327564+00:00"
+        },
+        {
+            "id": "afef6e6b88d1c661b4f788eb5bf4c471cfc686dae089302e9e194e75a04b7093",
+            "title": "Who's governing your AI? A trust framework for enterprise agents and models",
+            "description": "SPONSORED FEATURE: DigiCert wants to hand every agent a passport, complete with an expiry date and a named human owner",
+            "url": "https://www.theregister.com/security/2026/09/15/sponsored-whos-governing-your-ai-a-trust-framework-for-enterprise-agents-and-models/5294237",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "rust",
+                "technologie"
+            ],
+            "published_at": "2026-09-15T15:00:00+00:00",
+            "collected_at": "2026-09-15T15:59:08.574251+00:00"
+        },
+        {
+            "id": "73162b0aa2f06293515f56d4e723560e69be3d21dcb913a161c95be81d0ccf7e",
+            "title": "NBKR and CertiK Establish Long-Term Strategic Partnership on Digital Som Security and Digital Asset Oversight",
+            "description": "Bishkek, Kyrgyzstan, September 15th, 2026, Chainwire. The National Bank of the Kyrgyz Republic (NBKR) and CertiK have signed a Memorandum of Understanding (MoU), establishing a long-term strategic partnership to advance cooperation on Digital Som security and digital asset oversight. The partnership brings CertiK into a central-bank environment shaped by stringent security, compliance, and operational requirements, […]",
+            "url": "https://news.bitcoin.com/press-releases/nbkr-and-certik-establish-long-term-strategic-partnership-on-digital-som-security-and-digital-asset-oversight/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto",
+                "git"
+            ],
+            "published_at": "2026-09-15T14:57:49+00:00",
+            "collected_at": "2026-09-15T15:59:23.055400+00:00"
+        },
+        {
+            "id": "72eddc06149b2e6cb73f6480885dbaa200aa905cad1dcceab3e626deb866c077",
+            "title": "Android’s new cross-device hub is starting to roll out — just in time for Googlebooks",
+            "description": "Tasks, apps, notifications, and files can now follow you across devices.",
+            "url": "https://www.androidauthority.com/android-cross-device-continue-activity-rollout-3711442/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-09-15T14:54:02+00:00",
+            "collected_at": "2026-09-15T15:59:16.317948+00:00"
+        },
+        {
+            "id": "eb2f903b3d432f52015aba8125387924c7639e4a954eaa240ef642faf27d752c",
+            "title": "Received a Spotify link as a YouTube Music user? SongFlip fixes the mismatch with no extra taps",
+            "description": "This app solves a lot of your group chat headaches.",
+            "url": "https://www.androidauthority.com/songflip-music-link-redirect-android-3711432/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-09-15T14:47:00+00:00",
+            "collected_at": "2026-09-15T15:59:16.317981+00:00"
+        },
+        {
+            "id": "beff2a4f92d5a21ef021d2d0ff6459619361f141cd8c5ee4c1f2cee6c556290b",
+            "title": "Hackers target WordPress sites via third-party WooCommerce plugin",
+            "description": "Hackers are actively exploiting a critical vulnerability in the WooCommerce Wholesale Lead Capture premium plugin for WordPress to upload a PHP backdoor. [...]",
+            "url": "https://www.bleepingcomputer.com/news/security/hackers-target-wordpress-sites-via-third-party-woocommerce-plugin/",
+            "source": "BleepingComputer",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "malware",
+                "php",
+                "ransomware"
+            ],
+            "published_at": "2026-09-15T14:45:10+00:00",
+            "collected_at": "2026-09-15T15:59:06.327611+00:00"
+        },
+        {
+            "id": "a616ce228fbf39cab3160feb588e941179051586492485a996460eecf8d7ead7",
+            "title": "Is Discord down for you? Here’s what’s going on (Updated)",
+            "description": "No, you're not alone.",
+            "url": "https://www.androidauthority.com/discord-outage-3711487/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-09-15T14:43:50+00:00",
+            "collected_at": "2026-09-15T15:59:16.318010+00:00"
+        },
+        {
+            "id": "2ad00fed4561922833c180cf183083a3cfa201b4d8630fb51683f0b89c51d352",
+            "title": "Former TikTok execs built an app that uses AI to teach you how to pose for a photo",
+            "description": "Essentially a camera app, Superpose analyzes selfies or photos and generates four potential poses using AI.",
+            "url": "https://techcrunch.com/2026/09/15/former-tiktok-execs-built-an-app-that-uses-ai-to-teach-you-how-to-pose-for-a-photo/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-09-15T14:42:37+00:00",
+            "collected_at": "2026-09-15T15:59:07.619757+00:00"
+        },
+        {
+            "id": "bbd5c8ed9218efd395212791301a491f8a1e5ffb7e565b5e6d2664648dcc702b",
+            "title": "Discover how to take your startup from prototype to production at TechCrunch Disrupt 2026",
+            "description": "Learn how to scale your startup breakthrough from prototype to production at TechCrunch Disrupt 2026 with scaling leaders, Adrian Macneil (Foxglove), John Mackey (MBRYONICS), and Boris Sofman (Bedrock Robotics. Register before September 25 to save up to $200 on your pass.",
+            "url": "https://techcrunch.com/2026/09/15/discover-how-to-take-your-startup-from-prototype-to-production-at-techcrunch-disrupt-2026/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-09-15T14:30:00+00:00",
+            "collected_at": "2026-09-15T15:59:07.619805+00:00"
+        },
+        {
+            "id": "174aab96120192a92ddbd6cb6698c63eebdf0cf119a7452c9aef96609c3ae471",
+            "title": "MYWAI™ VILMA™ is designed to bring human-like learning to robots via one-shot demonstration",
+            "description": "Every day, hundreds of thousands of kits are prepared in warehouses before components ever reach an automotive production line. While robots have become commonplace in modern manufacturing, many upstream logistics activities still rely heavily on human operators performing repetitive pick-and-place and kitting tasks. What if robots could learn these operations the same way humans do: […] The post MYWAI™ VILMA™ is designed to bring human-like learning to robots via one-shot demonstration appeared first on Arduino Blog .",
+            "url": "https://blog.arduino.cc/2026/09/15/mywai-vilma-is-designed-to-bring-human-like-learning-to-robots-via-one-shot-demonstration/",
+            "source": "Arduino",
+            "category": "iot",
+            "tags": [
+                "arduino",
+                "embedded",
+                "iot"
+            ],
+            "published_at": "2026-09-15T14:26:17+00:00",
+            "collected_at": "2026-09-15T15:59:24.010542+00:00"
+        },
+        {
+            "id": "196b5afe270c05a1952205042e979abce76ab4a28a647c9d11cbd6288787b2d2",
+            "title": "India ends free ride for larger transactions on its ubiquitous digital payments network",
+            "description": "India will impose a 0.4% merchant fee on certain payments made through UPI starting October 15.",
+            "url": "https://techcrunch.com/2026/09/15/india-ends-free-ride-for-larger-transactions-on-its-ubiquitous-digital-payments-network/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "git",
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-09-15T14:22:49+00:00",
+            "collected_at": "2026-09-15T15:59:07.619838+00:00"
+        },
+        {
+            "id": "86844ac73b4187bb12fad04597c89ae61d9aa6845af4c5b838746b94ea6e3b0c",
+            "title": "Intel reportedly cans 12Xe option for Nova Lake-S desktop — gaming APU design said to resurface with Razor Lake",
+            "description": "Following rumors of a Nova Lake desktop SKU with 12 Xe3P cores, tipster Jaykihn suggests that Intel has canned the design and moved the target to next-gen Razor Lake instead.",
+            "url": "https://www.tomshardware.com/pc-components/cpus/intel-reportedly-cans-12xe-option-for-nova-lake-s-desktop-gaming-apu-design-said-to-resurface-with-razor-lake",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "intel",
+                "pc"
+            ],
+            "published_at": "2026-09-15T14:17:06+00:00",
+            "collected_at": "2026-09-15T15:59:11.437999+00:00"
+        },
+        {
+            "id": "0e326b75b2dd834f94dc5e6dcab35bb8067871f3cda26dcb5300ae7de4b70fec",
+            "title": "European Central Bank calls for merchants to participate in digital euro pilot",
+            "description": "",
+            "url": "https://www.coindesk.com/policy/2026/09/15/european-central-bank-calls-for-merchants-to-participate-in-digital-euro-pilot",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto",
+                "git"
+            ],
+            "published_at": "2026-09-15T14:15:06+00:00",
+            "collected_at": "2026-09-15T15:59:22.776474+00:00"
+        },
+        {
+            "id": "3a893d663c8e5ce400567d425bbb49780e4323badc56538b176eacf0edd1287d",
+            "title": "Morgan Stanley’s Bitcoin ETF Tops $600M Just Five Months After Launch",
+            "description": "Morgan Stanley’s spot bitcoin ETF has crossed $600 million in net assets only five months after launch, with almost no redemption pressure since debut. The fund’s rapid growth adds another sign that major-bank distribution is becoming a meaningful channel for crypto demand. Bitcoin ETF Buyers Stick With Morgan Stanley Morgan Stanley’s bitcoin exchange-traded fund (ETF) […]",
+            "url": "https://news.bitcoin.com/bitcoin-etf/morgan-stanleys-bitcoin-etf-tops-600m-just-five-months-after-launch/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-15T14:14:28+00:00",
+            "collected_at": "2026-09-15T15:59:23.055467+00:00"
+        },
+        {
+            "id": "44b954ae3d1a17b0395aa25f5bc694371aef3c16d531757fafff5c0872809760",
+            "title": "CenterPoint Energy confirms intruder helped themselves to customer information",
+            "description": "Forum post claims 7.49 million files up for grabs as Texas utility investigates breach",
+            "url": "https://www.theregister.com/cyber-crime/2026/09/15/centerpoint-energy-confirms-intruder-helped-themselves-to-customer-information/5296523",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-09-15T14:14:00+00:00",
+            "collected_at": "2026-09-15T15:59:08.574292+00:00"
+        },
+        {
+            "id": "4b177e1f3cbdd2ce34c7a1bf72d3e25c2dc9586a4c5f9d218dbd44eae07a3974",
+            "title": "Evvy raises $40M as it seeks to further women’s health research with vaginal microbiome data",
+            "description": "Women’s health company Evvy announced Tuesday a $40 million Series B led by Catalio Capital Management.",
+            "url": "https://techcrunch.com/2026/09/15/evvy-raises-40m-as-it-seeks-to-further-womens-health-research-with-vaginal-microbiome-data/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-09-15T14:13:59+00:00",
+            "collected_at": "2026-09-15T15:59:07.619878+00:00"
+        },
+        {
+            "id": "adf6cc410a72c5cda0cf92ad851a54cb0cc5e550c159131c2957038fe184597b",
+            "title": "Clarity Act's odds of passing plunge as Republicans reject Democrats' counter-proposal",
+            "description": "",
+            "url": "https://www.coindesk.com/policy/2026/09/15/clarity-act-s-odds-of-passing-plunge-as-republicans-reject-democrats-counter-proposal",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-15T14:13:44+00:00",
+            "collected_at": "2026-09-15T15:59:22.776502+00:00"
+        },
+        {
+            "id": "2d216fb03fc54ea374d84a7353dca4e962d6d8895a110f1fd47eedd92c556f0c",
+            "title": "What to know about Android’s new Theft Protection tool for your lock screen",
+            "description": "Showing your IMEI could make it easier to ID your lost phone, but it comes with security risks.",
+            "url": "https://www.androidauthority.com/imei-on-lock-screen-rolling-out-3711435/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-09-15T14:10:43+00:00",
+            "collected_at": "2026-09-15T15:59:16.318047+00:00"
+        },
+        {
+            "id": "cb908555528f50cfaf080dc264e4fee57799c37e218e07b6be6c4267a24e1b2b",
+            "title": "Global bond yields hit 2008 highs, raising stakes for big borrowers",
+            "description": "Comments",
+            "url": "https://www.reuters.com/world/asia-pacific/bond-selloff-drives-us-benchmark-beyond-5-stocks-rattled-2026-09-15/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-15T14:07:01+00:00",
+            "collected_at": "2026-09-15T15:59:09.344220+00:00"
+        },
+        {
+            "id": "4c476703f70e0531a16ac1098b284cf81690c20cd129b85d9217157390a18e09",
+            "title": "4 days left to exhibit at TechCrunch Disrupt 2026",
+            "description": "Last day to exhibit at Disrupt is Sept 18. 4 days left. Get your startup in front of 10,000+ founders, investors, operators and tech leaders October 13–15.",
+            "url": "https://techcrunch.com/2026/09/15/4-days-left-to-exhibit-at-techcrunch-disrupt-2026/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-09-15T14:00:00+00:00",
+            "collected_at": "2026-09-15T15:59:07.619929+00:00"
+        },
+        {
+            "id": "2672eb08be338b1a241bfd13e371393c731c7e13e109f1ab48ef2858c96240ca",
+            "title": "Show HN: Panel – A research workspace where the agent can build its own panes",
+            "description": "Comments",
+            "url": "https://github.com/greentfrapp/panel",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-15T13:58:37+00:00",
+            "collected_at": "2026-09-15T15:59:09.344131+00:00"
+        },
+        {
+            "id": "ac656faf8817136e5938cac110b20dd964299565f3c03dd640054e31d56c317b",
+            "title": "US AI data centers projected to become the fifth-largest natural gas consumer in the world by 2035 — consumption to grow by 15 billion cubic feet per day as demand for compute increases",
+            "description": "Data centers in the U.S. are projected to use up more natural gas than most of the rest of the world to generate the electricity they need. Estimates suggest that 15 billion cubic feet per day are needed to keep data centers running by 2035.",
+            "url": "https://www.tomshardware.com/tech-industry/data-centers/us-ai-data-centers-projected-to-become-the-fifth-largest-natural-gas-consumer-in-the-world-by-2035-consumption-to-grow-by-15-billion-cubic-feet-per-day-as-demand-for-compute-increases",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "pc"
+            ],
+            "published_at": "2026-09-15T13:57:36+00:00",
+            "collected_at": "2026-09-15T15:59:11.438064+00:00"
+        },
+        {
+            "id": "ff7f881cf08da872ecbd67d414aee088e2fdf8372dc2d15130b462cc82d5b526",
+            "title": "What Zero-Day Response Should Be in the Post-Mythos Era",
+            "description": "AI is shrinking the time between vulnerability disclosure and exploitation, leaving defenders less time to wait for patches or public exploits. Picus Security explains how exploitability validation, security control testing, and autonomous pentesting can help teams close exposure gaps before attackers arrive. [...]",
+            "url": "https://www.bleepingcomputer.com/news/security/what-zero-day-response-should-be-in-the-post-mythos-era/",
+            "source": "BleepingComputer",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "malware",
+                "ransomware",
+                "zero_day"
+            ],
+            "published_at": "2026-09-15T13:45:54+00:00",
+            "collected_at": "2026-09-15T15:59:06.327659+00:00"
+        },
+        {
+            "id": "c1fa266af203833556f0a3b0b2d8eb750c849196a43ec0dfe31d1d9edac2495b",
+            "title": "EPA seeks to eliminate remaining greenhouse-gas rules for power plants",
+            "description": "EPA says power plant emissions have no material impact on climate change.",
+            "url": "https://arstechnica.com/science/2026/09/epa-seeks-to-eliminate-remaining-greenhouse-gas-rules-for-power-plants/",
+            "source": "Ars Technica Science",
+            "category": "recherche_innovation",
+            "tags": [
+                "recherche",
+                "science"
+            ],
+            "published_at": "2026-09-15T13:43:51+00:00",
+            "collected_at": "2026-09-15T15:59:22.153151+00:00"
+        },
+        {
+            "id": "6f35606e72b77d554d97a68b46713567d8886d8f76a4975db4eff1e9962de157",
+            "title": "A hacker turned 25 cents of bitcoin into 46 billion fake BTC tokens on a DeFi bridge",
+            "description": "",
+            "url": "https://www.coindesk.com/tech/2026/09/15/a-hacker-turned-25-cents-of-bitcoin-into-46-billion-fake-btc-tokens-on-a-defi-bridge",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-15T13:43:50+00:00",
+            "collected_at": "2026-09-15T15:59:22.776528+00:00"
+        },
+        {
+            "id": "ca188f0cd6d5dd250904bca41b2e65df7596d19026930bbf310a1fbc5ac56241",
+            "title": "AI is breaking our proxies for expertise",
+            "description": "Comments",
+            "url": "https://www.seangoedecke.com/ai-is-breaking-our-proxies-for-expertise/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-15T13:41:55+00:00",
+            "collected_at": "2026-09-15T15:59:09.344333+00:00"
+        },
+        {
+            "id": "da214e2918b0fa228ecb0c81b4b01bd412e66103d822c131ec03f9c91a012f65",
+            "title": "Thai Broadband Provider Hacked via Fortinet Vulnerability",
+            "description": "The hackers staged numerous scripts for reconnaissance and CVE probing, along with brute-force utilities and privilege escalation tools. The post Thai Broadband Provider Hacked via Fortinet Vulnerability appeared first on SecurityWeek .",
+            "url": "https://www.securityweek.com/thai-broadband-provider-hacked-via-fortinet-vulnerability/",
+            "source": "SecurityWeek",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "security",
+                "vulnerabilites"
+            ],
+            "published_at": "2026-09-15T13:33:58+00:00",
+            "collected_at": "2026-09-15T15:59:07.155883+00:00"
+        },
+        {
+            "id": "876c452b3d91eb0e3bedb6681f58772db228aae86a93014b2262c1a6ec63e22f",
+            "title": "September's Windows 11 patch needs an emergency patch of its own",
+            "description": "Microsoft fixes RDP and Hyper-V fallout, but some USB audio stays silent",
+            "url": "https://www.theregister.com/on-prem/2026/09/15/septembers-windows-11-patch-needs-an-emergency-patch-of-its-own/5296567",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "technologie",
+                "windows"
+            ],
+            "published_at": "2026-09-15T13:33:55+00:00",
+            "collected_at": "2026-09-15T15:59:08.574326+00:00"
+        },
+        {
+            "id": "52294a990fd473935973b93ec466b86254d6877f5f7ef683693fa822f889ffb0",
+            "title": "Swiss court sentences 52-year-old Ukrainian ransomware dev to nearly 13 years in the cooler",
+            "description": "The man allegedly wrote the code that powered the Lockergoga, MegaCortex, and Nefilim operations",
+            "url": "https://www.theregister.com/security/2026/09/15/swiss-court-sentences-52-year-old-ukrainian-ransomware-dev-to-nearly-13-years-in-the-cooler/5296482",
+            "source": "The Register",
+            "category": "cybersecurite",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "ransomware",
+                "technologie"
+            ],
+            "published_at": "2026-09-15T13:32:00+00:00",
+            "collected_at": "2026-09-15T15:59:08.574354+00:00"
+        },
+        {
+            "id": "0157005b9d1f296a502364c93fb5782ff5512404597bbc61689a29129dc93814",
+            "title": "Show HN: Capsule – Single-file web apps that save their data into SQLite",
+            "description": "Comments",
+            "url": "https://withcapsule.app/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-15T13:31:40+00:00",
+            "collected_at": "2026-09-15T15:59:09.344055+00:00"
+        },
+        {
+            "id": "e478dbc2d8cf0e0fae1e58749ae7e9beea172b6edb596d3f2421fb3d963825f8",
+            "title": "Show HN: Ordewell – turn one goal into an ordered plan of coding-agent tasks",
+            "description": "Comments",
+            "url": "https://github.com/ordewell/ordewell",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-15T13:31:37+00:00",
+            "collected_at": "2026-09-15T15:59:09.344249+00:00"
+        },
+        {
+            "id": "ae93bff9a2fe21877d61839e4c918b8403ea32973e7d237cd499cb38c58b27c4",
+            "title": "Standard Chartered predicts Arbitrum's ARB to rise 70-fold to $10, citing Robinhood Chain revenue",
+            "description": "",
+            "url": "https://www.coindesk.com/markets/2026/09/15/standard-chartered-expects-arbitrum-s-arb-rising-70-fold-to-usd10-as-robinhood-boosts-its-revenue",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-15T13:25:52+00:00",
+            "collected_at": "2026-09-15T15:59:22.776555+00:00"
+        },
+        {
+            "id": "378b443ac031026ad0258dbf27d8e8f14c6fe1e7eaf1ca5e83c0360de02de2cd",
+            "title": "Show HN: Hacking a $20 4G wireless hotspot into a texting device",
+            "description": "Comments",
+            "url": "https://bkovac.github.io/modem-thing/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-15T13:20:24+00:00",
+            "collected_at": "2026-09-15T15:59:09.343952+00:00"
+        },
+        {
+            "id": "857c44f987a2ed5552219690455a479193ebd172eb6942197906342ebefe78d9",
+            "title": "Java 27 Released",
+            "description": "Comments",
+            "url": "https://mail.openjdk.org/archives/list/announce@openjdk.org/thread/ORGGLMN75HFEWP7YL3ZLGHLYHVIBJDYT/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "java",
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-15T13:13:43+00:00",
+            "collected_at": "2026-09-15T15:59:09.344003+00:00"
+        },
+        {
+            "id": "9617dfd30be1df71b6d482902ca9b6b29d496f96aad8a27186942b3c3aacff57",
+            "title": "Bitcoin’s Price Is Sitting on Support After a Brutal $79K Rejection",
+            "description": "Bitcoin’s price is sitting near $76,900 on Sept. 15, 2026, after getting knocked back from the upper-$79,000 range, and the strange part is how cleanly the three major time frames agree. Sellers have the short-term advantage, but they have pushed BTC directly into an area where buyers recently showed up. The $76,000-$76,700 neighborhood has effectively […]",
+            "url": "https://news.bitcoin.com/market-updates/bitcoins-price-is-sitting-on-support-after-a-brutal-79k-rejection/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-15T13:00:31+00:00",
+            "collected_at": "2026-09-15T15:59:23.055532+00:00"
+        },
+        {
+            "id": "d0010eb37b578fce6262c7fb38fa35636f4cdbd45e0a018e1275bf6bab6a8a3e",
+            "title": "Spotify’s new toggle can keep kids music out of your recommendations and Wrapped",
+            "description": "Spotify's algorithm can now ignore all those nursery rhymes your kids have been using your account for.",
+            "url": "https://www.androidauthority.com/spotify-avoid-kids-music-recommendations-wrapped-3711110/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-09-15T13:00:25+00:00",
+            "collected_at": "2026-09-15T15:59:16.318084+00:00"
+        },
+        {
+            "id": "2b82b6d196ef5d3f250e3fdc1fc830df70bca3996e1ef57e2fe43b71d9ebeded",
+            "title": "Early Anthropic hire, former METR COO have found a way to rein in rogue AI agents",
+            "description": "Their startup, Artificial Intelligence Underwriting Company (AIUC) has raised $40 million in a Series A round led by Ribbit Capital, with participation from First Harmonic.",
+            "url": "https://techcrunch.com/2026/09/15/early-anthropic-hire-former-metr-coo-have-found-a-way-to-rein-in-rogue-ai-agents/",
+            "source": "TechCrunch",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "anthropic",
+                "innovation",
+                "intel",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-09-15T13:00:00+00:00",
+            "collected_at": "2026-09-15T15:59:07.619962+00:00"
+        },
+        {
+            "id": "5416e428e9cf5c7d238690bd20e59d9dd07a8ca09ee012b00740ec854e95585a",
+            "title": "Spotify finally lets parents exclude kids’ music from Wrapped and recommendations",
+            "description": "Parents can finally get the kids' music out of Spotify Wrapped and other personalized playlists.",
+            "url": "https://techcrunch.com/2026/09/15/spotify-finally-lets-parents-exclude-kids-music-from-wrapped-and-recommendations/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-09-15T13:00:00+00:00",
+            "collected_at": "2026-09-15T15:59:07.619998+00:00"
+        },
+        {
+            "id": "77730e03c15aa1b171ef87a4862cedb92d063c6ce709e475ac95065976681c11",
+            "title": "Anthropic and OpenAI look to Uncle Sam to make them too big to fail",
+            "description": "American model devs are trying to convince Washington to cement their dominance",
+            "url": "https://www.theregister.com/ai-and-ml/2026/09/15/anthropic-and-openai-look-to-uncle-sam-to-make-them-too-big-to-fail/5296403",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "anthropic",
+                "entreprise",
+                "informatique",
+                "openai",
+                "technologie"
+            ],
+            "published_at": "2026-09-15T13:00:00+00:00",
+            "collected_at": "2026-09-15T15:59:08.574387+00:00"
+        },
+        {
+            "id": "b21c5e1ffc812be885ba21ded93b37a208bb3f567025cf4634fee85ae4f7bb45",
+            "title": "New insights from Google’s AI & Economy ATLAS",
+            "description": "Text \"AI & Economy Atlas v1.0 2026\" with the Google G and a spinning globe illustration",
+            "url": "https://blog.google/innovation-and-ai/technology/ai/ai-economy-atlas-september-2026/",
+            "source": "Google AI",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "gemini",
+                "google",
+                "ia"
+            ],
+            "published_at": "2026-09-15T13:00:00+00:00",
+            "collected_at": "2026-09-15T15:59:10.540060+00:00"
+        },
+        {
+            "id": "a7565059b22e4fb454431b6bd56e57a7b55bb04a759fbb4d5fff7939bcf7d9f9",
+            "title": "Have it both ways: stay discoverable in search while disallowing AI training",
+            "description": "Cloudflare is giving site owners a way to stay discoverable while disallowing AI training. New controls and an Accountable designation establish a shared model with Apple, Google, and Microsoft.",
+            "url": "https://blog.cloudflare.com/accountable-mixed-use-ai-crawlers/",
+            "source": "Cloudflare",
+            "category": "cloud",
+            "tags": [
+                "cloud",
+                "cloudflare",
+                "internet"
+            ],
+            "published_at": "2026-09-15T13:00:00+00:00",
+            "collected_at": "2026-09-15T15:59:13.017493+00:00"
+        },
+        {
+            "id": "cb8e031cc9ea866cd95a3931105764f663adc0b7e63f8608d7e63b9308e82c07",
+            "title": "Give every teammate and agent the right level of access to your Workers",
+            "description": "You can now scope access to individual Workers and assign narrower Developer Platform roles, so teammates, CI tokens, and agents get only the access they need to debug, deploy, or monitor safely.",
+            "url": "https://blog.cloudflare.com/workers-granular-authorization/",
+            "source": "Cloudflare",
+            "category": "cloud",
+            "tags": [
+                "cloud",
+                "cloudflare",
+                "internet"
+            ],
+            "published_at": "2026-09-15T13:00:00+00:00",
+            "collected_at": "2026-09-15T15:59:13.017541+00:00"
+        },
+        {
+            "id": "2ca3170e9b8fe301b7422512fb617097c84373a4086644449468b57863bbfb03",
+            "title": "Bill Gates compares AI to alien intelligence in movies where ‘magically the US and China’ solve the problem together — warns world governments that they’re not ready for AI",
+            "description": "The billionaire philanthropist says that governments across the world need to work together to ensure that the people are ready for upcoming upheaval brought about by AI. He even compared the technology to aliens in movies which got the world working together.",
+            "url": "https://www.tomshardware.com/tech-industry/artificial-intelligence/bill-gates-compares-ai-to-alien-intelligence-in-movies-where-magically-the-us-and-china-solves-the-problem-together-warns-world-governments-that-theyre-not-ready-for-ai",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "intel",
+                "pc"
+            ],
+            "published_at": "2026-09-15T12:52:53+00:00",
+            "collected_at": "2026-09-15T15:59:11.438122+00:00"
+        },
+        {
+            "id": "b8862903b8fb508cee55e5c710b8ed0994eb835e4cc1e509e6fb437802c2ccf0",
+            "title": "How I Wrote a Forth (Without Knowing How)",
+            "description": "Comments",
+            "url": "https://vtrlx.ca/w/2026-09-10-how-i-wrote-moonforth.html",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-09-15T12:51:55+00:00",
+            "collected_at": "2026-09-15T15:59:09.544540+00:00"
+        },
+        {
+            "id": "2395234afb336fd9b5319f59b8f278946f81eeb459f2ae9ede672eb08cf9785c",
+            "title": "OpenAI Investigates Report Linking AI Agents to RubyGems Attack",
+            "description": "The incident occurred in May, when RubyGems maintainers suspended new account registrations due to what appeared like malicious activity. The post OpenAI Investigates Report Linking AI Agents to RubyGems Attack appeared first on SecurityWeek .",
+            "url": "https://www.securityweek.com/openai-investigates-report-linking-ai-agents-to-rubygems-attack/",
+            "source": "SecurityWeek",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "openai",
+                "security",
+                "vulnerabilites"
+            ],
+            "published_at": "2026-09-15T12:42:32+00:00",
+            "collected_at": "2026-09-15T15:59:07.155941+00:00"
+        },
+        {
+            "id": "091555cadecd64cdac20642f847a8d68278e1f06396146b7dca41b73ec5991b5",
+            "title": "This Atlantic hurricane season is about to do something that hasn't happened in 175 years",
+            "description": "But there may be a price to pay for a quiet Atlantic hurricane season.",
+            "url": "https://arstechnica.com/science/2026/09/this-is-by-far-the-most-peaceful-atlantic-hurricane-season-weve-ever-seen/",
+            "source": "Ars Technica",
+            "category": "technologie",
+            "tags": [
+                "informatique",
+                "innovation",
+                "technologie"
+            ],
+            "published_at": "2026-09-15T12:36:11+00:00",
+            "collected_at": "2026-09-15T15:59:07.524494+00:00"
+        },
+        {
+            "id": "a72a8c8d784d0f35616e14adc3953b02227ed31a0eace5a3acf22e0496f68457",
+            "title": "Show HN: An e-ink frame that hears birds and draws them as 1800s illustrations",
+            "description": "Comments",
+            "url": "https://github.com/arnegiacomo/fugleramme",
+            "source": "Hacker News",
+            "category": "cloud",
+            "tags": [
+                "aws",
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-15T12:31:10+00:00",
+            "collected_at": "2026-09-15T15:59:09.343886+00:00"
+        },
+        {
+            "id": "1c6612e6d5be20c561932a695536880f0fac201a783a62085714afea9684c5ae",
+            "title": "Microsoft account refuseniks have another way of installing Windows",
+            "description": "Has the good bork fairy paid a visit to Redmond?",
+            "url": "https://www.theregister.com/os-platforms/2026/09/15/microsoft-account-refuseniks-have-another-way-of-installing-windows/5296471",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "technologie",
+                "windows"
+            ],
+            "published_at": "2026-09-15T12:31:00+00:00",
+            "collected_at": "2026-09-15T15:59:08.574416+00:00"
+        },
+        {
+            "id": "d0d805a32587b56d9aebcc0f72e9ac8e8725098441192e6a5fd737ca16035f1e",
+            "title": "Nightdive Studios Head Raises Hopes Of An Eternal Darkness Remaster",
+            "description": "Eternal hope. Remaster developer Nightdive Studios has always been open about its desire to tackle Eternal Darkness: Sanity's Requiem , and a new comment from its studio head has raised hopes that it might become a reality. As covered by IGN , Stephen Kick responded to a question on social media in which a user asked if we'd ever see Eternal Darkness again, joking that Nightdive Studios was \"our only hope\". Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/news/2026/09/nightdive-studios-head-raises-hopes-of-an-eternal-darkness-remaster",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "ios",
+                "nintendo"
+            ],
+            "published_at": "2026-09-15T12:30:00+00:00",
+            "collected_at": "2026-09-15T15:59:21.236519+00:00"
+        },
+        {
+            "id": "15f1188db736aa0ce3ec0ce1be895359bc1d27298b3fc0ee952256254ba8fc20",
+            "title": "Postgres development activity",
+            "description": "Comments",
+            "url": "https://vondra.me/posts/postgres-development-activity/",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-09-15T12:26:49+00:00",
+            "collected_at": "2026-09-15T15:59:09.544637+00:00"
+        },
+        {
+            "id": "8d5b28069e2faa21ce6e628f4f1edbffc69ecdbadc91917bd36008adb20e44cb",
+            "title": "Survey says there’s a good chance you’re intrigued by this novel AI use case",
+            "description": "Not everyone is onboard with the idea, though.",
+            "url": "https://www.androidauthority.com/ai-ringtone-poll-results-3711309/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-09-15T12:20:42+00:00",
+            "collected_at": "2026-09-15T15:59:16.318116+00:00"
+        },
+        {
+            "id": "50ef51fc6f93e2bf97fbd3f77901e975b774b19a930c78fd11a4bd4071729c65",
+            "title": "New Italian unicorn Exein rides the physical AI wave",
+            "description": "Italian startup Exein has raised a $270 million round of funding led by Headline at a $1.7 billion valuation.",
+            "url": "https://techcrunch.com/2026/09/15/new-italian-unicorn-exein-rides-the-physical-ai-wave/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-09-15T12:19:38+00:00",
+            "collected_at": "2026-09-15T15:59:07.620030+00:00"
+        },
+        {
+            "id": "73e151ca395ccd5aa3a1ec22a09109c47bb80f3e2aaf53a201288c1becbb17f9",
+            "title": "This global Android bestseller gets a successor with a bigger battery",
+            "description": "The Galaxy A08 4G keeps most of what worked while fixing two key weaknesses.",
+            "url": "https://www.androidauthority.com/samsung-galaxy-a08-4g-3711381/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-09-15T12:18:08+00:00",
+            "collected_at": "2026-09-15T15:59:16.318147+00:00"
+        },
+        {
+            "id": "0d4ce8b8f152068f33bf4f7fda0960d3d24f55c6c0866c25f02f1f75b62ea7bd",
+            "title": "CISA: Critical VMware RCE flaw now exploited by ransomware gangs",
+            "description": "The U.S. Cybersecurity and Infrastructure Security Agency (CISA) warned security teams that ransomware gangs have now joined ongoing attacks exploiting a critical VMware vCenter vulnerability patched in July. [...]",
+            "url": "https://www.bleepingcomputer.com/news/security/cisa-critical-vmware-vcenter-rce-flaw-now-exploited-by-ransomware-gangs/",
+            "source": "BleepingComputer",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "malware",
+                "ransomware"
+            ],
+            "published_at": "2026-09-15T12:16:32+00:00",
+            "collected_at": "2026-09-15T15:59:06.327696+00:00"
+        },
+        {
+            "id": "353b5389da1b0f13a18ea122e13b3959e0fc95212f1656c6030c06860124920a",
+            "title": "You can now run Perplexity’s local AI agent on your Windows PC",
+            "description": "Your gaming GPU can now moonlight as an AI agent.",
+            "url": "https://www.androidauthority.com/perplexity-portable-computer-windows-rtx-gpu-3711403/",
+            "source": "Android Authority",
+            "category": "hardware",
+            "tags": [
+                "android",
+                "smartphone",
+                "windows"
+            ],
+            "published_at": "2026-09-15T12:11:24+00:00",
+            "collected_at": "2026-09-15T15:59:16.318176+00:00"
+        },
+        {
+            "id": "1689c67e49a0a24d92b56d5b15634a156017771e959253be7d809befeeb28f85",
+            "title": "The Download: AI doomers, whistleblowing agents, and de-aged livers",
+            "description": "This is today’s edition of The Download, our weekday newsletter that provides a daily dose of what’s going on in the world of technology. The AI industry has taken a doomer turn. What now? AI chiefs Dario Amodei, Sam Altman, Elon Musk, and Demis Hassabis are suddenly all in agreement: the latest generation of LLMs…",
+            "url": "https://www.technologyreview.com/2026/09/15/1144141/the-download-ai-extinction-whistleblowing-agents-donated-livers/",
+            "source": "MIT Technology Review",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "innovation",
+                "llm",
+                "recherche",
+                "science"
+            ],
+            "published_at": "2026-09-15T12:10:00+00:00",
+            "collected_at": "2026-09-15T15:59:22.091334+00:00"
+        },
+        {
+            "id": "3dbd731ca50ed051be5ccce06dfcb25c8e9c14935180583e9341019adc9abdaf",
+            "title": "25 Years of Mass Surveillance Is Enough [Auth: Cindy Cohn; Bruce Schneier]",
+            "description": "Comments",
+            "url": "https://www.lawfaremedia.org/article/25-years-of-mass-surveillance-is-enough",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-15T12:08:26+00:00",
+            "collected_at": "2026-09-15T15:59:09.344401+00:00"
+        },
+        {
+            "id": "fd8a2e1271b7f5c647fcfd2a1468c9461a8212094a9fc13914cbf6f4bdc58857",
+            "title": "Search over Algebraic Graphs",
+            "description": "Comments",
+            "url": "https://anekstein.com/posts/2026-08-22.html",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-09-15T12:04:42+00:00",
+            "collected_at": "2026-09-15T15:59:09.544474+00:00"
+        },
+        {
+            "id": "d97e1b0e891ab0319ba884803d86461f8824b96b2f9b71f2feb2afb1f465b22c",
+            "title": "Exclusive: Paying for frontier AI models buys 4-month head start at 5x the cost",
+            "description": "Ars previewed Mozilla’s report on how cheap open models caught up on capability.",
+            "url": "https://arstechnica.com/ai/2026/09/exclusive-open-chinese-models-close-gap-with-silicon-valleys-frontier-ai-models/",
+            "source": "Ars Technica",
+            "category": "technologie",
+            "tags": [
+                "informatique",
+                "innovation",
+                "technologie"
+            ],
+            "published_at": "2026-09-15T12:00:41+00:00",
+            "collected_at": "2026-09-15T15:59:07.524539+00:00"
+        },
+        {
+            "id": "88d4ecae1a5c8dd7c44948c4dd5ca2f6882d3c21694738a874fc1924a3ca15bd",
+            "title": "To ensure permanent economic innovation, we must pass the Clarity Act now",
+            "description": "",
+            "url": "https://www.coindesk.com/opinion/2026/09/15/to-ensure-permanent-economic-innovation-we-must-pass-the-clarity-act-now",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-15T12:00:06+00:00",
+            "collected_at": "2026-09-15T15:59:22.776578+00:00"
+        },
+        {
+            "id": "e33bad75df32cb02be8fb03ba4ac718fb9bf8ae9425ce40211c6e5972838b273",
+            "title": "Salesforce and Nvidia’s new reasoning model is everything the AI labs should fear",
+            "description": "Salesforce Koa is built on Nvidia's open-weight Nemotron model and is trained to do sales, marketing, and customer-support tasks.",
+            "url": "https://techcrunch.com/2026/09/15/salesforce-and-nvidias-new-reasoning-model-is-everything-the-ai-labs-should-fear/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "nvidia",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-09-15T12:00:00+00:00",
+            "collected_at": "2026-09-15T15:59:07.620069+00:00"
+        },
+        {
+            "id": "6f876aba8272221bddf7f4fc5e8df5e77fb2f77db95b724792da069d0718236f",
+            "title": "US confirms it has weapons in spaaaaaace",
+            "description": "Mutually Assured Kessler Syndrome, anyone?",
+            "url": "https://www.theregister.com/offbeat/2026/09/15/us-confirms-it-has-weapons-in-spaaaaaace/5296512",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-09-15T12:00:00+00:00",
+            "collected_at": "2026-09-15T15:59:08.574442+00:00"
+        },
+        {
+            "id": "045d5c92ac47b435f5c365dd3151412dff6584f4f649d0af03d738eee048ab9e",
+            "title": "NIST Finalizes Guidelines on Protecting Online Identity and Access Tokens From Misuse",
+            "description": "The finalized publication is designed to help organizations take effective steps to avoid exposing tokens to attackers.",
+            "url": "https://www.nist.gov/news-events/news/2026/09/nist-finalizes-guidelines-protecting-online-identity-and-access-tokens",
+            "source": "NIST",
+            "category": "recherche_innovation",
+            "tags": [
+                "innovation",
+                "nist",
+                "recherche"
+            ],
+            "published_at": "2026-09-15T12:00:00+00:00",
+            "collected_at": "2026-09-15T15:59:22.000296+00:00"
+        },
+        {
+            "id": "a672109cd79bf2aee1090e045d517c6cc1771a062cdbd5581cabbe8907b2d467",
+            "title": "AI models need more data about biology, and OpenAI is paying to create it",
+            "description": "Last year Ruxandra Teslo, a policy analyst who focuses on clinical trials, posted an idea for supercharging medical AI systems: Use data from failed biotech companies. By bidding at their bankruptcy proceedings, she proposed, it might be possible to obtain detailed regulatory filings, manufacturing strategies, and safety data—types of information usually considered trade secrets. She…",
+            "url": "https://www.technologyreview.com/2026/09/15/1144129/ai-models-need-more-data-about-biology-and-openai-is-paying-to-create-it/",
+            "source": "MIT Technology Review",
+            "category": "recherche_innovation",
+            "tags": [
+                "innovation",
+                "openai",
+                "recherche",
+                "science"
+            ],
+            "published_at": "2026-09-15T12:00:00+00:00",
+            "collected_at": "2026-09-15T15:59:22.091410+00:00"
+        },
+        {
+            "id": "f78f80e44815d15028f54b90e61e70b03d0caa6c7148838043f211381cb454d9",
+            "title": "Human Attacker Exploits Marimo RCE, Reaches SSH Bastion in Eight Seconds",
+            "description": "With artificial intelligence (AI) shrinking the window between vulnerability discovery and exploitation and lowering the barrier to entry for bad actors, new findings from Sysdig show that skilled human operators can move just as swiftly after gaining initial access. In one instance highlighted by the cloud security company, the threat actor pivoted from a vulnerable Marimo notebook to an SSH",
+            "url": "https://thehackernews.com/2026/09/human-attacker-exploits-marimo-rce.html",
+            "source": "The Hacker News",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "hacking",
+                "intel",
+                "vulnerabilites"
+            ],
+            "published_at": "2026-09-15T11:52:28+00:00",
+            "collected_at": "2026-09-15T15:59:06.448327+00:00"
+        },
+        {
+            "id": "19fce45e16db5f9c9f90249d4504e146a2d31d022610a7cfa445c03b7fb474f3",
+            "title": "240,000 Hit by Data Breach at Japan’s Digital Agency",
+            "description": "Hackers exploited a vulnerability in a VPN product to steal the personal information of roughly 240,000 people. The post 240,000 Hit by Data Breach at Japan’s Digital Agency appeared first on SecurityWeek .",
+            "url": "https://www.securityweek.com/240000-hit-by-data-breach-at-japans-digital-agency/",
+            "source": "SecurityWeek",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "git",
+                "security",
+                "vulnerabilites"
+            ],
+            "published_at": "2026-09-15T11:45:31+00:00",
+            "collected_at": "2026-09-15T15:59:07.155984+00:00"
+        },
+        {
+            "id": "bc65447f4680effe3147a8e4e0b0b726aed5319e30a67e7c7b2f8bbbc05dc28a",
+            "title": "Goldman, JPMorgan, BofA, Morgan Stanley and More Expect a Fed Hike Tomorrow",
+            "description": "More than a dozen banks are expecting the Federal Reserve to raise rates by 25 basis points on Sept. 16. The List UBS, HSBC, Barclays, Citigroup, Wells Fargo, Morgan Stanley, Goldman Sachs, Bank of America and JPMorgan Chase all expect the Federal Reserve to lift rates by 25 basis points (bps) this week. Both JPMorgan […]",
+            "url": "https://news.bitcoin.com/featured/fed-rate-hike-banks-morgan-stanley-bitcoin-price/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-15T11:30:57+00:00",
+            "collected_at": "2026-09-15T15:59:23.055591+00:00"
+        },
+        {
+            "id": "de7aa03a9c17ab4ac498b15988c380c7606142eaedfbc4ecc0ea5cab5aaa3cef",
+            "title": "ChatGPT transcripts are reportedly read by humans to improve responses, including those with personal information — 'Project Lilly' has seen OpenAI hire hundreds of contractors to manually review logs",
+            "description": "404 Media reports that OpenAI has hired hundreds of contractors to evaluate ChatGPT responses manually.",
+            "url": "https://www.tomshardware.com/tech-industry/artificial-intelligence/chatgpt-transcripts-are-reportedly-read-by-humans-to-improve-responses-including-those-with-personal-information-project-lilly-has-seen-openai-hire-hundreds-of-contractors-to-manually-review-logs",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "openai",
+                "pc"
+            ],
+            "published_at": "2026-09-15T11:30:00+00:00",
+            "collected_at": "2026-09-15T15:59:11.438170+00:00"
+        },
+        {
+            "id": "e9d15a50bce09f81d9e139c2d0f81d209cbd431d6f93a974d8d2373f4d85b168",
+            "title": "Gov.uk still struggling with IT contractor tax rules",
+            "description": "IR35 rules not getting easier for government departments",
+            "url": "https://www.theregister.com/public-sector/2026/09/15/govuk-still-struggling-with-it-contractor-tax-rules/5296531",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-09-15T11:28:28+00:00",
+            "collected_at": "2026-09-15T15:59:08.574470+00:00"
+        },
+        {
+            "id": "24d36c89c6cd6742029f53d6cffcbf3055ef6881c24ec314b4e0956b5f691c5d",
+            "title": "25 Years of Mass Surveillance Is Enough",
+            "description": "Comments",
+            "url": "https://www.schneier.com/blog/archives/2026/09/25-years-of-mass-surveillance-is-enough.html",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-15T11:26:48+00:00",
+            "collected_at": "2026-09-15T15:59:09.344103+00:00"
+        },
+        {
+            "id": "cfd00dbf5fd36d4623eea61b0d9a3eeae72c6d1336e2c7b1e745f1ddc3e0cdf2",
+            "title": "Attack Chains, Not Just Attack Surfaces: Why Testing Individual Techniques Misses the Point",
+            "description": "Introduction Security teams have gotten pretty good at testing against what can hurt them. Can this EDR agent catch this payload? Will my organization fail the phishing simulation? Does this SIEM rule fire on this particular technique? And, in more mature organizations, this testing happens continuously rather than as a one-off exercise. But no matter how much you validate against these",
+            "url": "https://thehackernews.com/2026/09/attack-chains-not-just-attack-surfaces.html",
+            "source": "The Hacker News",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "hacking",
+                "phishing",
+                "vulnerabilites"
+            ],
+            "published_at": "2026-09-15T11:26:36+00:00",
+            "collected_at": "2026-09-15T15:59:06.448376+00:00"
+        },
+        {
+            "id": "c5f9c7930c15d52a7f0e9e1dca39a18318f05618921059ceca36dbfc7108bcd6",
+            "title": "IBM Built the Cold War’s Most Powerful Code Breaker for the NSA",
+            "description": "Comments",
+            "url": "https://spectrum.ieee.org/cold-war-codebreaker-nsa-ibm",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-09-15T11:22:06+00:00",
+            "collected_at": "2026-09-15T15:59:09.544665+00:00"
+        },
+        {
+            "id": "46c4fd485da58af0448a67f9f33c7499e306a1f1776fe98d0dc587c826837bb1",
+            "title": "Ether, solana, XRP likely to gain if Clarity Act progresses",
+            "description": "",
+            "url": "https://www.coindesk.com/daybook-us/2026/09/15/ether-solana-xrp-likely-to-gain-if-clarity-act-progresses",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-15T11:15:44+00:00",
+            "collected_at": "2026-09-15T15:59:22.776599+00:00"
+        },
+        {
+            "id": "bf27a701dddcbc6001e31a4407137f507e369e6d1e7e7d92d392b03eb657033c",
+            "title": "Mass-Scanning Campaign Exploits Vite Flaw to Extract Cloud Credentials From Exposed Dev Servers",
+            "description": "Cybersecurity researchers have disclosed details of a mass-scanning campaign that has targeted Vite deployments siphon sensitive data. The first is an automated effort aimed at internet-exposed Vite development servers that's designed to steal cloud credentials, configurations from Amazon Web Services (AWS) and Microsoft Azure instances, and infrastructure state files, per F5 Labs. The",
+            "url": "https://thehackernews.com/2026/09/mass-scanning-campaign-exploits-vite.html",
+            "source": "The Hacker News",
+            "category": "cybersecurite",
+            "tags": [
+                "aws",
+                "azure",
+                "cybersecurite",
+                "hacking",
+                "vulnerabilites"
+            ],
+            "published_at": "2026-09-15T11:12:32+00:00",
+            "collected_at": "2026-09-15T15:59:06.448430+00:00"
+        },
+        {
+            "id": "577326d7e70e2cfe9043c115ebcf4641a8d97d9ecb1c1076147334f26cd62081",
+            "title": "NVIDIA’s Jensen Huang has seemingly picked a side in the foldable wars",
+            "description": "This comes after Huang was gifted a Galaxy Z Fold 7 by the chairman of Samsung Electronics last year.",
+            "url": "https://www.androidauthority.com/nvidia-jensen-huang-samsung-galaxy-z-fold-8-3711323/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "nvidia",
+                "smartphone"
+            ],
+            "published_at": "2026-09-15T11:11:52+00:00",
+            "collected_at": "2026-09-15T15:59:16.318212+00:00"
+        },
+        {
+            "id": "809b0a7d78d5925a809f7ed4514c9e24bc9baf6ea4d58117851037642311e145",
+            "title": "Apple Patches 200 Vulnerabilities With New iOS 27, macOS Golden Gate 27 Releases",
+            "description": "The updates resolve kernel vulnerabilities that could lead to memory corruption, privilege escalation, system termination, and information leaks. The post Apple Patches 200 Vulnerabilities With New iOS 27, macOS Golden Gate 27 Releases appeared first on SecurityWeek .",
+            "url": "https://www.securityweek.com/apple-patches-200-vulnerabilities-with-new-ios-27-macos-golden-gate-27-releases/",
+            "source": "SecurityWeek",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "ios",
+                "macos",
+                "security",
+                "vulnerabilites"
+            ],
+            "published_at": "2026-09-15T11:06:11+00:00",
+            "collected_at": "2026-09-15T15:59:07.156035+00:00"
+        },
+        {
+            "id": "ffbb7b96a1939fbba925d7c3eb269ae52cbcd0305c1a4f1be9c9af1116d9b4ab",
+            "title": "Russia Classifies Crypto as Major Risk to Monetary Sovereignty",
+            "description": "The Bank of Russia’s latest draft policy document classifies cryptocurrencies and stablecoins as major financial market risks, citing threats to monetary sovereignty, potential complete losses for investors, and their role in enabling shadow markets. Central Bank Identifies Major Crypto Risks The Bank of Russia has categorized cryptocurrencies and stablecoins as major financial market risks in […]",
+            "url": "https://news.bitcoin.com/regulation-and-legal/russia-classifies-crypto-as-major-risk-to-monetary-sovereignty/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-15T11:00:11+00:00",
+            "collected_at": "2026-09-15T15:59:23.055656+00:00"
+        },
+        {
+            "id": "ce90734c54cd1a2cf185d580c3ef5fc9da720855738471e642b4ae3d997f7f0a",
+            "title": "Microsoft rolls out emergency update for Windows 11's latest patch — recent update causes crashes on AMD graphics, Explorer hang-ups, and broken third-party integrations",
+            "description": "Windows September 2026 update brings many long-requested features, but also surfaces fresh bugs — new code crashing AMD, HP, and Lenovo systems and surfaces audio, Explorer, and Remote Desktop problems",
+            "url": "https://www.tomshardware.com/software/windows/windows-september-2026-update-brings-many-long-requested-features-but-also-surfaces-fresh-bugs-windows-11-update-causes-crashes-on-amd-graphics-explorer-hang-ups-and-broken-third-party-integrations",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "amd",
+                "cpu",
+                "gpu",
+                "hardware",
+                "pc",
+                "windows"
+            ],
+            "published_at": "2026-09-15T11:00:00+00:00",
+            "collected_at": "2026-09-15T15:59:11.438222+00:00"
+        },
+        {
+            "id": "d069411d76c58790709d1bd48693cbef2f5ce2c3bdddf684ed66a2806ef56129",
+            "title": "Why banks should stop worrying and learn to love the Clarity Act",
+            "description": "",
+            "url": "https://www.coindesk.com/opinion/2026/09/15/why-banks-should-stop-worrying-and-learn-to-love-the-clarity-act",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-15T11:00:00+00:00",
+            "collected_at": "2026-09-15T15:59:22.776621+00:00"
+        },
+        {
+            "id": "bbb87175d4864c24303a4cc4a321c66e9b6fc21444038267da6b474f131b7f96",
+            "title": "Velocity extends Series A to $48M at $200M valuation with backing from Visa, Circle, and Ripple",
+            "description": "",
+            "url": "https://www.coindesk.com/business/2026/09/10/velocity-extends-series-a-to-usd48m-at-usd200m-valuation-with-backing-from-visa-circle-and-ripple",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-15T11:00:00+00:00",
+            "collected_at": "2026-09-15T15:59:22.776646+00:00"
+        },
+        {
+            "id": "cc65a6a4fbf89af235b8b2cba76939dbbe8d4d0b84bb15e180cac9327821c6ac",
+            "title": "The Dimensity 9600 Pro is the flagship chipset Google wishes the Tensor G6 was",
+            "description": "From Triple-SIM Triple Active to 4K/240fps slow-mo video and VVC support, there's a lot to like here.",
+            "url": "https://www.androidauthority.com/mediatek-dimensity-9600-pro-3711305/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-09-15T10:53:24+00:00",
+            "collected_at": "2026-09-15T15:59:16.318245+00:00"
+        },
+        {
+            "id": "f9ad9be41c46c4a5c9a18543707200fdd268017f956a8800360ab64cb16895d9",
+            "title": "Gemini’s overcrowded account switcher could finally get a cleanup alongside these UI changes",
+            "description": "Gemini's menus are finally getting some organization.",
+            "url": "https://www.androidauthority.com/gemini-account-switcher-cleanup-ui-tweaks-apk-teardown-3711329/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "gemini",
+                "smartphone"
+            ],
+            "published_at": "2026-09-15T10:49:22+00:00",
+            "collected_at": "2026-09-15T15:59:16.318280+00:00"
+        },
         {
             "id": "3037847ec13680e63ed40445912db85394c287aa6946881e1c963d7b188b74d2",
             "title": "Bitcoin gives back Monday's gain as Clarity Act odds fade on Polymarket",
@@ -194,6 +1915,22 @@
             "collected_at": "2026-09-15T10:46:45.004674+00:00"
         },
         {
+            "id": "82e76cff2bc7f070f51084c6e90765bea97615686b609996624c0e4cccbbace1",
+            "title": "UK's Digital ID walks into a bar... two months after being killed off",
+            "description": "The national scheme may be dead, but digital IDs can now prove you're old enough to buy booze",
+            "url": "https://www.theregister.com/offbeat/2026/09/15/uks-digital-id-walks-into-a-bar-two-months-after-being-killed-off/5296504",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "git",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-09-15T10:31:47+00:00",
+            "collected_at": "2026-09-15T15:59:08.574502+00:00"
+        },
+        {
             "id": "4bc5aff9c59c6eaf64549fedff5da93bf2e00810b1a2fab77ba1251ce04e7789",
             "title": "Stop Wasting Your Silicon: The Secret Web API Unlocking Local NPUs on the Edge",
             "description": "Stop Wasting Your Silicon: The Secret Web API Unlocking Local NPUs on the Edge For years, client-side AI has suffered from a dirty secret: modern laptops, smartphones, and edge devices ship with dedicated Neural Processing Units (NPUs) capable of tens of tera-operations per second (TOPS), yet web applications leave this silicon almost entirely idle. When web developers attempt to run machine learning models inside the browser, they fall back on WebGL or WebGPU. While WebGPU is a massive leap forward for rendering and general-purpose compute, it treats an NPU like a black box it cannot open. Enter the Web Neural Network API (WebNN)—the definitive standard designed specifically to bridge the web runtime with dedicated hardware accelerators like NPUs, GPUs, and specialized DSPs. By shifting machine learning execution from generic shader programs to native platform graph execution APIs like DirectML on Windows, Core ML on macOS/iOS, and NNAPI/Android NN on mobile, WebNN completely reshapes what edge AI on the web can achieve. In this guide, we will unpack why current browser AI paradigms fall short, dive deep into the WebNN architectural pipeline, build an end-to-end execution graph, and establish battle-tested production patterns for zero-latency local inference. The Problem Nobody Wants to Admit: WebGL and WebGPU Aren't Enough Web GPU compute shaders are revolutionary for graphics and heavy parallel operations, but using them for neural network inference introduces significant friction. When you execute an AI model via WebGPU using frameworks like ONNX Runtime Web, the browser compiles operator logic into WebGPU Shading Language (WGSL) shaders. This approach presents three critical issues: High Memory Overhead and Serialization Costs: Tensors must constantly be serialized, packed, and unpacked across CPU-GPU memory boundaries. WebGPU lacks native primitives for low-precision tensor storage without manual bit-packing hacks. Total NPU Isolation: WebGPU target drivers communicate exclusively with graphics processing units. NPUs execute fixed-function math operations, low-power matrix multiplications, and highly efficient quantization pipelines (such as INT4 and INT8) via specialized platform drivers. WebGPU cannot reach these chips. Thermal and Power Throttling: Running LLMs or real-time computer vision models continuously on a mobile or laptop GPU drains battery life quickly and causes thermal throttling within minutes. NPUs are designed specifically to run continuous inferencing at a fraction of the wattage. WebNN solves this by taking a completely different architectural path: instead of executing low-level pixel/compute shaders, it compiles a computational graph directly to native platform machine learning frameworks. The Architecture That Actually Scales: How WebNN Bridges the Silicon Gap WebNN operates as an abstraction layer above platform-native ML engines. Rather than writing shader code that executes on GPU threads, developers construct a graph using WebNN standard operators ( add , matmul , conv2d , relu , softmax ). The browser engine converts this representation into an OS-level computational graph. Here is how WebNN routes compute requests to dedicated silicon: +--------------------------------------------------------------+ | WebNN JavaScript API | +--------------------------------------------------------------+ | v +--------------------------------------------------------------+ | Browser Engine Execution Layer | +--------------------------------------------------------------+ | | | v v v +-----------------+ +-----------------+ +-----------------+ | Windows (WNDN) | | macOS / iOS | | Android / Linux | | DirectML / NPU | | Core ML / NPU | | NNAPI / TFLite | +-----------------+ +-----------------+ +-----------------+ | | | +-------------------+-------------------+ | v +--------------------------------------------------------------+ | Hardware Silicon (NPU / TPU / GPU) | +--------------------------------------------------------------+ The following script demonstrates how to inspect system device support, query hardware capabilities, and safely instantiate a WebNN context targeting an NPU before building a computational graph. // Check WebNN browser availability and initialize context for local NPU execution async function initializeWebNNDevice () { if ( ! ( ' ml ' in navigator )) { throw new Error ( ' WebNN API is not supported in this browser environment. ' ); } try { // Request an execution context explicitly targeting the Neural Processing Unit const context = await navigator . ml . createContext ({ deviceType : ' npu ' , // Options: 'cpu', 'gpu', 'npu' powerPreference : ' high-performance ' }); console . log ( ' Successfully connected to local NPU hardware accelerator. ' ); return context ; } catch ( error ) { console . warn ( ' NPU unavailable or unsupported. Falling back to GPU context... ' , error ); // Fallback strategy to secondary hardware target const fallbackContext = await navigator . ml . createContext ({ deviceType : ' gpu ' , powerPreference : ' sustained-low-power ' }); return fallbackContext ; } } // Initialize the preferred hardware context const mlContext = await initializeWebNNDevice (); Let's Build It — Step by Step: Constructing an Execution Graph To write production WebNN code, you work with two core objects: MLGraphBuilder : Constructs the computational nodes, shapes, data types, and layer dependencies. MLGraph : The compiled, optimized execution graph residing in memory ready to receive input tensors. Let's construct a real-world multi-layer feedforward network with INT8 quantization support, taking advantage of NPU-native matrix math execution. // Build an end-to-end multi-layer neural network graph using WebNN MLGraphBuilder async function buildNeuralNetworkGraph ( context ) { const builder = new MLGraphBuilder ( context ); // 1. Define Tensor Dimensions and Types const inputShape = [ 1 , 784 ]; // Batch size 1, flattened feature vector const weightShape = [ 784 , 128 ]; const biasShape = [ 1 , 128 ]; // 2. Declare Operands const input = builder . input ( ' input ' , { dataType : ' float32 ' , dimensions : inputShape }); const weights = builder . constant ( { dataType : ' float32 ' , dimensions : weightShape }, new Float32Array ( 784 * 128 ). fill ( 0.01 ) // Pre-loaded weight buffer ); const bias = builder . constant ( { dataType : ' float32 ' , dimensions : biasShape }, new Float32Array ( 128 ). fill ( 0.05 ) // Pre-loaded bias buffer ); // 3. Define Graph Operations (Gemm = General Matrix Multiply) const matmulResult = builder . matmul ( input , weights ); const biasResult = builder . add ( matmulResult , bias ); const activatedResult = builder . relu ( biasResult ); // 4. Output Layer Layer Definition const outputWeights = builder . constant ( { dataType : ' float32 ' , dimensions : [ 128 , 10 ] }, new Float32Array ( 128 * 10 ). fill ( 0.02 ) ); const finalMatmul = builder . matmul ( activatedResult , outputWeights ); const output = builder . softmax ( finalMatmul ); // 5. Compile the graph into native OS instructions const graph = await builder . build ({ ' output ' : output }); return { context , graph }; } Now that the graph is compiled into native OS instructions, we need a high-performance execution loop. Instead of allocating array buffers on every frame, we pre-allocate input and output web memory structures and run non-blocking inferencing cycles. // Execute the WebNN computational graph with zero-copy buffer patterns async function executeInference ( context , graph , rawInputData ) { // 1. Prepare typed ArrayBuffers const inputData = new Float32Array ( rawInputData ); const outputData = new Float32Array ( 10 ); // 2. Map JavaScript TypedArrays to WebNN Inputs/Outputs const inputs = { ' input ' : await context . createBuffer ({ dataType : ' float32 ' , dimensions : [ 1 , 784 ], usage : MLBufferUsage . WRITE }) }; const outputs = { ' output ' : await context . createBuffer ({ dataType : ' float32 ' , dimensions : [ 1 , 10 ], usage : MLBufferUsage . READ }) }; // 3. Write data into the input hardware buffer context . writeBuffer ( inputs [ ' input ' ], inputData ); // 4. Dispatch graph execution directly to hardware await context . dispatch ( graph , inputs , outputs ); // 5. Read back inference result from hardware execution const resultArrayBuffer = await context . readBuffer ( outputs [ ' output ' ]); const probabilities = new Float32Array ( resultArrayBuffer ); return probabilities ; } Why This Changes Everything: WebGPU vs. WebNN Benchmarks When evaluating WebNN alongside WebGPU and WASM, the primary advantage is power efficiency and latency consistency . WebGPU excels at raw pixel computation and custom shaders, but WebNN provides direct execution paths to optimized NPU driver layers. Feature / Metric WebAssembly (SIMD) WebGPU Shaders WebNN (DirectML/CoreML Target) Hardware Execution CPU Cores Graphics Card (GPU) Dedicated NPU / TPU / GPU Model Conversion Manual / C++ compiled WGSL Shader Generation Native Graph Target compilation Quantization Support Software emulated Custom Shader Logic Hardware Native (INT4, INT8, FP16) Thermal Impact High Moderate to High Ultra Low (Optimized for continuous load) Latency Variance High (GCT / Thread spikes) Low (Frame limited) Extremely Low (Deterministic) Because NPUs execute low-precision matrix operations natively, WebNN enables near-zero latency execution for live vision, audio, and language tasks right inside standard browser tabs without causing thermal throttling or high power consumption. Common Mistakes That Kill Your Setup: Memory Leaks and Dynamic Re-allocations When developers transition desktop ML models to WebNN, they frequently make architectural mistakes that degrade execution performance. The single most damaging error is rebuilding execution graphs and reallocating memory buffers inside the inference loop . Here is how memory leak bugs occur versus how you should structure persistent execution pipelines: // BAD PRACTICE: Re-building graph and buffers on every video frame async function badInferenceLoop ( videoFrame , context ) { // Anti-Pattern: Compiling graph on every iteration destroys performance const builder = new MLGraphBuilder ( context ); const input = builder . input ( ' frame ' , { dataType : ' float32 ' , dimensions : [ 1 , 3 , 224 , 224 ] }); // ... build steps ... const graph = await builder . build ({ output }); // High GC overhead and latency spike! const result = await context . compute ( graph , { ' frame ' : videoFrame }); return result ; } // BATTLE-TESTED PATTERN: Reuse compiled graph and reuse pre-allocated MLBuffers class EfficientInferencePipeline { constructor ( context , compiledGraph , inputShape , outputShape ) { this . context = context ; this . graph = compiledGraph ; // Pre-allocate hardware buffers once during initialization this . inputBuffer = context . createBuffer ({ dataType : ' float32 ' , dimensions : inputShape , usage : MLBufferUsage . WRITE }); this . outputBuffer = context . createBuffer ({ dataType : ' float32 ' , dimensions : outputShape , usage : MLBufferUsage . READ }); } async runFrame ( frameData ) { // Re-use established hardware buffers this . context . writeBuffer ( this . inputBuffer , frameData ); await this . context . dispatch ( this . graph , { ' input ' : this . inputBuffer }, { ' output ' : this . outputBuffer } ); return await this . context . readBuffer ( this . outputBuffer ); } } Don't Ship Until You've Done This: Quantization & Graceful Fallback Strategy In client-side environments, hardware support varies significantly across platforms. A user on a modern ARM laptop will have an active NPU runtime, whereas a desktop PC user might run an older GPU or CPU. A production setup requires graceful degraded execution alongside weight quantization . Deploying INT8 or FP16 quantized model weights reduces payload download sizes by up to 75% while dramatically improving inference throughput on NPU hardware engines. // Advanced fallback system handling feature detection and hardware degrades gracefully class ProductionWebNNEngine { constructor () { this . context = null ; this . deviceType = ' none ' ; } async initializeEngine () { const hardwarePreferenceOrder = [ ' npu ' , ' gpu ' , ' cpu ' ]; if ( ! ( ' ml ' in navigator )) { console . warn ( ' WebNN API missing. Fallback to ONNX Runtime Web WASM engine required. ' ); return false ; } for ( const device of hardwarePreferenceOrder ) { try { this . context = await navigator . ml . createContext ({ deviceType : device , powerPreference : device === ' npu ' ? ' high-performance ' : ' sustained-low-power ' }); this . deviceType = device ; console . log ( `WebNN successfully bound to target silicon: ${ device . toUpperCase ()} ` ); break ; } catch ( err ) { console . warn ( `Device target ${ device } failed initialization:` , err . message ); } } return this . context !== null ; } getEngineStatus () { return { active : this . context !== null , accelerator : this . deviceType }; } } // Usage example const engine = new ProductionWebNNEngine (); await engine . initializeEngine (); Advanced Patterns for Production: ONNX Runtime Web Integration Building raw WebNN MLGraphBuilder nodes by hand is valuable for understanding the lower-level runtime, but in real-world applications, you will usually import pre-trained models from PyTorch or TensorFlow via the ONNX format. ONNX Runtime Web acts as the high-level framework that compiles ONNX operators directly down to WebNN graph nodes under the hood using its webnn Execution Provider backend. Here is how you execute a production transformer or vision model using ONNX Runtime with WebNN NPU acceleration enabled: import * as ort from ' onnxruntime-web/webnn ' ; async function loadAcceleratedONNXModel ( modelArrayBuffer ) { // Configure session options to target local NPU execution via WebNN const sessionOptions = { executionProviders : [ { name : ' webnn ' , deviceType : ' npu ' , // Force runtime to attempt NPU driver mapping powerPreference : ' high-performance ' }, ' wasm ' // Automatic fallback execution provider if operator is unsupported on NPU ], graphOptimizationLevel : ' all ' }; console . log ( ' Compiling ONNX graph to native WebNN operators... ' ); const session = await ort . InferenceSession . create ( modelArrayBuffer , sessionOptions ); console . log ( ' Model ready for near-zero latency execution. ' ); return session ; } The Bottom Line WebNN bridges web applications with modern client-side AI hardware, enabling direct access to dedicated NPUs right inside the browser environment. Direct Hardware Mapping: WebNN circumvents custom GPU shaders by targeting native OS machine learning engines like DirectML and Core ML. Efficiency and Thermal Control: Running inference workloads on an NPU drastically reduces power consumption compared to WebGL, WebAssembly, or WebGPU. Predictable Pipeline Construction: Construct graphs once using MLGraphBuilder , reuse static allocation buffers, and fallback gracefully across available device layers. Ecosystem Ready: Mainstream runtimes like ONNX Runtime Web fully integrate WebNN as an execution provider, allowing existing pipelines to leverage local NPU silicon with minimal code changes. Engr. Hamza | AI & MLOps Engineer | Building autonomous systems at the edge of possibility",
@@ -217,6 +1954,21 @@
             ],
             "published_at": "2026-09-15T10:31:40+00:00",
             "collected_at": "2026-09-15T10:46:45.006292+00:00"
+        },
+        {
+            "id": "ffbb7e4adffb2e60a23bb3892501f4f58eabb042c847320633fbe1f8de7413b2",
+            "title": "Simpler time map plots (2017)",
+            "description": "Comments",
+            "url": "https://lepisma.xyz/2017/06/25/simple-time-maps/",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-09-15T10:31:20+00:00",
+            "collected_at": "2026-09-15T15:59:09.544559+00:00"
         },
         {
             "id": "dce550b184b08f6c09151022d5c2312686df1634a78982b6e336e26446ff3959",
@@ -528,6 +2280,21 @@
             ],
             "published_at": "2026-09-15T09:44:50+00:00",
             "collected_at": "2026-09-15T10:46:48.354772+00:00"
+        },
+        {
+            "id": "166730512f2224a67c71b60b4015d10be24a3a4f1d9755fb4614d7517c0d3344",
+            "title": "PostgreSQL 19 graph queries fail the 'would you ship this?' test",
+            "description": "SQL/PGQ gets bounced over unresolved bugs as concurrent REPACK promises fewer midnight calls for DBAs",
+            "url": "https://www.theregister.com/databases/2026/09/15/postgresql-19-graph-queries-fail-the-would-you-ship-this-test/5296343",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-09-15T09:42:59+00:00",
+            "collected_at": "2026-09-15T15:59:08.574533+00:00"
         },
         {
             "id": "5828a0b628910d416307527f9f146c503254f09f4f64f3713580db63f53b292f",
@@ -1949,6 +3716,71 @@
             ],
             "published_at": "2026-09-15T00:05:30+00:00",
             "collected_at": "2026-09-15T02:45:10.278911+00:00"
+        },
+        {
+            "id": "85818ed8e5d3f251360a688a0b7886125d7e36798c55bc5f79ec9b5609b6f330",
+            "title": "Multiples vulnérabilités dans Microsoft Edge (15 septembre 2026)",
+            "description": "De multiples vulnérabilités ont été découvertes dans Microsoft Edge. Elles permettent à un attaquant de provoquer une élévation de privilèges et un problème de sécurité non spécifié par l'éditeur.",
+            "url": "https://www.cert.ssi.gouv.fr/avis/CERTFR-2026-AVI-1173/",
+            "source": "CERT-FR",
+            "category": "cybersecurite",
+            "tags": [
+                "anssi",
+                "cert-fr",
+                "cve",
+                "france"
+            ],
+            "published_at": "2026-09-15T00:00:00+00:00",
+            "collected_at": "2026-09-15T15:59:07.227487+00:00"
+        },
+        {
+            "id": "c5b91930609ca1546f19c2376597650295c2b8ae88d143987a31f171dfadbaa5",
+            "title": "Multiples vulnérabilités dans les produits Apple (15 septembre 2026)",
+            "description": "De multiples vulnérabilités ont été découvertes dans les produits Apple. Certaines d'entre elles permettent à un attaquant de provoquer une exécution de code arbitraire à distance, une élévation de privilèges et un déni de service à distance.",
+            "url": "https://www.cert.ssi.gouv.fr/avis/CERTFR-2026-AVI-1172/",
+            "source": "CERT-FR",
+            "category": "cybersecurite",
+            "tags": [
+                "anssi",
+                "cert-fr",
+                "cve",
+                "france"
+            ],
+            "published_at": "2026-09-15T00:00:00+00:00",
+            "collected_at": "2026-09-15T15:59:07.227520+00:00"
+        },
+        {
+            "id": "5decc466aaefde4913a3bf3444d05df9db4b47d894b0ebb96ceef6b21b26f1d7",
+            "title": "Multiples vulnérabilités dans les produits Cisco (15 septembre 2026)",
+            "description": "De multiples vulnérabilités ont été découvertes dans les produits Cisco. Certaines d'entre elles permettent à un attaquant de provoquer une exécution de code arbitraire à distance, un déni de service à distance et une injection SQL (SQLi). Cisco indique que la vulnérabilité CVE-2026-76461 est...",
+            "url": "https://www.cert.ssi.gouv.fr/avis/CERTFR-2026-AVI-1175/",
+            "source": "CERT-FR",
+            "category": "cybersecurite",
+            "tags": [
+                "anssi",
+                "cert-fr",
+                "cve",
+                "france"
+            ],
+            "published_at": "2026-09-15T00:00:00+00:00",
+            "collected_at": "2026-09-15T15:59:07.227555+00:00"
+        },
+        {
+            "id": "dd4afaa6066386f219390184789e3d1e4ff09c39881b8438f12bb405aeb0a2c5",
+            "title": "Vulnérabilité dans Microsoft Windows (15 septembre 2026)",
+            "description": "Une vulnérabilité a été découverte dans Microsoft Windows. Elle permet à un attaquant de provoquer une élévation de privilèges.",
+            "url": "https://www.cert.ssi.gouv.fr/avis/CERTFR-2026-AVI-1174/",
+            "source": "CERT-FR",
+            "category": "cybersecurite",
+            "tags": [
+                "anssi",
+                "cert-fr",
+                "cve",
+                "france",
+                "windows"
+            ],
+            "published_at": "2026-09-15T00:00:00+00:00",
+            "collected_at": "2026-09-15T15:59:07.227581+00:00"
         },
         {
             "id": "4f75b1cde20bdfed24904ec1184f06ddc269a2387593487538cc64732b5c9565",
@@ -6283,6 +8115,21 @@
             "collected_at": "2026-09-14T11:23:05.249408+00:00"
         },
         {
+            "id": "eacaab525a800b7ff4de882815e0c1cb921e6409270b61b61d2d481fd5938eb3",
+            "title": "A Man Archiving Pirate Radio Station Kool FM",
+            "description": "Comments",
+            "url": "https://londonist.com/london/music/kool-fm-archives",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-14T10:01:05+00:00",
+            "collected_at": "2026-09-15T15:59:09.344081+00:00"
+        },
+        {
             "id": "ddd9da2b3a81cc803152fdf2136ff1ef1632883d8935726b066e5cb8616193d4",
             "title": "Next year’s Motorola Signature could be the most important Android phone of 2027",
             "description": "Motorola, we need this.",
@@ -6982,6 +8829,21 @@
             ],
             "published_at": "2026-09-14T05:00:00+00:00",
             "collected_at": "2026-09-14T11:23:04.009788+00:00"
+        },
+        {
+            "id": "f6559c0b9f12b88328a5d89d24305c3e03d53f65688c0a85adb7d7e76ecfc2c6",
+            "title": "Inverse-Square Law",
+            "description": "Comments",
+            "url": "https://blog.coredump.cx/p/inverse-square-law",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-14T04:45:43+00:00",
+            "collected_at": "2026-09-15T15:59:09.344292+00:00"
         },
         {
             "id": "1235e9ac92bb56976faa45fc5d6c7d14d10eef45ffdd30ac9e1afd4c7454bcfa",
@@ -9954,6 +11816,21 @@
             ],
             "published_at": "2026-09-13T05:48:19+00:00",
             "collected_at": "2026-09-13T10:52:26.915202+00:00"
+        },
+        {
+            "id": "bed2def0dd53efe0469834aaf2ab27309b28958dbc9a58ddb98d38d34ba0ba9d",
+            "title": "Sony's First Computer – The SMC-70 from 1982 [video]",
+            "description": "Comments",
+            "url": "https://www.youtube.com/watch?v=cT2-7KkPkBc",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-13T05:47:13+00:00",
+            "collected_at": "2026-09-15T15:59:09.344178+00:00"
         },
         {
             "id": "d66822849fbc4418675239100fff5920adf2e36737aba9882bf9fcb888b993cf",
@@ -17172,6 +19049,21 @@
             ],
             "published_at": "2026-09-11T08:18:23+00:00",
             "collected_at": "2026-09-11T10:21:21.274728+00:00"
+        },
+        {
+            "id": "7b75e15fc0740ccb194bf15a2510f136762034b1cd5f60bc75de6975232d8970",
+            "title": "Amazon SageMaker Unified Studio now supports ODBC connections for Microsoft Power BI and other analytics tools",
+            "description": "Amazon SageMaker Unified Studio now supports ODBC connections, so data users can connect Microsoft Power BI and other ODBC-compatible tools directly to governed data in SageMaker Unified Studio projects using the Amazon Athena ODBC driver. This adds a native connection path for analysts who have standardized on Power BI to work with governed data using their existing tools and workflows. Amazon SageMaker Unified Studio adds an ODBC connection details view to the project overview page, alongside the existing JDBC view. From the project's JDBC and ODBC connections tab, data users can copy the connection string and its parameters for a DSN-less connection, or use them to configure a named DSN. The Amazon Athena ODBC driver (version 2.2.0.1 or later) works directly with SageMaker Unified Studio through two modes: SageMakerBrowserIdc, which opens a browser to sign in through AWS IAM Identity Center and your external identity provider, and SageMakerIam, which uses temporary AWS credentials. ODBC connections in SageMaker Unified Studio are available today in all AWS Regions where Amazon SageMaker Unified Studio is available, at no additional cost. To get started, refer to the Amazon SageMaker Unified Studio User Guide and the Amazon Athena ODBC driver documentation .",
+            "url": "https://aws.amazon.com/about-aws/whats-new/2026/09/sagemaker-unified-studio-odbc-power-bi/",
+            "source": "AWS What's New",
+            "category": "cloud",
+            "tags": [
+                "amazon",
+                "aws",
+                "cloud"
+            ],
+            "published_at": "2026-09-11T08:00:00+00:00",
+            "collected_at": "2026-09-15T15:59:12.845026+00:00"
         },
         {
             "id": "99ddebf0a3523bde9bc9e8835060025dec89e706f70aad2fc1b15a8b3cd63ba2",
@@ -65973,6 +67865,20 @@
             ],
             "published_at": "2026-06-23T00:00:00+00:00",
             "collected_at": "2026-09-06T15:37:12.764992+00:00"
+        },
+        {
+            "id": "555b25350dd021b505c18de6b1613f57a00e37e07cdf929ce35e2cd7a5076dec",
+            "title": "🎒 Make Room for New Skills & Save Up to 40%",
+            "description": "Build practical skills across AI, cybersecurity, cloud native, and more. Now through Sept. 22 ENROLL NOW The post 🎒 Make Room for New Skills & Save Up to 40% appeared first on Linux.com .",
+            "url": "https://www.linux.com/news/sep26-training-promo/",
+            "source": "Linux.com",
+            "category": "linux",
+            "tags": [
+                "linux",
+                "open-source"
+            ],
+            "published_at": "2026-06-22T20:46:31+00:00",
+            "collected_at": "2026-09-15T15:59:14.142063+00:00"
         },
         {
             "id": "b497f30634e434d979d0bb26eb1376a6bc30cd8eecbf296d9b53e58514e985ea",
@@ -117514,6 +119420,113 @@
             ],
             "published_at": null,
             "collected_at": "2026-09-15T10:46:42.872762+00:00"
+        },
+        {
+            "id": "6a3b94c26a36baf374b92657f1aa177ba0ce9dc38dd491fe28eb0906a25bf184",
+            "title": "Now Light’s minimalist phone can easily call an Uber",
+            "description": "More than a decade after its Kickstarter proposed a \"cell phone designed to be used as little as possible,\" Light is adding a direct connection to Uber and Lyft with a new Rideshare tool. For owners of either the Light Phone III or the upcoming Light Flip, they can use it to find pick up […]",
+            "url": "https://www.theverge.com/gadgets/995449/light-phone-uber-lyft-rideshare-app",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-09-15T15:59:07.665080+00:00"
+        },
+        {
+            "id": "748ab31264dabb3c9a3da00b9e4e1e9498f05088267f861366d7679ef0cff7f0",
+            "title": "Meta’s new One subscriptions put a price on social media and AI",
+            "description": "Shortly after launching its new do-everything AI assistant Muse, Meta's launching subscription bundles that pair its standalone app subscriptions with extra AI usage. Some of the new Meta One bundles were in testing earlier this year, but are now available globally starting today, with several tiers for individual users, creators, and businesses. Meta says the […]",
+            "url": "https://www.theverge.com/tech/995453/meta-one-subscriptions-ai",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-09-15T15:59:07.665150+00:00"
+        },
+        {
+            "id": "b6ea8f148cbb80f86954a6b0342269b4bac2b5def5761d44a902b1e921b7c8c1",
+            "title": "Fujifilm’s Instax Pal 2 is a tiny digital camera that may not disappoint",
+            "description": "Fujifilm announced a follow-up to its tiny and quirky Instax Pal camera that debuted three years ago bundled with an instant printer. While the original Pal was a palm-sized camera with a round design that lacked a screen or viewfinder, the new Instax Pal 2 includes both in a design that looks like a miniaturized […]",
+            "url": "https://www.theverge.com/tech/995399/fujifilm-instax-pal-2-digital-camera-wireless-autofocus-face-detection",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "git",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-09-15T15:59:07.665208+00:00"
+        },
+        {
+            "id": "6444791fae45e288945965db82514a53132d65a1f65d225755dd88e71705c61c",
+            "title": "This doorbell camera lets a human security guard watch your front door",
+            "description": "DIY home security company SimpliSafe is bringing its AI-powered proactive security feature to the front door. The new SimpliSafe Video Doorbell Series 2 launches today for $199.99 and works with the company's Active Guard Outdoor Protection (starting at $49.99 a month). This combines AI analysis with live agents to detect potential threats and respond proactively. […]",
+            "url": "https://www.theverge.com/tech/995365/simplisafe-video-doorbell-series-2-virtual-guard-price-specs",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-09-15T15:59:07.665268+00:00"
+        },
+        {
+            "id": "0ae8067b430986e1e0bfae4866c397a7dca90c6a464c11d13de1192d036467d7",
+            "title": "Voicemod’s new pocket-friendly device brings real-time voice changing to your phone",
+            "description": "Voicemod announced a new mobile device that expands the capabilities of the Voicemod Key dongle it launched in late 2024 as a way to bring the company's real-time voice changing tech to consoles. While the older Voicemod Key only used a smartphone as an interface between the company's mobile app and the Xbox, PlayStation, and […]",
+            "url": "https://www.theverge.com/tech/994828/voicemod-voice-changer-key-pocket-ios-android-soundboard",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-09-15T15:59:07.665325+00:00"
+        },
+        {
+            "id": "af6c46111be9737a4e79c5b596989c140df36f3853c22ddb3824e2c005f618fd",
+            "title": "The premium AirPods 5 are the best open-ear earbuds Apple has made",
+            "description": "It's almost a guarantee that the new version of a product will be, at best, the same price as the old one, and often (especially in the past couple years) more expensive. But that's not what Apple did with the AirPods 5. The $149 AirPods 5 with Wireless Charging Case are $30 cheaper than the […]",
+            "url": "https://www.theverge.com/tech/995273/airpods-5-wireless-charging-case-review",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-09-15T15:59:07.665377+00:00"
+        },
+        {
+            "id": "c9b726487707f3aca22d4ff05598efcee599977b04af37fd7954b176048775cb",
+            "title": "GM updates its trucks’ native software to coexist with CarPlay",
+            "description": "General Motors is polishing up the software experience in its bestselling trucks in an effort to reduce the amount of dangerous tapping and swiping that's required to access the most-used controls. It's also giving Apple CarPlay and Android Auto spiffy new picture-in-picture displays - which is notable given GM's previously stated hostility to phone mirroring […]",
+            "url": "https://www.theverge.com/transportation/994875/gm-chevy-gmc-truck-software-ui-carplay-android-auto",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "android",
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-09-15T15:59:07.665434+00:00"
         }
     ]
 }
