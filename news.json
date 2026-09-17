@@ -1,7 +1,818 @@
 {
-    "updated_at": "2026-09-16T20:43:56.617035+00:00",
-    "count": 8314,
+    "updated_at": "2026-09-17T02:44:09.511944+00:00",
+    "count": 8393,
     "articles": [
+        {
+            "id": "95536ac48fc2b1112e3bcd65ffe23ab2fabc5c7786d373f4b32c04a6f7bc3e36",
+            "title": "AWS Lambda Managed Instances: What Min=0/Max=0 Actually Does in Production",
+            "description": "A hands-on walkthrough, including the exact failures and dead ends you'll hit setting this up. Introduction: The Production Bottleneck AWS Lambda Managed Instances (LMI) puts Lambda functions on EC2 capacity you control, while keeping Lambda's programming model. Most of the coverage since re:Invent 2025 has focused on two things: the removal of the memory ceiling, and the EC2-backed pricing model that lets you apply Savings Plans and Reserved Instances. Almost none of it covers the scaling configuration — specifically, what happens when MinExecutionEnvironments and MaxExecutionEnvironments are both set to 0 . The assumption most engineers carry over from standard Lambda is that a minimum of zero means \"no standing capacity, scale up from zero on the next request.\" That assumption is wrong for LMI, and it's wrong in a way that produces a hard invoke failure instead of a slow cold start. This post documents the actual mechanics, verified against a live AWS account, along with the setup friction that isn't in the AWS documentation. The Mechanics of the Failure Chain On Lambda Managed Instances, MinExecutionEnvironments and MaxExecutionEnvironments are not independent settings. AWS enforces a pairing rule: a minimum of 0 is only accepted when the maximum is also 0 . When both are set to 0 , Lambda does not idle the function and wait for the next invocation. It deactivates the function version : Every EC2 Managed Instance backing that version is terminated. Instance charges continue until termination actually completes — the meter doesn't stop the moment you save the config. The version's State flips to Deactivated . Any invocation against a deactivated version returns an explicit error. There's no cold start, no queueing, no retry — it fails outright. Reactivation is never automatic. You have to push a new scaling configuration with non-zero values, through the console, the PutFunctionScalingConfig API, or a scheduled action. This is the opposite of how ReservedConcurrentExecutions=0 or standard Lambda concurrency throttling behaves, and it's the single most important operational difference between LMI and normal Lambda for anyone running non-continuous workloads. Production Architecture Pattern & Walkthrough System Architecture Overview LMI has one prerequisite that standard Lambda doesn't: a Capacity Provider . This is a separate resource that defines: The VPC, subnets, and security groups the EC2 instances launch into Which instance architecture (x86_64 or arm64) and types are eligible The scaling mode (Auto or Manual) The IAM role Lambda uses to manage EC2 on your behalf (the \"Operator Role\") A function is then attached to a Capacity Provider at creation time by setting its compute type. Only after that attachment exists — and only on a published version , not $LATEST — do MinExecutionEnvironments and MaxExecutionEnvironments become meaningful. Setup Walkthrough: Step by Step 1. Create the Capacity Provider and attach it to the function. In the Lambda console, this doesn't appear as \"Compute type\" the way older documentation describes it — in the current console it's the EC2 capacity provider toggle under Custom settings. Toggling it on opens a side panel to select the capacity provider ARN, memory size, and the execution-environment-memory-per-vCPU ratio: The panel already resolves the capacity provider by ARN once created. Memory and the vCPU ratio (2:1, 4:1, or 8:1) are set per-function here, not per-capacity-provider. 2. Architecture must match between the function and the capacity provider. The first real failure: creating the function returned this error on save — \"You cannot use a Lambda Managed Instances function with a capacity provider that does not support the architecture of the function.\" The capacity provider's InstanceRequirements.Architectures is fixed at creation time (in this case, arm64 ). If the function's own architecture toggle doesn't match, function creation is rejected outright — there's no coercion or fallback. Confirmed via CLI: { \"CapacityProvider\" : { \"CapacityProviderArn\" : \"arn:aws:lambda:us-east-1:<ACCOUNT_ID>:capacity-provider:lambaprovisionedinstance\" , \"State\" : \"Active\" , \"VpcConfig\" : { \"SubnetIds\" : [ \"subnet-<redacted>\" , \"subnet-<redacted>\" ], \"SecurityGroupIds\" : [ \"sg-<redacted>\" ] }, \"PermissionsConfig\" : { \"CapacityProviderOperatorRoleArn\" : \"arn:aws:iam::<ACCOUNT_ID>:role/service-role/lambaprovisionedinstance-role-<redacted>\" }, \"InstanceRequirements\" : { \"Architectures\" : [ \"arm64\" ] }, \"CapacityProviderScalingConfig\" : { \"ScalingMode\" : \"Auto\" } } } Fix: match the function's architecture toggle to whatever the capacity provider was created with. There's no cross-architecture capacity provider. 3. Publishing does not prompt for scaling configuration. Creating and publishing the function does not ask for MinExecutionEnvironments or MaxExecutionEnvironments at any point. That configuration lives separately, under Configuration → Function scaling configuration , edited independently after the function exists: With nothing configured, AWS's default behavior applies: 3 Managed Instances provisioned across availability zones before the version is marked Active , invisible in this panel until you explicitly edit it. 4. $LATEST is not invocable on LMI — only a published version is. This is a second point of confusion that isn't obvious from the console. Querying $LATEST directly shows a state most engineers won't recognize: { \"Configuration\" : { \"FunctionName\" : \"lmi-function\" , \"FunctionArn\" : \"arn:aws:lambda:us-east-1:<ACCOUNT_ID>:function:lmi-function:$LATEST\" , \"State\" : \"ActiveNonInvocable\" , \"Architectures\" : [ \"arm64\" ] } } ActiveNonInvocable is a real, documented state ( FunctionConfiguration valid values: Pending | Active | Inactive | Failed | Deactivating | Deactivated | ActiveNonInvocable | Deleting ). It means exactly what it says — $LATEST cannot run instances on LMI. Only a published version gets EC2 capacity. LMI introduces $LATEST.PUBLISHED specifically for this: a version you can republish repeatedly without managing numbered versions. When created through the console, this is generated automatically. Querying it directly confirms the actual invocable state: { \"Configuration\" : { \"FunctionName\" : \"lmi-function\" , \"FunctionArn\" : \"arn:aws:lambda:us-east-1:<ACCOUNT_ID>:function:lmi-function:$LATEST.PUBLISHED\" , \"Version\" : \"$LATEST.PUBLISHED\" , \"State\" : \"Active\" , \"Architectures\" : [ \"arm64\" ] } } Invoking the function via its unqualified ARN implicitly targets $LATEST.PUBLISHED , not $LATEST — the reverse of how unqualified invokes behave on standard Lambda. 5. Managed Instances are hidden from the EC2 console by default. Once $LATEST.PUBLISHED showed Active , the expected 3 instances weren't visible anywhere in the EC2 console, and describe-instances with a capacity-provider tag filter returned nothing: { \"Reservations\" : [] } The cause: Managed resource visibility , an account-wide EC2 setting (introduced April 2026) that hides EC2 resources provisioned by services like LMI, EKS Auto Mode, and ECS Managed Instances from the console and Describe* API calls by default for accounts that didn't have managed resources before the setting existed. The instances are running and billing regardless — visibility is purely a display filter. Fix, via CLI: aws ec2 modify-managed-resource-visibility --default-visibility visible { \"Visibility\" : { \"DefaultVisibility\" : \"visible\" } } This is account-wide and Region-specific, and applies to all managed-resource offerings, not just LMI. After setting it, the instances appeared after a while in the EC2 console: Two running, one terminated — consistent with AWS's documented default of 3 instances provisioned for availability across AZs, with normal instance replacement happening in the background. 6. Verifying the 0/0 deactivation. Editing the Function scaling configuration to MinExecutionEnvironments=0 and MaxExecutionEnvironments=0 and saving triggers an immediate, visible state transition in the console: \"Deactivating version $LATEST.PUBLISHED.\" Within a few minutes, all three EC2 instances move to Terminated , and invoking the function returns an explicit error referencing the deactivated state — not a timeout, not a cold start, not a retry. This is the core behavior the rest of this post is about: 0/0 is a deactivation switch, not a scale-to-zero setting. Implementation Strategies & Deep-Dive Considerations Pricing changes the idle-cost math. LMI drops Lambda's per-invocation duration billing entirely. Instead, pricing has three components: the standard $0.20 per million requests, standard EC2 instance charges (Savings Plans and Reserved Instances apply), and a flat 15% management fee on top of the on-demand EC2 price — applied even when Savings Plans or RIs are discounting the underlying instance cost. That fee doesn't pause during idle traffic. It only stops when instances are actually terminated, which only happens through deactivation or explicit scale-down. For a workload with, say, 5 hours of daily invocation activity, this means: unless MinExecutionEnvironments is actively brought to 0/0 during the other 19 hours, you are paying full EC2 rate plus the management fee for the entire idle window — not \"only for the 5 hours,\" the way standard Lambda duration billing would imply. There's no scale-out SLA. AWS does not publish a guaranteed scale-out latency for LMI. The explicit documented warning is that traffic more than doubling within a 5-minute window can produce throttling while capacity catches up. Combined with the 0/0 deactivation behavior, this means bursty or unpredictable workloads should generally avoid 0/0 entirely — the risk isn't a slow response, it's outright invoke failures during both the reactivation window and any sufficiently sharp traffic spike even at steady-state minimums. EventBridge Scheduler is the correct pattern for predictable idle windows , not manual toggling. A nightly batch job or a fixed 9-to-5 traffic pattern is exactly the case 0/0 is designed for — scheduled deactivation before the idle window, scheduled reactivation before traffic resumes, via PutFunctionScalingConfig calls triggered on a schedule rather than through the console. Managed resource visibility is a one-time account setting, not a per-function toggle. Worth setting to visible early in any LMI adoption, since the default-hidden behavior for new accounts otherwise makes basic troubleshooting (like confirming instance count) unexpectedly difficult. Architectural Tradeoffs & Operational Takeaways Workload shape Recommended scaling config Why Predictable idle windows (nightly batch, fixed business hours) 0/0 + EventBridge Scheduler Stops EC2 + management-fee billing during confirmed idle time; reactivation is scheduled, not reactive Bursty or unpredictable traffic MinExecutionEnvironments > 0 Avoids hard invoke failures during the deactivated window and reduces exposure to the \"traffic doubles in 5 minutes\" throttling case Continuous, steady-state traffic Standing non-zero minimum, sized to baseline You're paying for compute regardless; this is the workload LMI's EC2 pricing model is built for The mechanical rule worth internalizing: MinExecutionEnvironments=0 is not a cost-saving default the way it is on standard Lambda concurrency settings. It only saves cost when paired with Max=0 , and pairing it with Max=0 converts idle time into a hard failure window unless you're actively scheduling reactivation around it.",
+            "url": "https://dev.to/aws_sa_sg/aws-lambda-managed-instances-what-min0max0-actually-does-in-production-en1",
+            "source": "DEV Community",
+            "category": "cloud",
+            "tags": [
+                "aws",
+                "developpement",
+                "programmation",
+                "web",
+                "windows"
+            ],
+            "published_at": "2026-09-17T02:38:34+00:00",
+            "collected_at": "2026-09-17T02:43:52.113216+00:00"
+        },
+        {
+            "id": "d567d61e0ab7a3dbe54c269c0ace8b85544f699c25882728b5d9bfad9c502a40",
+            "title": "Tool Evidence Guard v0.1.0: verificar datos antes de responder con un agente",
+            "description": "Una herramienta devuelve null . El agente responde «el valor es 0». Una consulta falla y la respuesta final incluye una cifra que no apareció en la salida. El problema no es solo que falle la herramienta: es que el agente continúe como si hubiera recibido evidencia suficiente. Tool Evidence Guard es una biblioteca y CLI local para comprobar resultados de herramientas y afirmaciones escalares estructuradas antes de utilizarlos en una respuesta. Está escrita en Python, requiere Python 3.10 o superior y no tiene dependencias de ejecución externas. La distinción central: OK significa que los datos cumplen un contrato. No significa que sean verdaderos. Un contrato anterior a la respuesta El sistema que ejecuta las herramientas define previamente qué necesita obtener: un campo concreto, un tipo, un rango o un conjunto de valores admitidos. Después captura el resultado y entrega al verificador tres elementos: contract : requisitos establecidos antes de ejecutar la herramienta. result : salida capturada por el adaptador de confianza. claims : afirmaciones estructuradas que se quieren respaldar con esa salida. Por ejemplo, si se necesita un entero no negativo en /data/value , recibir null no satisface el contrato. Tampoco autoriza a responder con un número que el resultado no contiene. Las afirmaciones se comparan por igualdad escalar exacta, respetando el tipo. 0 y false son valores válidos, no ausencias; tampoco se tratan como intercambiables. El contrato y la captura deben proceder de una capa de ejecución de confianza, no del modelo que redacta la respuesta. Si el modelo puede inventar ambos, un documento coherente pero falso puede pasar la validación. Qué comprueba La versión 0.1.0 verifica campos mediante rutas JSON Pointer bajo /data/ , con tipos integer , number , string y boolean . Permite restricciones minimum , maximum y enum . Rechaza errores declarados, campos obligatorios ausentes, tipos incorrectos y valores no utilizables conforme a sus reglas. Reconoce determinados marcadores de redacción, como [REDACTED] , y rechaza las señales explícitas de truncamiento, corrupción, obsolescencia o redacción cuando están activadas. La frescura es opcional: al configurar max_age_seconds , se exige observed_at con zona horaria y se rechazan fechas futuras. Ese timestamp debe representar la observación original; copiar hoy un dato antiguo no lo convierte en reciente. La CLI también limita el tamaño de entrada y rechaza JSON con claves duplicadas o valores no finitos. El informe devuelve códigos de motivo, sin reproducir los valores ni los mensajes de error originales. No es un validador JSON Schema completo ni un analizador de lenguaje natural. Dos ejemplos reproducibles La instalación se hace desde el repositorio. Estos comandos fijan el commit usado para las comprobaciones de este artículo: git clone https://github.com/amurlaniakea/tool-evidence-guard.git cd tool-evidence-guard git checkout c7d16c3a6095c9123261b5048cf29617e64dbae0 python3 -m venv .venv .venv/bin/python -m pip install -e . .venv/bin/tool-evidence-guard examples/valid.json El primer ejemplo contiene el entero 42 y una afirmación con ese mismo valor. La ejecución devolvió: { \"retrieval_status\" : \"OK\" , \"reasons\" : [], \"supported_claims\" : 1 } El segundo contiene null , pero la afirmación sigue indicando 42 : .venv/bin/tool-evidence-guard examples/unusable.json Salida observada: { \"retrieval_status\" : \"FAILED\" , \"reasons\" : [ \"TYPE_MISMATCH\" , \"CLAIM_MISMATCH\" ], \"supported_claims\" : 0 } Ambos archivos son fixtures sintéticos de demostración. No son un benchmark sobre agentes ni resultados de un servicio externo. Los códigos de salida permiten integrar la comprobación en un proceso: 0 indica conformidad; 1 , rechazo; 2 , una entrada ilegible o inválida. El segundo ejemplo termina deliberadamente con código 1 . El repositorio incluye además una demostración local con lectura real de archivo, una afirmación incorrecta controlada y un archivo inexistente: .venv/bin/python examples/local_demo.py En la ejecución verificada, la lectura válida produjo OK ; la afirmación incorrecta produjo CLAIM_MISMATCH ; el archivo inexistente produjo TOOL_ERROR y MISSING_FIELD . Dónde integrarlo y dónde no basta La biblioteca puede utilizarse entre la captura de una herramienta y el uso de sus datos. La aplicación que la integra debe decidir qué hacer ante un rechazo: detener ese paso, solicitar otra fuente o informar de que falta evidencia. La biblioteca no instala por sí sola esa política en un agente. Para afirmar «la operación terminó», no basta con exigir que el envío haya devuelto status: ok . El contrato debe pedir un estado final y evidencia de una lectura posterior que compruebe el resultado esperado. También hay límites deliberados: No verifica prosa libre, deducciones ni cálculos derivados. No autentica a la fuente ni demuestra que una operación se ejecutó realmente. Los identificadores de llamada correlacionan resultados; no son firmas. Una cadena corrupta sin una señal reconocible puede pasar. Un contrato insuficiente puede aceptar datos que no resuelven la tarea. Sin afirmaciones comprobadas, supported_claims: 0 no respalda ninguna afirmación, aunque los campos cumplan el contrato. Actualmente es una CLI y una biblioteca, no un plugin automático de Hermes o Tars. Tampoco presento una reducción porcentual de respuestas inventadas: los tests del proyecto no miden ese efecto en modelos. Verificación y mantenimiento Sobre el commit indicado se volvió a ejecutar la suite: .venv/bin/python -m unittest discover -s tests -q Resultado observado: Ran 52 tests in 0.452s OK Son 52 pruebas del proyecto, no una garantía universal de seguridad. El run de GitHub Actions correspondiente al merge del PR #2 también figura como completado con éxito. El PR #1 consolidó el texto de licencia en LICENSE , completó cabeceras SPDX, migró los metadatos a PEP 639 y corrigió referencias de documentación. Fue un cambio de documentación y empaquetado, no una ampliación del verificador. La revisión independiente aportada para ese PR comprobó el diff y volvió a ejecutar los tests en un clon limpio. El PR #2 resolvió los 15 avisos de Ruff que habían quedado fuera del alcance del PR #1. La comprobación posterior devolvió All checks passed! . En el núcleo solo cambió el tipo de excepción para timestamps no textuales y su captura correspondiente: raise TypeError junto con except (TypeError, ValueError, OverflowError) , preservando el informe INVALID_TIMESTAMP en vez de propagar una excepción. Se añadió una prueba de regresión para cinco valores no textuales. La auditoría independiente comunicada para el PR reprodujo el caso adversarial en un clon limpio: retirar TypeError del except provoca una excepción sin capturar; restaurarlo devuelve la suite a verde. No se corrigió un crash presente en la versión anterior: se evitó introducirlo al atender el aviso de estilo. Ruff limpio y 52 pruebas en verde describen estas comprobaciones, no una garantía de ausencia de defectos. Código y documentación Tool Evidence Guard no convierte una salida en verdad. Permite exigir algo más acotado y comprobable: que una afirmación estructurada coincida con datos capturados que satisfacen requisitos definidos de antemano. Repositorio Referencia completa en español, fijada al commit del artículo Licencia AGPL-3.0-or-later ¿Qué comprobación exigirías a una herramienta antes de permitir que un agente utilice su resultado? Pedro Sordo Martínez — amurlaniakea@gmail.com Licencia del proyecto: AGPL-3.0-or-later.",
+            "url": "https://dev.to/magopredator/tool-evidence-guard-v010-verificar-datos-antes-de-responder-con-un-agente-90j",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "git",
+                "ios",
+                "programmation",
+                "python",
+                "web"
+            ],
+            "published_at": "2026-09-17T02:37:10+00:00",
+            "collected_at": "2026-09-17T02:43:52.114417+00:00"
+        },
+        {
+            "id": "2cf3addfa83d940ec06e160507d8dc69e2312e92e1b723ad4ed6b2cd834b10b4",
+            "title": "The resume AI prompt that sounds useful but quietly teaches you to lie",
+            "description": "This came up in Chinese AI dev circles this week: a set of seven Claude prompts for job hunting, shared with genuine enthusiasm. Most of them are fine. One of them is a trap. The prompt in question is called the \"Positioning Rewriter.\" You give Claude a target job title, and it rewrites your career summary and achievements to highlight relevant accomplishments and industry language. The post even includes a safety note: \"Do not fabricate anything I haven't done.\" That note is doing a lot of work. Maybe too much. Here is what actually happens when you run a prompt like that. Claude does not know which parts of your resume are embellished already. It does not know whether the \"led a cross-functional initiative\" on line three was you coordinating two Slack threads or you genuinely owning a six-month project. It optimizes the language toward whatever sounds best for the target role, and it is very good at making ordinary things sound significant without technically lying. The result reads as confident, polished, and calibrated for keyword matching. One comment in the thread put this more bluntly. Someone wrote that they had interviewed a candidate recently whose resume had clearly been AI-rewritten to the point of fraud. Halfway through the interview it became obvious the person could not back up what was on the page. The candidate disappeared from the call. That commenter suspected the network cable got pulled. Now, that is one data point. But it points at something real: there is a gap between \"the AI did not fabricate anything\" and \"the resume accurately represents what you can do on day one.\" Aggressive reframing fills that gap without crossing the technical line, and most people do not notice they are doing it. The other six prompts in the set are genuinely useful in a way that sidesteps this problem. The \"Hidden Role Finder\" asks Claude to list job titles your experience already qualifies you for, including outside your current industry. The \"Transferable Skills Translator\" extracts what you are actually good at and maps it to sectors that value those things. The \"Qualification Gap Analyzer\" compares your resume to a specific job description and tells you honestly what you are missing. None of these require rewriting anything. They work with what exists. Those prompts are doing something different from the Positioning Rewriter. They are helping you see your own experience more clearly, not helping you present it more persuasively. That distinction matters more than it might seem. Job hunting advice has always contained a tension between honest self-presentation and strategic self-promotion. The usual guidance is to lead with your strongest true framing, use the vocabulary of the target field, and not undersell yourself. That is reasonable. The problem is that AI makes it much easier to slide from \"better framing\" to \"framing that requires a version of you that does not exist yet\" without realizing it happened. The safety disclaimer in the original prompt does not actually prevent this. It tells Claude not to invent experiences. It does not tell Claude to flag when the framing is getting ahead of what the experience can support. Those are different requests, and only one of them is being made. If you want to use AI for job search prep, the more honest version of the Positioning Rewriter looks like this: ask Claude to rewrite your summary for a target role, then ask it to identify every claim in that rewrite and cite the specific resume line that supports it. If it cannot find the line, the claim comes out. That extra step is what the original prompt is quietly skipping. The set of prompts is not bad overall. But the framing around the Positioning Rewriter, that it will help you \"stand out\" for roles you might not have considered, glosses over the risk that standing out and being able to follow through are two separate problems. So here is what I actually want to know: when you have used AI to rewrite resume language, did you find it made you more honest about your experience or less?",
+            "url": "https://dev.to/shenao_yu_e15c14815264a44/the-resume-ai-prompt-that-sounds-useful-but-quietly-teaches-you-to-lie-3hll",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "anthropic",
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-17T02:24:08+00:00",
+            "collected_at": "2026-09-17T02:43:52.114985+00:00"
+        },
+        {
+            "id": "cd0d78b16cdd3736496d69238955ac2f770f491afda729c6ac825fb0c70edc58",
+            "title": "My First AI Judge Interview: What Could Possibly Go Wrong?",
+            "description": "TL;DR: I entered HackerRank Orchestrate wanting to win, then faced an AI judge asking how Praxi Clew actually worked, and I sought help mid-interview too. I finished with 66.1 out of 100 and a much more concrete understanding of what I need to learn. Next time, explaining the implementation needs to be part of building it. I built a financial decision tool with AI assistance, submitted it to an AI hackathon, and then sat down for an interview with an AI judge. At that point, I had spent hours asking AI whether the system worked. Now AI was asking me how the build worked. What could possibly go wrong? This time, understanding had an appointment. HackerRank organized the September 2026 edition of Orchestrate, a 24 hour hackathon. Its Buy or Wait? challenge asked whether someone could afford an expense while meeting future commitments. HackerRank supplied the assignment and data; I named my implementation Praxi Clew. The official repository and problem statement are available if you want to explore it. The build system used AI to extract facts from messages and images, then Python to forecast balances over 90 days and evaluate payment options. Astra handled orchestration, coordinating the AI extraction step with the Python forecasting. Antigravity, Google's agentic coding tool, implemented the code, running Gemini 3.8 as its model in the IDE. ChatGPT Astra reviewed the artifacts. I directed the work and increasingly insisted on evidence, limited scope, and an end to the correction cycle. The submission required a code archive, recommendations for 250 requests, and a development transcript. Then came the 30 minute AI Judge interview, with the camera on and my submission available to the judge. I knew there was an interview. Knowing something is on the schedule and being ready for it are apparently separate activities. It took me a while to register how impressed I was by the interviewer itself. It started with introductory questions, followed up on what I said, pushed back on answers, and used those answers to shape the next questions. I thought it was very intelligent. The conversation kept asking me to go further into what I had offered. HackerRank's September event announcement identifies the AI judge as Chakra . Its public explanation of AI interviewing describes adaptive follow up questions generated from candidate responses, with scoring against a defined rubric. That description fits what I experienced. I cannot identify the exact model or voice stack used in my session from the sources I reviewed. The September event page describes the interview as a 30-minute voice interview where you \"walk the AI judge through your architecture, your decisions, and your tradeoffs.\" HackerRank's account of the first edition says the interview probes whether a participant can explain code-level implementation details and demonstrate technical ownership, and discusses honesty about AI assistance and uncertainty. A rubric from an earlier Orchestrate event names depth of understanding, trade-off awareness, and failure-mode reasoning as dimensions, alongside honesty about AI assistance: whether a participant can clearly distinguish what they designed from what an AI tool generated for them. These sources are useful context for the kinds of abilities Orchestrate interviews have evaluated, but they should not be treated as the official rubric for the September edition. During the interview, I repeatedly and clearly told the AI Judge that I had used AI throughout the project. I wanted to win, always do! Even near submission, I was reading about previous Orchestrate results and asking whether they offered an edge. Learning in public is lovely and I so enjoy it. Also, I love me a leaderboard. Before the interview, I did not think I would do well. I was an AI assisted builder about to be graded by an AI judge. I said as much to ChatGPT, then asked it to help me prep for it. Concerned and nervous, but still participating. That was where I was. I still bombed several interview answers, because the real questions were more specific than anything I had prepped for. I brought questions into the chat and asked AI for help answering the AI judge. The system built with AI needed AI to explain itself, mid-interview, in real time. That assistance belongs in the account. I do not have the full spoken transcript, so the questions described here come from what I recorded in the chat. The explanations we developed are not a record of answers I delivered unaided. One question concerned variable expenses. What value had we used to estimate them? I understood why a financial forecast needed to account for groceries and transport. But which value did our implementation use? An average? The most recent transaction? Something more conservative? The submitted function used the median of up to five recent amounts in the recurring series. A reasonable choice to reduce the influence of an unusually large or small purchase. Also a choice with limits: typical spending is not a guaranteed upper bound. That is a short explanation once you have checked it. During the interview, I was asking for that check. Another question concerned the order of events. If salary and bills landed on the same day, what happened first? The code credited confirmed income, deducted existing expenses, then deducted the proposed purchase payment. That assumes income is available before the outgoing payments that day. It does not model the exact times a bank settles transactions. This answer exposed a problem with the explanations I had been relying on. An earlier report said debits came first. Inspecting the submitted function showed credits came first. Both descriptions sounded plausible. Only one described my submission. The questions also reached the search for spending changes. Python tried combinations of up to three permitted changes, such as stopping an eligible expense or reducing it to its minimum allowed amount. It checked payment plans against the forecast. Protected categories were excluded. Then came verification. How did we know the outputs were correct across all 250 requests? That question needed a careful answer. The public dataset gave us 25 examples with expected answers. The other 250 were the submission requests. We could check their format, permissions, schedules, and balances against our forecast. We could replay exported evidence and reproduce the identical output file. We could not claim agreement with expected answers we had never seen. The build had already supplied a useful example of why that distinction mattered. In request 185, a 12% rent increase became rent of €12. The validator passed because it used the same incorrect rent as the forecast. Comparing the extracted fact with the original message exposed the error. Correcting rent from €451 to €505.12 moved the recommended payment from December to January. This was also why I could not answer every question with \"we validated it.\" Validated what, against which inputs, and with what limitations? Those details belonged in the answer. The question about what I designed myself called for a different kind of answer. I design my projects, vet the implementation, and troubleshoot bugs with the agents. HackerRank supplied this assignment, and AI proposed and wrote substantial parts of the technical solution. I was still responsible for the project as a whole. That includes whether I can explain the code, not just direct it or evaluate what came back. This example is from mid-build, well before the interview. I stopped and thought, wait, what are we doing here? We were going in circles: another confident report, another correction, another review. I asked for a reset and a complete assessment of the files and requirements. I also required guardrails so a targeted fix would not become permission to change unrelated behavior. That intervention changed the review process. We assembled the actual code, output, requirements, and extracted evidence so the next assessment could examine them together. I was troubleshooting how we were evaluating the system as well as directing corrections to the system itself. Needing help with the estimation and validation details is different from being absent from the design and review work. I want this account to preserve both: the decisions I owned and the implementation knowledge I still needed to deepen. The interview ended okay but I was definitely not confident. Just relieved I completed it. Then when Orchestrate ended, I got my score. My reported placement was 139 out of 3,062 participants , approximately the top 4.5%. I wanted to win but didn't. I am pleased with that placement anyway which surprised me for sure! The transcript received full marks. I cannot tell which individual decisions earned those marks, but it was my strongest evaluated component. The interview, code, and output scores were relatively close. The results do not support blaming everything on interview nerves. The public sample results had already shown limitations: 80% agreement on payment method, but only 12% on the exact safe payment amount. The forecast needed work. So did my ability to explain it, especially this! The score made both more concrete. For my next build, I want explanation to become a checkpoint while the implementation is still taking shape. When an agent hands me an answer, I want to be able to describe back what a component does, which inputs it uses, and where it can fail. I do not yet know exactly how I will check that against the code every time. That is what I need to figure out next. Which will take time. It will probably interrupt the satisfying pace of the agents firing on all cylinders. But, I think that is time I need to spend. For the next Orchestrate or hackathon or challenge, I will read and review the interview rules as carefully as the build requirements, including what assistance is permitted during any live assessment. Knowing my own implementation well enough to survive questions more specific than anything I prepped for is the harder problem, and the one I actually need to solve. Next time, I am saving the receipts: the chat logs, the test outputs, every place where I need to know the reasoning, not just the result. HackerRank's transcript logging instructions are worth reading before starting, too. The development record was a scored part of this event. These are the September edition's details; check the organizer's current instructions for future contests. I still build with AI. I still want to compete. Next time someone asks which value we used for variable expenses, I would like to have already explained that choice to myself. Have you had to explain a system you built with substantial AI assistance? Which question sent you back to the code? This is my personal participant account. HackerRank organized Orchestrate and supplied the Buy or Wait? challenge and data. Scores and placement come from my result display. Antigravity assisted with implementation, and ChatGPT assisted with review, interview questions, and this article. AI Assisted. Human Approved. Powered by NLP.",
+            "url": "https://dev.to/earlgreyhot1701d/my-first-ai-judge-interview-what-could-possibly-go-wrong-22el",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "gemini",
+                "intel",
+                "openai",
+                "programmation",
+                "python",
+                "web"
+            ],
+            "published_at": "2026-09-17T02:22:25+00:00",
+            "collected_at": "2026-09-17T02:43:52.116605+00:00"
+        },
+        {
+            "id": "243201a36715b66d0672d056143c7f47da7bedaec90cf0e8ba6e710ee233033f",
+            "title": "5 errors in 7 replies our agent wrote about itself, and the number that lives only in our own headline",
+            "description": "Seven replies our agent had drafted about its own system went to an independent reviewer before sending. Five of them contained a factual error. The one error a machine could plausibly catch was a number that appears in one of our own headlines and in no article body we have ever written. The first version of the check we built for it passed that draft. On 2026-09-10, the agent that runs our shop drafted seven outbound replies. Each one carried at least one claim about our own system: a measured token count, a schedule drift in hours, what one of our health checks compares, whether a scheduled job had missed a firing. Sending is gated on a tone review by a different model, and that reviewer does not just score tone — for every specific in a draft, it opens the file the specific came from. It came back with five errors, spread across five of the seven drafts. A schedule drift quoted as 76 hours, when no article body we have written contains 76. A description of a health check that compares a planned time against a projected posting time. At the time of writing it compared the planned time against the clock. We built the two-clock version afterwards, in the same session, because the reviewer's finding was correct and worth having. A claim that a scheduled job had fired less often than it declared — contradicted by the body of our own article about that job, which reports the firings were complete on every day but one. A claim that we keep no recorded evidence to inspect after the fact, contradicted by the two directories of JSONL ledgers we append to on every run. A token constant, 54,154 per subagent spawn, quoted without the measurement condition that makes it mean anything: a probe that calls no tools and reads no files, on our repository, with our instruction files. None of these are claims about the outside world. Every one is a claim about us. We already had a gate for the outside: a CLI that registers an external claim against the URL it was verified from, and a commit gate that refuses to ship a product mentioning a setting name nobody registered. Claims about ourselves had no gate at all, for the reason that sounds like a reason: we are the source. The number that lives only in a headline We published an article that morning titled \"Nothing failed for twelve days while our post schedule drifted 76 hours.\" Its first sentence reads: the label on the front of our post queue drifted from 24 hours behind reality to 74. The headline is not a lie. Drift grows, so at some instant it was 76, and at another it was 74. The incident record written during the same event carries three more readings again, because it sampled at three moments. What the headline lacks is a sentence that pins its number to a measurement. Titles round, and they freeze one instant with no clause saying which. That matters because of where a later draft reaches. When an agent writes a reply about its own past work, the most memorable phrasing it has produced about that work is the headline. It is also the least sourced thing it has produced about that work. So the check to build is narrow, and mechanical: does this draft cite a number that appears in a title of ours and in no body of ours? The first version passed the draft it was built to catch The corpus for the first version was our article titles, our article bodies, and every ledger in state/ . The reasoning felt sound at the time: ledgers are where our measurements live, so a number found in one is a sourced number. Run against the 76-hour draft, it returned {\"checked\":2,\"violations\":[]} . 76 appears in 46 of our 74 state ledgers, 1,343 times in total. Page view counts. Follower gaps. Theme scores. Millisecond fractions inside ISO timestamps. Substrings of hex comment IDs. Two digits are extremely cheap, and a ledger is mostly digits. Two mitigations followed, and both felt like the fix: Strip opaque tokens before matching — http(s):// URLs, at:// URIs, DIDs, and any long run of hex or base32. A number inside an identifier is not a measurement. Require the number to be a whole token rather than a substring, with (?<![\\w.,])76(?![\\w.,]) , so that 1,760 and 76.4 stop counting as 76. Both were worth keeping. Neither was the bug. After both, a page-view count of 76 is still a legitimate, whole-token, non-opaque 76, sitting in a ledger, saying nothing whatsoever about hours of schedule drift. The bug was the corpus. Dropping state/ entirely — leaving titles and bodies — made the check report the violation on the first run, naming the title it came from. Precision comes from the corpus, not the matcher The general form is worth stating, because the pull is toward the opposite. When a check under-fires you add matching rules; when it over-fires you add exclusions. Both feel like progress on the matcher. But for a check whose whole job is \"is this claim supported anywhere,\" adding more of your own text always increases recall of coincidence, and coincidence is indistinguishable from support once the text is in the pile. Write down the sentence the check has to decide, and then admit only the text that can decide it. Ours: no prose we have written supports this number. Bodies decide that. Titles are the accused, so they belong in the corpus as the thing to point at. Ledgers cannot decide it at all — a ledger row is a measurement of something, and the something lives in a field name, not in a sentence a reader could have read. The two article bodies of ours that do contain the characters 76 are a nice illustration of what the token rules are for: a timestamp ending .776Z , a comment ID beginning 6a976cb , and an image filename czivjmmthia76yxgr8ku.png . Those are exactly the cases the opaque-token stripping removes, and after removal both bodies correctly contain no 76 at all. Where it runs The check runs inside both reply-sending CLIs, over every plan in the batch, before any network call. If one draft in a batch of eight cites an unsupported number, the batch throws whole — we never finish a run having sent three replies and blocked five, with no record of which drafts were which. That is the same shape as the other pre-send gates in that path: approval status, tone verdict, thread freshness. Validate everything, then act. It is also a standalone command, so a draft can be checked while it is being written rather than at the moment of sending. Catching it at send is the safety net. Catching it at drafting is the point. What it does not catch Four of the five errors. It has nothing to say about \"the health check compares a projection against the label\" or \"the cron fired less often than it declared.\" Those are claims about mechanism, and deciding them means reading an implementation or a workflow's own firing record and understanding what it says. A reader is the instrument for that, and an independent one stays the gate. What the check covers is narrower and still worth having, because it is the failure mode with the least friction against it: the agent reaches for a number it remembers about itself, and the most memorable place it ever read that number was its own headline. A headline is the one piece of our writing that is guaranteed to have been optimized for something other than accuracy. We did not change the published title. The number in it was true at some instant and no sentence we wrote pins the instant, which is exactly the state of affairs the check now refuses to let a reply inherit. Rulestack sells rules files, skills, and hooks for Claude Code and its neighbors, at rulestack.gumroad.com . Every gate described here runs on the shop's own repository before the shop is allowed to talk about itself. Follow-ups, including what the independent reviewer catches that the machine cannot, are posted from @ai-shop.bsky.social .",
+            "url": "https://dev.to/rulestack/5-errors-in-7-replies-our-agent-wrote-about-itself-and-the-number-that-lives-only-in-our-own-596a",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "anthropic",
+                "developpement",
+                "git",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-17T02:17:00+00:00",
+            "collected_at": "2026-09-17T02:43:52.117791+00:00"
+        },
+        {
+            "id": "36027e9c0cbadecaa721644051e2daf7ec6916382b9fc127a07888f980641585",
+            "title": "There’s a serious security fix hiding in Google’s September Pixel update",
+            "description": "Google has acknowledged that hackers may have already exploited this Pixel security vulnerability.",
+            "url": "https://www.androidauthority.com/google-pixel-zero-click-vulnerability-september-security-patch-3712214/",
+            "source": "Android Authority",
+            "category": "cybersecurite",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-09-17T02:15:08+00:00",
+            "collected_at": "2026-09-17T02:44:00.435438+00:00"
+        },
+        {
+            "id": "728ac47b4c58a962821b1905babe1f5e1f42e32575094a0d363b838fcf35a2f2",
+            "title": "The 88% Agent Production Death Rate: Why Multi-Step Loops Cost 5–40 More",
+            "description": "Last month, an enterprise engineering team stress-tested an automated reconciliation pipeline. In demo sandboxes, individual LLM steps boasted a 90%+ pass rate. On paper, the API cost was budgeted at roughly $180/month. Three weeks into production, the actual cloud bill blew past $1,300, and more than 80% of multi-step runs stalled or threw unhandled errors. They aren't alone. Industry data shows roughly 88% of autonomous multi-step agent projects stall or fail to reach stable production . The root cause isn't that frontier models are dumb. It's a brutal law of sequential math paired with unpruned context compounding that no provider puts on their pricing calculator. 1. The Brutal Sequential Failure Math In a single-turn chatbot or direct prompt, a 90% accuracy rate feels stellar. In an autonomous multi-step execution loop executing five sequential tool calls, that same 90% per-step reliability guarantees system collapse: P(Success) = 0.90⁵ ≈ 59.0% Now layer in production realities: * JSON schema syntax drops * Upstream API connection timeouts * Schema hallucinations on parameters Even with an optimistic 82% single-step tool accuracy, a 5-step task completion rate falls off a cliff to ~36% . When an agent enters uncontrolled retries to recover from a minor validation failure, it doesn't just fail—it fails expensively. 2. The Real Killer: Quadratic Context Compounding Most teams calculate token budgets using naive linear arithmetic: Estimated Cost = (Average Tokens) × (Total Runs) × (Price per Token) In an unconstrained agent loop, that formula is fiction. An agent turn does not process a static token batch. Turn $N$ inherits the cumulative history of turns $1$ to $N-1$, including verbose tool call payloads, schema definitions, and internal chain-of-thought traces. What an unpruned 4-turn loop looks like: Turn 1 (Goal & Plan): ~6,400 input tokens. Turn 2 (Execute Tool 1): Injects raw database payload. Cumulative footprint grows to ~14,500 tokens. Turn 3 (Evaluate & Retry): Error trace injected. Context balloons to ~28,000 tokens. Turn 4 (Final Synthesis): Re-processing entire history. Billed tokens hit 60,000+ . A task that should have cost $0.002 in single-turn API fees quickly consumes $0.35 to $0.40+ per accepted task. 3. The 4 Guardrails the Surviving 12% Use Teams running reliable, budget-positive agents in production don't pray for smarter models. They treat LLM loops like brittle distributed state machines with four deterministic guardrails: Guardrail 1: Hierarchical Context Pruning Never feed raw tool outputs back into the primary agent prompt. Wrap tool executions with a local parser that strips formatting, limits array lengths to what was explicitly requested, and compresses verbose JSON into compact key-value maps. Guardrail 2: Semantic Circuit Breakers (Hard Turn Caps) Agents easily enter self-critique death loops—repeatedly tweaking CSS or markdown headers across 10 turns. Enforce a hard ceiling: if an agent fails to advance its state machine within 3 consecutive turns , forcibly terminate the loop and hand off the state snapshot to a human engineer. Guardrail 3: Tiered Model Routing Do not use expensive reasoning models (o1, Sonnet 3.7) to fetch database rows or parse CSV files. * Use small, ultra-fast models (Claude 3.5 Haiku, GPT-4o-mini, or local Ollama instances) for structured tool calling and schema mapping. * Reserve deep reasoning models strictly for top-level DAG planning and final anomaly reconciliation. Guardrail 4: Byte-Static Prompt Caching Modern prompt caching saves up to 80% of input costs, but only if the prompt prefix matches byte-for-byte. If you inject timestamps, dynamic user IDs, or unpruned conversation history into the top of your prompt, you invalidate the cache on every single turn. 4. Production Pattern: Isolated Tool Wrapper (Python) Here is a minimal, robust Python pattern to enforce strict turn budgets and sanitize payloads before context injection: python import time from typing import Any , Dict , List class AgentCircuitBreaker : def __init__ ( self , max_turns : int = 4 , max_payload_bytes : int = 2048 ): self . max_turns = max_turns self . max_payload_bytes = max_payload_bytes self . turn_count = 0 def execute_turn ( self , tool_func , * args , ** kwargs ) -> Dict [ str , Any ]: self . turn_count += 1 if self . turn_count > self . max_turns : raise TimeoutError ( f \" Circuit breaker tripped: exceeded { self . max_turns } turns. \" ) start_time = time . time () try : raw_result = tool_func ( * args , ** kwargs ) # Prune payload before feeding back to model context sanitized = self . _prune_payload ( raw_result ) return { \" status \" : \" success \" , \" turn \" : self . turn_count , \" latency_ms \" : round (( time . time () - start_time ) * 1000 , 2 ), \" data \" : sanitized } except Exception as e : return { \" status \" : \" error \" , \" turn \" : self . turn_count , \" error_summary \" : str ( e )[: 250 ] # Hard truncate error trace } def _prune_payload ( self , data : Any ) -> Any : str_repr = str ( data ) if len ( str_repr . encode ( ' utf-8 ' )) > self . max_payload_bytes : # Prevent megabyte-sized JSON payloads from polluting context return f \" { str_repr [ : self . max_payload_bytes ] } ... [TRUNCATED] \" return data Summary & Next Steps Building production-ready agents is an exercise in defensive systems engineering, not prompt engineering. If you don't cap your loops, isolate your contexts, and measure your cost-per-accepted-task, the math will eventually catch up with your cloud invoice. • For the mathematical compounding proof, OpenTelemetry tracing patterns, and our interactive multi-turn token compounding calculator, read the full deep-dive on AgenticsPulse https://agenticspulse.com/posts/ai-agent-production-failure-cost-explosion-guide.html .",
+            "url": "https://dev.to/kaizen79/the-88-agent-production-death-rate-why-multi-step-loops-cost-5-40x-more-3lj2",
+            "source": "DEV Community",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "anthropic",
+                "developpement",
+                "llm",
+                "programmation",
+                "python",
+                "web"
+            ],
+            "published_at": "2026-09-17T02:14:23+00:00",
+            "collected_at": "2026-09-17T02:43:52.118608+00:00"
+        },
+        {
+            "id": "854de1b55eda9efe738ba5f77e76304eafb4816c66dd71be77cbaf2358b774fc",
+            "title": "What If Your Terminal Had an Infinite Canvas? Meet Fuse.",
+            "description": "Let’s be honest: every software project eventually grows a collection of messy, fragile shell scripts. You know the drill: A 200-line release script that occasionally breaks mid-execution. Juggling three terminal tabs to run migrations, build artifacts, bump versions, and deploy across different sub-projects. Forgetting a parameter or copy-pasting an API token into the wrong prompt. I wanted something that gave me the visual clarity of node-based automation tools (like Blender shader graphs or visual CI pipelines), but running 100% locally on my Mac, with zero cloud lock-in, and without an Electron app eating 1GB of RAM . So I built Fuse — an open-source, native visual command and workflow builder for macOS. VladB-evs / Fuse Visual command and workflow builder for macOS. Connect shell commands, scripts, APIs, Git operations, and logic into executable workflows. Fuse Visual Command & Workflow Builder for macOS Draw your terminal commands as connected blocks on an infinite canvas. Orchestrate complex shell scripts, APIs, git workflows, and automated pipelines with real-time streaming output, smart variables, and Apple on-device intelligence Key Features • Quick Start • Block Catalog • Variables & Flow • Shortcuts • Architecture (the actual image of the worlflow used for this app) ⚡️ Key Features 🎨 Fluid Canvas Orchestration — Built for speed. Add blocks with a keystroke, drag wires between ports, and let frames auto-resize around their contents. 🦀 Native Rust Performance — Zero Electron bloat. Powered by Tauri 2 and Tokio async DAG walk. Sub-50MB memory footprint with instant launch times. 🧠 Apple On-Device Intelligence — Analyze git diffs locally using on-device semantic summaries to generate conventional commit messages in milliseconds. 📁 Repository & Folder Frames — Group blocks inside folder frames. Every block inside… View on GitHub What is Fuse? Fuse lets you draw terminal commands, scripts, and API calls as connected nodes on an infinite canvas. You connect blocks with wires, pass variables downstream, set up conditionals, and watch real-time streaming ANSI terminal outputs as your DAG (Directed Acyclic Graph) executes. Why Not Just Run Shell Scripts? Here is what makes workflow graphs in Fuse fundamentally different from chaining && in a terminal: 1. Multi-Repo \"Folder Frames\" Working on a monorepo or separate client/server repositories? You can drop a Folder Frame on the canvas and bind it to a local directory. Any block placed inside that frame automatically executes within that directory. You can coordinate your backend, frontend, and Docker setups on a single screen. 2. Smart Variable Piping (Without Escaping Nightmares) Outputs from upstream blocks are automatically captured and bound into your workflow context: Upstream: git rev-parse --short HEAD -> {{sha}} Upstream: Semantic version bumper -> {{next_version}} Downstream: Use them in curl payloads, shell commands, or commit messages: git commit -m \"chore(release): bump to {{next_version}}\" git tag \"{{next_version}}\" Fuse handles shell-safe escaping under the hood so spaces, quotes, and multiline inputs won't break your commands. 3. Human-in-the-Loop Controls Workflows shouldn't always be a blind \"run and pray\": Confirm : Pauses execution and asks for approval before critical actions (like git push --tags or a production deploy). Ask : Prompts you mid-run for a one-time value or secret token (with password masking). Choose & If (Condition) : Branch your execution paths dynamically based on exit codes or interactive user selections (e.g. [Deploy Staging] vs [Deploy Production] ). 4. The \"Laser Slicer\" (Because UX Matters) Instead of meticulously clicking wires to delete them, hold Ctrl and slice your cursor across connections or nodes like a laser blade to sever them instantly. 5. Native Rust Performance (Sub-50MB RAM) Fuse is built on Tauri 2 and Rust with Tokio async processes. It starts up instantaneously, doesn't spin up heavy Chromium browser instances per window, and uses virtually no background idle resources. The Block Catalog Fuse comes with a modular set of blocks you can place with a single keypress ( Tab or A ): Category Blocks Execution Command (shell), Script (multi-line Python/Node/Bash), HTTP Request (REST calls) Git & Release Bump Version (SemVer major/minor/patch), Git Presets (Init, Rebase, Tag, Push) Data & Files Capture (stdout to variable), Set Variable , Read File , Write File , Ask (user input) Flow & Logic If (Condition) , Choose , Confirm , Wait (delay or healthcheck polling), Frame Tech Stack Under the hood, Fuse is built with modern web and systems tech: Frontend: React 19, TypeScript, @xyflow/react (React Flow), Tailwind CSS v4, Lucide Icons. Backend / Desktop Shell: Tauri 2 + Rust. Runtime: Tokio asynchronous process groups, streaming ANSI terminal output with 256-color support. Try It Out! If you are on macOS (Apple Silicon or Intel), you can grab the pre-built .dmg directly from GitHub Releases: Download the latest release from GitHub Releases . Open the .dmg and drag Fuse.app into your Applications folder. (Note: As an open-source release without an Apple Developer certificate, if Gatekeeper gives you a prompt, run xattr -cr /Applications/Fuse.app or right-click the app and choose **Open ). Or Build from Source: git clone https://github.com/VladB-evs/Fuse.git cd Fuse npm install npm run tauri dev I’d Love Your Feedback! Fuse is completely open source under the MIT License . ⚠️ A Quick Note: Early Beta & Use at Your Own Risk Because Fuse executes real shell commands, scripts, and file operations directly on your local system with your user permissions: This is an early active beta (v0.1.x) : Expect bugs, UI rough edges, and evolving features as the project matures. Use at your own risk : Always double-check your connections and test commands (especially destructive operations like rm , file writes, or git resets) on test repositories or dummy files first. Back up your work : Make sure critical code is committed and pushed before running new automated pipelines. Your bug reports and early feedback during this phase are hugely appreciated and will directly help shape the app!",
+            "url": "https://dev.to/vladbevs/what-if-your-terminal-had-an-infinite-canvas-meet-fuse-b1i",
+            "source": "DEV Community",
+            "category": "devops",
+            "tags": [
+                "developpement",
+                "docker",
+                "git",
+                "intel",
+                "macos",
+                "programmation",
+                "python",
+                "rust",
+                "typescript",
+                "web"
+            ],
+            "published_at": "2026-09-17T02:09:44+00:00",
+            "collected_at": "2026-09-17T02:43:52.119537+00:00"
+        },
+        {
+            "id": "86f9acf8c33cd3d41ddd7db4437c3cc8943d31931888f0785c32efef63607d6c",
+            "title": "Modbus and S7 on the Public Internet: 202,686 Reachable Industrial Ports and What They Actually Expose",
+            "description": "Modbus and S7 on the Public Internet: 202,686 Reachable Industrial Ports and What They Actually Expose Two ZoomEye queries executed on 2026-09-16 return 40,917 assets on port 502 and 161,769 assets on port 102. Port 502 carries Modbus TCP; port 102 carries Siemens S7 communication. Together they represent 202,686 reachable endpoints on two protocols that were designed for isolated industrial networks and that carry no authentication of their own. The problem Modbus TCP and S7 predate the assumption that their network would ever be hostile. Neither protocol includes authentication, authorization or encryption in its base specification. A device that accepts a Modbus write to a coil register will perform that write for any host that can reach the port, regardless of who sent it. There is no credential to steal and no session to hijack, because there is no session in the security sense. Reachability is control. How the measurement was taken The figures come from two ZoomEye queries executed on 2026-09-16: Search dork: port=\"502\" — Result: 40,917 matching assets Search dork: port=\"102\" — Result: 161,769 matching assets These are port-based queries, which is a deliberate limitation. ZoomEye cannot confirm from the outside that a service on port 502 is a genuine Modbus device rather than another application using the port, and it cannot determine whether the device is a production controller, a lab unit, a simulator or a honeypot. The counts measure reachable ports associated with industrial protocols, not confirmed industrial control systems. ## Why port counts understate and overstate at the same time Two corrections are needed before using these numbers. They may overstate the industrial population. Port 502 and port 102 are not reserved exclusively for their nominal protocols. A honeypot network, a research scanner or a misconfigured service can occupy the port. Some of the 202,686 endpoints are certainly not industrial devices. They understate the actual exposure. Many industrial devices are reachable through other ports: web-based HMI interfaces on 80 or 443, vendor-specific management ports, and remote access services on the same host. A device that does not answer on 502 may still be fully controllable through a web interface. Port-based measurement captures one slice of a larger problem. The honest reading is that the counts establish scale for a known class of exposure while being imprecise about the exact population. ## What an attacker can do with reachability The consequences of reaching an unauthenticated industrial protocol depend on the device, but the categories are consistent: Process manipulation. Writing to coils or holding registers can change setpoints, open or close valves, and alter the state of physical equipment, with safety implications that extend beyond data. Reconnaissance. Reading registers and device identification reveals the process layout, the equipment vendor and the firmware version, which informs further targeting. Denial of service. Malformed or rapid requests can disrupt a controller that was never designed to handle hostile traffic, halting a process without any need to understand it. Pivot. An exposed controller or gateway is frequently dual-homed between the plant network and the corporate network, making it a bridge between the two. ## Practical next steps for defenders Enumerate before you argue. Query your own address space for ports 502 and 102, and separately for web interfaces on industrial devices. Compare the result with the asset inventory. Devices that appear in the scan but not in the inventory are the finding. Remove direct internet exposure. Industrial protocols should not be reachable from the public internet. Where remote access is required, it should go through an authenticated broker or a segmented gateway, not a port forward. Use a firewall that understands the protocol. A stateful firewall that permits only the specific function codes and register ranges an application needs is a stronger control than a port-level rule. Where that is not available, restrict source addresses to the specific engineering hosts. Segment the plant network from the corporate network. A dual-homed gateway defeats segmentation. Enforce the boundary at the gateway and monitor traffic crossing it. Log and baseline the protocol. Modbus and S7 traffic is highly regular in a stable process. Deviations, new function codes and requests from unexpected source addresses are detectable and are worth alerting on. Plan for the device you cannot patch. Many controllers cannot be updated or cannot be updated without a maintenance window. For those, network controls are the only available mitigation, which makes the segmentation work the priority. ## Limitations Port-based queries cannot distinguish a production controller from a simulator, a honeypot or an unrelated service that happens to use the port. They also cannot see devices reachable through web interfaces or vendor management ports, so the true exposure is larger than the counts suggest in some respects and smaller in others. The 202,686 figure should be read as evidence that unauthenticated industrial protocols remain reachable from the public internet at scale, and that any organisation with industrial infrastructure should verify its own exposure rather than assume a firewall rule from a previous project is still in place. ## References CISA, \"Guide to Operational Technology (OT) Security\": https://www.cisa.gov/resources-tools/resources/guide-operational-technology-ot-security NIST SP 800-82 Rev. 3, Guide to Operational Technology Security: https://csrc.nist.gov/pubs/sp/800/82/r3/final CISA advisories on internet-exposed industrial control systems: https://www.cisa.gov/news-events/cybersecurity-advisories ZoomEye search interface: https://www.zoomeye.ai/",
+            "url": "https://dev.to/onaeiuspkz/modbus-and-s7-on-the-public-internet-202686-reachable-industrial-ports-and-what-they-actually-1ccm",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-17T02:06:27+00:00",
+            "collected_at": "2026-09-17T02:43:52.120445+00:00"
+        },
+        {
+            "id": "eda6ea1bf0a1d876c8bd6dfb1681ea7a1537d3a72a5be0dbb43d776c57523fc8",
+            "title": "Building a Lightweight AI Agent in Go: Baize's Architecture and Trade-offs",
+            "description": "Preface Baize is a \"sidecar\" AI assistant runtime: a single process that sits beside services you already run, turns API documentation into tools the assistant can call, and pauses important writes until a person approves them. Stop it and it leaves almost nothing behind. One sentence positioning: it's a runtime, not a framework. That positioning drives every architecture decision below. 1. Why Go Single binary, zero dependencies The core requirement of sidecar deployment is \"one process, copy it over, run it.\" A Go binary needs no interpreter, no dependency installation, no virtualenv on the target machine. For an assistant meant to live in enterprise environments, that's the lowest-cost delivery form. Goroutine concurrency One assistant process serves multiple entry points at once: the web console, signed alert/ticket ingress, and IM channels. Goroutines make \"one process handling many sessions concurrently\" straightforward — and parallel tool calls later become almost free. Cross-compilation Enterprise environments run everything: Windows, Linux, macOS, ARM. A single GOOS=linux GOARCH=arm64 go build produces a binary for the target platform, with no toolchain setup on the destination machine. Static typing and tool contracts Tool input schemas come from OpenAPI documents; mapping them onto Go's strong types catches many errors at compile time. For a long-running daemon, that saves a lot of operational pain. 2. Architecture Overview A clean three-layer structure: core loop → tool router → executors . Users / Channels ──► Agent Core Loop (think → pick tool → run → report) │ ▼ Tool Router (Registry) │ ┌────────────────┼────────────────┐ OpenAPI connector HTTP plugin MCP connector └────────────────┼────────────────┘ ▼ Invoker closures (registered in Registry) │ [ HITL approval gate ] │ ┌─────────────┴─────────────┐ Direct execution HTTP callback executor (plugin / proxy) (callback to your side) Core loop ( internal/run ): LLM thinks → picks a tool → executes → reports. The event stream ( llm.thinking , llm.tool_call , tool.result ) is persisted, so the console can follow along in real time. Tool router ( internal/tool ): a mutex-protected map that registers not functions but \"tool contracts + invoker closures\". Executors ( internal/connector ): tools enter through three sources — OpenAPI docs, HTTP plugins, MCP tool servers — plus a \"callback execution\" mode that hands execution back to your side. 3. Key Design Decisions Why HTTP callback instead of a plugin protocol This is Baize's most important trade-off. The problem with plugin protocols : in-process plugins (Go plugins, shared libraries, language-binding SDKs) require the plugin to compile with the host process — language, version, and ABI must all align. Most enterprise systems aren't written in Go: legacy systems, Java/.NET/Python services can't load an in-process plugin at all. And even when they could, upgrading a plugin means restarting the process — \"sidecar in, clean out\" is gone. What Baize does instead : it doesn't execute the tool itself; it POSTs the invocation to your own endpoint: { \"tool\" : \"create_ticket\" , \"arguments\" : { ... }, \"run_id\" : \"run_xxx\" , \"agent_id\" : \"agent_xxx\" , \"idempotency_key\" : \"uuid-xxx\" , \"callback_urls\" : { \"event\" : \"https://your-service/baize-events\" } } Your side executes it and returns the result. Benefits: language-agnostic, process-isolated, auditable; idempotency_key makes retries safe (no duplicate execution); callback_urls lets your side keep driving follow-up actions. The cost : one extra network round-trip, the callback endpoint must be reachable, and to prevent forged callbacks you need signed requests (Baize uses callback signing with a TTL against replay). Dynamic tool registration and discovery The registry ( tool.Registry ) is the core data structure: a sync.RWMutex guarding a map, with runtime register/unregister and per-connector bulk unregister — adding a tool or disabling a connector never requires a restart. Three tool sources share one registration path: OpenAPI docs : import Swagger/OpenAPI/Postman-style docs, each operation becomes a tool; HTTP plugins : a small companion service declares \"what tools exist and how to invoke them\"; MCP tool servers : connect to external tool ecosystems as an MCP client. Security policy is baked into each entry at registration time: require_approval (needs a human), require_login (needs a session), security_schemes (which auth scheme to use). Security policy is decided at registration, not asked at execution time — this is the precondition for letting the assistant actually act. Discovery is trivial: Registry.List() / Registry.Specs() feed the model's tool list, visible live in the console. Graceful degradation on failure Failures are the norm in AI agents, so degradation design matters more than the happy path: Timeout guardrail : every tool invocation is bound to context.WithTimeout (default 60s, configurable); Failure is content : Invoker returns (content, isError, err) — err is an infrastructure failure (timeout, network), isError is a business-side failure. Both flow back to the model as structured content, so the model can retry, switch tools, or explain to the user — instead of crashing the whole session; Approval rejection is not a crash : when a human rejects a write, the run settles into an explicit \"rejected\" terminal state with a trail, no panic; Everything is observable : the llm.tool_call → tool.result event stream is persisted, so any problem can be traced step by step; Context compaction : long sessions get rolling summaries so quality doesn't degrade as the thread grows. 4. Go vs Python / Node.js for Agent Scenarios Let's be honest first: Python is the best choice in the AI/Agent ecosystem . LangChain, LlamaIndex and most reference implementations live there. If your goal is fast experimentation and deep reuse of the LLM ecosystem, Python has no rival. Baize chose Go because its positioning is different: Dimension Go Python Node.js Deployment Single binary, zero deps Interpreter + deps/venv Node runtime + node_modules Resource footprint Low; one resident process is cheap Higher; resident processes need care Medium Concurrency Native goroutines GIL-limited; multi-process/async Event loop Type safety Static, compile-time checks Dynamic, found at runtime Dynamic / TypeScript LLM ecosystem Newer, catching up fast Richest Rich Cross-platform Cross-compile to all platforms Needs interpreter on target Needs Node on target The conclusion isn't \"Go is better than Python\" — it's positioning decides the language : Goal: framework / fast experimentation → Python; Goal: sidecar, resident, one-command deployment to enterprise environments, running on modest hardware for a long time → Go's advantages in deployment and resource usage are hard to replace. 5. Core Code Snippets (Go) All snippets are from the project source, lightly trimmed. Each comes with one line on what problem it solves. 1. A tool = contract + invoker closure Modeling a \"tool\" as \"a contract the model sees (Spec) + an invoker closure injected by the connector\" fully decouples routing from execution: type Invoker func ( ctx context . Context , args map [ string ] any ) ( content map [ string ] any , isError bool , err error ) type Meta struct { Spec llm . ToolSpec ConnectorID string Method string Path string RequireLogin bool SecuritySchemes [] string } 2. Dynamic registration with policy baked in require_approval / require_login are written into the entry at registration; the tool list is \"hot\" — adding/removing connectors never requires a restart: func ( r * Registry ) RegisterMeta ( meta Meta , inv Invoker , requireApproval bool ) { r . mu . Lock () defer r . mu . Unlock () r . tools [ meta . Spec . Name ] = entry { spec : meta . Spec , invoker : inv , requireApproval : requireApproval , requireLogin : meta . RequireLogin , connectorID : meta . ConnectorID , method : meta . Method , path : meta . Path , } } 3. HTTP callback executor Hands execution back to your side; the idempotency key makes network retries safe: payload := map [ string ] any { \"tool\" : tool , \"arguments\" : args , \"run_id\" : meta . RunID , \"agent_id\" : meta . AgentID , \"idempotency_key\" : meta . IdempotencyKey , } if strings . TrimSpace ( meta . CallbackEventURL ) != \"\" { payload [ \"callback_urls\" ] = map [ string ] any { \"event\" : meta . CallbackEventURL , } } rawPayload , _ := json . Marshal ( payload ) req , _ := http . NewRequestWithContext ( ctx , http . MethodPost , c . URL , bytes . NewReader ( rawPayload )) 4. Writes automatically enter the approval gate Non-GET/HEAD/OPTIONS operations are automatically flagged \"needs approval\" at registration, and only run after a human clicks approve/reject in the console: needApproval := t . RequireApproval if ctx . requireApprovalMutating && isMutatingMethod ( t . Method ) && t . Source == store . ToolSourceSpec { needApproval = true } 5. Timeouts and failure degradation A timeout guardrail plus \"failure is content\" semantics keeps one bad tool call from blowing up the whole session: toolCtx , toolCancel := context . WithTimeout ( ctx , e . toolTimeout ()) defer toolCancel () content , isError , invErr := e . Tools . Invoke ( toolCtx , payload . ToolName , payload . Arguments ) if invErr != nil { // Infrastructure failure (timeout/network): persist and close the round return e . finalizeFailedRun ( runID , invErr ) } // When isError is true, the failure flows back to the model as content; // the model decides whether to retry or explain. Closing Baize is still early. The trade-offs above are far from \"optimal\" — especially the approval UX, channel adapters, and executor extensibility. If you have real-world scenarios, I'd love to hear them. Repo: https://github.com/rebornace/baize (MIT) Issues: open a discussion with your scenario — I'll follow up.",
+            "url": "https://dev.to/rebornace/building-a-lightweight-ai-agent-in-go-baizes-architecture-and-trade-offs-4c0k",
+            "source": "DEV Community",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "csharp",
+                "developpement",
+                "git",
+                "ios",
+                "java",
+                "javascript",
+                "linux",
+                "llm",
+                "macos",
+                "programmation",
+                "python",
+                "typescript",
+                "web",
+                "windows"
+            ],
+            "published_at": "2026-09-17T02:06:02+00:00",
+            "collected_at": "2026-09-17T02:43:52.121722+00:00"
+        },
+        {
+            "id": "bc531701a785e4c50928141fe83ef97e006bf207943685e00da895590ca752e8",
+            "title": "I Shipped 4 Real AI-Agent Payment APIs on Base Mainnet. They Made $0.",
+            "description": "A build log of real mainnet incidents — facilitator hangs, a silent scanner bug, and why $0 external revenue turned out to be a market signal, not a bug.",
+            "url": "https://dev.to/novalyth/i-shipped-4-real-ai-agent-payment-apis-on-base-mainnet-they-made-0-5f24",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-17T02:04:38+00:00",
+            "collected_at": "2026-09-17T02:43:52.121806+00:00"
+        },
+        {
+            "id": "44cfbe60353a51829c8f90e3744e62bbcb451951b0f1943574cd374cc802ab5c",
+            "title": "Nintendo Store Adds Some New Exclusives For Switch Online Members (North America)",
+            "description": "A Zelda metal desktop display and Virtual Boy glasses case. The Nintendo Store has been updated this week in North America with some new \"exclusives\". These can be purchased with Platinum Points and are available to Switch Online members. Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/news/2026/09/nintendo-store-adds-some-new-exclusives-for-switch-online-members-north-america",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-09-17T02:00:00+00:00",
+            "collected_at": "2026-09-17T02:44:06.660887+00:00"
+        },
+        {
+            "id": "447e5b9b172eed2b8690e71ee4abc8c0eb632a75a37101aecf26c695c2f2a056",
+            "title": "I measured whether my coding agent follows its rules",
+            "description": "My agent made the same mistake four times in one conversation. It kept writing files through a shell heredoc, and the heredoc kept eating a backslash, so the file looked right and ran wrong. Three notes in its memory store described exactly this mistake, and all three had been retrieved and read. I went back through the transcript to make sure. Then it did it again. Work in this space gets filed under \"agent memory\", and most of the tooling is about retrieval: getting the right text in front of the model. That part mostly works. What I've spent the last few weeks measuring is whether the text changes what the model does, and so far the answer is much less than I expected. The fixes I tried also failed in ways that were easy to miss. Delivering the rule didn't make it stick My first theory was timing. Rules load at session start and decisions happen an hour later, so the fix should be to put the rule in front of the model at the moment it matters. I had already built that. A small core stayed loaded, and the detail lived in files behind pointers: \"before writing code, read this file.\" Then I measured it. Across 89 sessions, 81 reached a point where a pointer told the model to go read the file. It opened the file in 4 of them, or 4.9%. So I moved everything back to always-loaded, with every rule in context all the time. That same day, with all 59 of them sitting in front of the model, it broke them six times. Loading rules up front and fetching them on demand turned out to be two versions of the same thing. Neither one could stop an action once the model ignored the rule. Stopping it takes hooks that the agent host runs at two points, right before a tool call executes and when the model finishes a turn, where either one can refuse and make the model try again. The same pointer file behaved very differently in another agent host: it was opened in 109 of 144 sessions, 96 of them within the first three actions. That host reads the whole rules file at the start of every session anyway, so it never has to follow a trigger. How well a rule lands depends partly on host habits you don't control. Turning rules you can't check into rules you can A refusal needs something to match on. \"Don't write files through a heredoc\" has one, because the command contains << and a backslash. Plenty of rules have nothing like that. \"Verify before you say it's done\" happens inside the model, where nothing outside can see it. What worked was changing what the rule asks for. Instead of \"verify first\", the rule became: a message that claims something is done has to say what was checked, such as a test count, a command, or a file that was read. That part is visible, so a check at the end of the turn can refuse the message. This also changes what skipping costs. Skipping verification used to leave no trace. Now the only way past the check without doing the work is to write down evidence that doesn't exist, which is a much harder thing to do by accident. Checks fail silently, and in specific ways I added checks expecting that to be the end of it. Instead, every one of them turned out to have some way of not applying, without saying so, while the setup still looked armed. Five examples follow. The check only looked at the end of the turn A turn is usually: say something, call a tool, say something else. The person watching sees all of it, but the check read only the final message, so a false claim made before a tool call was out of reach of every rule. I found this when the agent told me something had never been tested. It had been tested the day before; that work had been summarised out of its context, and the agent took \"I can't see it\" to mean \"it didn't happen.\" A check written for exactly that sentence still couldn't have reached it. The same tool has a different name in each host One rule guarded the Bash tool. Another host calls its shell tool Shell . Names were compared exactly, so the rule never fired there, and nothing reported it. A cap meant for search also capped enforcement To keep things fast, only a limited number of rule files were read per turn. The limit was supposed to bound discovery, and it bounded checking as well. In one large test store, 500 armed rules came out as 12 live per turn. Saving a note changed where its fields lived When a note was saved, the memory store reformatted its metadata and nested the fields one level down. The check read top-level fields only. Those rules looked armed and passed lint, and they blocked nothing. Automatic tuning switched off a good rule I had logic that relaxed rules which fired too often. One rule fired 6 times and blocked all 6, and was switched off for two weeks, because a hit rate can't separate \"too broad\" from \"the agent keeps doing this.\" A rule in the second situation is doing its job. I removed the tuning. None of these raised an error, so from the outside each of them looked like a quiet day. Replaying history against the logs What catches this kind of failure is replaying history through the same matching code and comparing the result with what the checks logged at the time. Every night, replay the day's transcripts and reconcile. A hit the replay finds that the log doesn't have is a miss. The replay has to reuse the live check's code, since a replay with its own interpretation can disagree for reasons that tell you nothing. Some cases can't be told apart this way. A short quoted sentence that breaks a rule looks the same as a legitimate quotation, and I let quotations through, so for that case I count how often it happens instead of trying to decide. My tests passed anyway While I was building this, my suite passed 54 of 54, and four independent reviews each said not to ship. One of the things they reproduced was the documented install command silently skipping a whole step and reporting success anyway. Later, an acceptance script I'd written to confirm that \"every leftover file is named\" turned out to be skipping every file, because the temporary directory happened to sit under a path the filter excluded. It exited 0 having confirmed nothing, and a reviewer caught it, not me. A test suite written by the same person who wrote the code mostly checks what that person already expected. Memory costs something Retrieved context stays in the conversation and gets re-read on every later call until the conversation is compacted. When I measured a week of real sessions, retrieval was by far the largest token cost in the setup, and the checks were cheap by comparison. Two findings: A deduplication key included a per-prompt label, so a note already delivered got sent again whenever that label changed: 1,404 identical lines re-sent within a single stretch of conversation, a median of three prompts apart. Using a loose proxy (was the note's name mentioned later?), about 4% of delivered project notes and 7% of delivered reference notes got used. If you only count what gets delivered, adding more memory will always look free. What I'd tell someone building this When an agent breaks a rule, ask what should have stopped the action and whether it ran, before asking whether the rule was in context. Where you can't observe the act a rule cares about, require the sentence that reports it. Test every check end to end in every host you support, using an input it should refuse; until you've watched it fire, assume it's off. Replay history against your logs, because silent misses only show up in that comparison. Anything that gets summarised can lose facts about work already done, and the agent won't know. Measure what memory costs, and drop what gets delivered and never used. Disclosure: I build Epitype, an open-source memory governance layer for Claude Code and Codex, and every number above comes from building it. I've kept it out of the body on purpose, because these failure modes don't depend on which tool you use.",
+            "url": "https://dev.to/_41cda9e439997374d9a9f/i-measured-whether-my-coding-agent-follows-its-rules-3chi",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "anthropic",
+                "developpement",
+                "git",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-17T01:53:23+00:00",
+            "collected_at": "2026-09-17T02:43:52.122794+00:00"
+        },
+        {
+            "id": "f643d45277b6721fc86f3e75fd9bd8c48bf62d02551edf0dd867188582c76848",
+            "title": "I Deployed My First AgentCore Harness and Asked It About Production",
+            "description": "My first CloudOps agent gave me the right answer by refusing to answer. I asked: Is production healthy? The agent said it could not verify the current state because it had no access to live infrastructure, deployment data, monitoring systems, or production environments. That was not a disappointing first result. It was the boundary I wanted to prove. This was Stage 1 of a larger project. The end goal is a small CloudOps agent that can answer the same question by calling a Lambda that only reads deployment status. Before adding that tool, I wanted to understand what Amazon Bedrock AgentCore gives me when the agent has only a model, a prompt, and a managed agent loop. Why I Started with Harness The AgentCore CLI currently offers two paths. I can bring an agent loop written with a framework such as Strands, or I can use a managed Harness. With the Harness, I declare the model, prompt, tools, and memory in configuration while AgentCore runs the loop. I chose Harness because I wanted the first experiment to isolate the managed platform. No custom orchestration code. No Lambda. No Gateway. No durable memory. The architecture was deliberately small: User | | prompt v AgentCore managed Harness | CloudOps system prompt | memory disabled | no infrastructure tools configured by me v Amazon Nova Micro | v CloudWatch logs, metrics, and traces AWS describes the managed Harness as the path where AgentCore runs the agent loop from configuration. The alternative gives the developer control of the loop in code. The distinction sounds simple in documentation. Deploying both the configuration and its infrastructure made it concrete. The Boundary Was the Product I named the Harness CloudOpsHarness and gave it a narrow system prompt: You are a CloudOps assistant in an early learning stage. You currently have no access to live infrastructure, deployment data, monitoring systems, or production environments. Never claim that an environment is healthy or unhealthy without current tool evidence. Do not imply that you can deploy, roll back, restart, or modify resources. Those capabilities have not been provided. Memory was disabled, and I configured no external tools. The First Deployment Failed Before It Reached AWS My first Harness name was descriptive enough to become a problem. The physical name generated by the CLI combined the project and Harness names. That composed value exceeded the Harness name limit, so CDK synthesis failed. agentcore validate still said the project was valid because the local schema was valid, the failure appeared when the infrastructure was synthesized. Shortening the resource name to CloudOpsHarness fixed it. That gave me the first useful lesson: a friendly logical name can become a longer physical name after a deployment system adds context. Local validation and infrastructure synthesis are different checks. The next dry run reached another boundary: ✓ Synthesize CloudFormation ✗ Check bootstrap status AWS environment needs bootstrapping. I reran the dry run with permission to bootstrap the environment: agentcore validate agentcore deploy --dry-run --yes This time the dry run completed and the stack was ready to deploy. Model Access Was a Separate Failure Domain The initial configuration used an Anthropic model. The Harness deployed, began producing the expected refusal, and then the Bedrock streaming call failed because the account had not submitted the details required for Anthropic model access. That was not an AgentCore hosting failure. It was a prerequisite for model access. For this learning stage, I changed the model to Amazon Nova Micro: { \"modelProvider\": \"bedrock\", \"modelId\": \"us.amazon.nova-micro-v1:0\", \"tools\": [], \"skills\": [], \"memory\": { \"enabled\": false } } The next deployment completed successfully. What agentcore dev Taught Me I expected a command named dev to mean “run only on my machine.” The managed Harness flow challenged that assumption. The command validated the project, synchronized CDK dependencies, built and synthesized the CDK project, checked AWS bootstrap and stack status, and persisted deployment state. The lesson was not that the command was wrong. The lesson was that names such as dev are not a security or cost boundary. I need to read the proposed actions and inspect status before assuming where something will run. The Tests I Ran Once the Harness was running with Nova, I tested the questions that mattered for this stage. 1. Can it admit that it does not know? When I asked whether production was healthy, it explained that it could not verify the environment without current operational evidence. It suggested signals such as application metrics, logs, health checks, database performance, and user feedback. That response passed the test. It did not turn general CloudOps knowledge into a fabricated observation. 2. Can a user talk it into a capability it does not have? I tried to override the prompt and also requested a production rollback. Neither test gave the assistant new infrastructure access. 3. Does a session behave like memory? A follow up in the same session recognized that I had asked about production health before. A new session provided the comparison. That did not mean I had added AgentCore Memory. AgentCore Runtime sessions can preserve ephemeral context across invocations in one session. AgentCore Memory is the separate capability intended for structured information that must persist beyond that lifecycle. That distinction is going to matter later. A remembered user preference may be useful. A remembered statement that production was healthy can become dangerously stale. Finding the Trace Was Its Own Experiment The Harness worked, but these commands did not: agentcore traces list agentcore logs --since 30m Both returned: No runtimes defined in agentcore.json The reason was visible in the project structure. The managed resource was declared under harnesses , while those CLI commands looked for configured runtimes . The Harness still had a backing Runtime log group in CloudWatch. it simply was not discovered through that configuration path. I went to CloudWatch Logs directly and found standard Runtime logs plus OpenTelemetry output. At first, the trace exporter reported HTTP 400. CloudWatch Transaction Search had not finished enabling span ingestion. AWS documents Transaction Search as a setup that each account needs once to view AgentCore spans and traces. After its status changed to enabled, I invoked the Harness again and opened the trace in CloudWatch. The complete path was visible: The model span reported: CloudWatch displayed the cost as $0.000 . I treat that as a rounded console value for one small invocation, not proof that the call was free. The same token attributes appeared on several parent spans. Those spans describe one nested request path, not several model calls, so I did not add the repeated numbers together. AWS's AgentCore Observability guide says agents hosted on Runtime receive automatic OpenTelemetry instrumentation through the CLI deployment path. Seeing the root invocation, agent loop, event loop cycle, and model call in one timeline made that statement much more useful than reading it alone. Cleaning Up Without Deleting the Learning After the tests, I removed the AWS Harness and deployed that deletion. I then restored the local Harness files so the experiment remained reproducible. The final check was: AgentCore Status (target: default, us-east-2) Harnesses CloudOpsHarness: Local only That status is stronger evidence than a successful deletion command by itself. It says the CLI can still see the local definition but no deployed Harness for the selected target. The CDK bootstrap stack and CloudWatch evidence are separate resources with separate lifecycles. Removing the Harness does not mean the AWS account has returned to a completely untouched state. Conclusion The biggest lesson is that an agent can be correctly deployed and still be unable to answer the business question. That is not a prompt problem. It is an architecture problem. References Get started with Amazon Bedrock AgentCore AgentCore Harness Use isolated sessions for agents Get started with AgentCore Observability View AgentCore observability data",
+            "url": "https://dev.to/lbagga/i-deployed-my-first-agentcore-harness-and-asked-it-about-production-41mi",
+            "source": "DEV Community",
+            "category": "cloud",
+            "tags": [
+                "anthropic",
+                "aws",
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-17T01:49:20+00:00",
+            "collected_at": "2026-09-17T02:43:52.123852+00:00"
+        },
+        {
+            "id": "0b5673dc8038ba5402b588d3953c5925e9afd1ec33e1bcb474dd34e7fc67e12b",
+            "title": "Ripple Says XRP Is Not a Security, Recognized as Digital Commodity",
+            "description": "Ripple Chief Legal Officer Stuart Alderoty says XRP’s U.S. regulatory status remains clear following years of litigation and federal agency guidance. He pointed to the 2023 federal court ruling and a March SEC-CFTC interpretation naming XRP a digital commodity. Alderoty Says Ripple and XRP Stand on Settled Ground XRP’s legal and regulatory position remains intact, […]",
+            "url": "https://news.bitcoin.com/regulation-and-legal/ripple-says-xrp-is-not-a-security-recognized-as-digital-commodity/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto",
+                "git"
+            ],
+            "published_at": "2026-09-17T01:45:34+00:00",
+            "collected_at": "2026-09-17T02:44:08.134446+00:00"
+        },
+        {
+            "id": "082d78251ef8204c1763904b0ccfcf1a17a13a70c5e8df2cbe335ab314fac671",
+            "title": "DeepSeek-v4.1 Flash: Pushing the Limits of KV Cache Compression",
+            "description": "Comments",
+            "url": "https://zartbot.github.io/blog/model_arch/dsv41flash_arch/en.html",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-17T01:39:47+00:00",
+            "collected_at": "2026-09-17T02:43:51.694212+00:00"
+        },
+        {
+            "id": "9923b3c6f43f1b42887ffb1b086ec0fecaa3b038da14555fa808a46acda80b14",
+            "title": "Tomodachi Life Appears To Be Getting A Switch Lite Bundle In Europe",
+            "description": "Life is full of surprises. The Switch 2 generation is now well underway, but it seems Nintendo isn't entirely done with the original Switch just yet. Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/news/2026/09/tomodachi-life-appears-to-be-getting-a-switch-lite-bundle-in-europe",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-09-17T01:15:00+00:00",
+            "collected_at": "2026-09-17T02:44:06.660970+00:00"
+        },
+        {
+            "id": "517b9f7844ff896de6f0481158b80000006be0e246333947d40c6c8e5ad3c8c4",
+            "title": "Snap tries to make the case again for its $2,200 smart glasses",
+            "description": "Snap unveiled new features for its smart glasses this week.",
+            "url": "https://techcrunch.com/2026/09/16/snap-tries-to-make-the-case-again-for-its-2200-smart-glasses/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-09-17T00:58:49+00:00",
+            "collected_at": "2026-09-17T02:43:49.860312+00:00"
+        },
+        {
+            "id": "d0ec90791a09bdb0de6693c11d8489ee4954382713ac4f4e72f78f55b50c2693",
+            "title": "The Attackers Who Deceived Revolut Now Demand 6,000 XMR",
+            "description": "The attackers claiming to be behind the Revolut breach have dropped the earlier bitcoin demand and are now asking for 6,000 XMR, roughly $3 million, to keep 680 customer files off the market. According to the hackers speaking exclusively with the Financial Times (FT), Revolut didn’t lose customer data because hackers cracked its servers. The […]",
+            "url": "https://news.bitcoin.com/crypto-news/the-attackers-who-deceived-revolut-now-demand-6000-xmr/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-17T00:44:54+00:00",
+            "collected_at": "2026-09-17T02:44:08.134568+00:00"
+        },
+        {
+            "id": "05d6635d4d2b474fb27c8e852887b3acdd3e0e01afee3a67f70d090ae49c0e5c",
+            "title": "Anthropic wants Claude to analyze your bank account and financial data",
+            "description": "Anthropic is testing a new personal finance feature called \"Claude Money\" that will allow you to connect your bank accounts directly to Claude and \"understand your money.\" [...]",
+            "url": "https://www.bleepingcomputer.com/news/artificial-intelligence/anthropic-wants-claude-to-analyze-your-bank-account-and-financial-data/",
+            "source": "BleepingComputer",
+            "category": "cybersecurite",
+            "tags": [
+                "anthropic",
+                "cybersecurite",
+                "malware",
+                "ransomware"
+            ],
+            "published_at": "2026-09-17T00:35:48+00:00",
+            "collected_at": "2026-09-17T02:43:48.448973+00:00"
+        },
+        {
+            "id": "5533ccad12316ede3561507f219641c725df02ee5c1e3de8fc04d9485e25b719",
+            "title": "The Return of Sail Power: Cargo Ships Are Turning Back to the Wind",
+            "description": "Comments",
+            "url": "https://gcaptain.com/the-return-of-sail-power-cargo-ships-are-turning-back-to-the-wind/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-17T00:28:33+00:00",
+            "collected_at": "2026-09-17T02:43:51.694040+00:00"
+        },
+        {
+            "id": "02ea023ead6b345ea5fcfff0d7460dd232ad388e6c48a2c40feacfa73131482b",
+            "title": "Migrating the GitHub Copilot runtime to Rust, using Copilot",
+            "description": "A rewrite this size wasn't affordable before agents. Here's what porting the Copilot agent runtime to 800,000 lines of production Rust actually took. The post Migrating the GitHub Copilot runtime to Rust, using Copilot appeared first on The GitHub Blog .",
+            "url": "https://github.blog/ai-and-ml/generative-ai/migrating-the-github-copilot-runtime-to-rust-using-copilot/",
+            "source": "GitHub Blog",
+            "category": "developpement",
+            "tags": [
+                "git",
+                "github",
+                "open-source",
+                "rust"
+            ],
+            "published_at": "2026-09-17T00:26:43+00:00",
+            "collected_at": "2026-09-17T02:43:50.999866+00:00"
+        },
+        {
+            "id": "5c2e404c700a2fd7ecb6411056f5604d9e240f285abadc09f04377e4d7e13ea2",
+            "title": "Zelda: Ocarina Of Time On Switch 2 Will Support VRR In Docked Mode",
+            "description": "According to Nintendo's store listing. Last week, Nintendo launched a major firmware update for the Switch 2 system, adding VRR output in TV Mode. Following this, there's now been an exciting discovery on Nintendo's official store page for the upcoming Switch 2 release, The Legend of Zelda: Ocarina of Time. Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/news/2026/09/zelda-ocarina-of-time-on-switch-2-will-support-vrr-in-docked-mode",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-09-17T00:15:00+00:00",
+            "collected_at": "2026-09-17T02:44:06.661068+00:00"
+        },
+        {
+            "id": "22bfee1956f4a34c0ef868f018acaf78ce524e520ed5e563904d088b82136ec3",
+            "title": "Amazon Corretto 27 is now generally available",
+            "description": "Amazon Corretto 27, a Feature Release (FR) version, is now available for download. Amazon Corretto is a no-cost, multi-platform, production-ready distribution of OpenJDK . You can download Corretto 27 for Linux, Windows, and macOS from our downloads page . Corretto 27 will be supported through April 2027. Noticeable features: G1 as the Default Garbage Collector in All Environments - Makes G1 the default garbage collector across all environments, delivering more consistent performance and predictable pause times regardless of where your application runs (JEP 523) Post-Quantum Hybrid Key Exchange for TLS 1.3 - Adds protection against future quantum computing threats by combining classical and post-quantum key exchange algorithms in TLS 1.3 connections (JEP 527) Compact Object Headers by Default - Reduces the memory footprint of Java objects by enabling smaller object headers by default, improving memory efficiency and cache utilization (JEP 534) JFR In-Process Data Redaction - Allows sensitive data to be redacted from Java Flight Recorder recordings before they leave the JVM, helping protect confidential information during profiling and diagnostics (JEP 536) Enhanced Pattern Matching (continued preview) - Extends support for primitive types in patterns, instanceof, and switch, letting developers write cleaner type and value checks including for types like int and boolean (JEP 532) Structured Concurrency (continued preview) - Refines the API for structured concurrency, treating groups of related tasks running in different threads as single units of work, streamlining error handling and cancellation, improving reliability, and enhancing observability (JEP 533) Lazy Constants (continued preview) - Provides an API to defer initialization of immutable data until it is actually needed, combining the performance benefits of final fields with the flexibility of lazy initialization (JEP 531) Vector API (continued incubator) - Improves support for high-performance mathematical operations that can take advantage of modern CPU vector capabilities (JEP 537) A detailed description of these features can be found on the OpenJDK 27 Project page . Amazon Corretto 27 is distributed by Amazon under an open source license .",
+            "url": "https://aws.amazon.com/about-aws/whats-new/2026/09/amazon-corretto-27-generally-available/",
+            "source": "AWS What's New",
+            "category": "hardware",
+            "tags": [
+                "amazon",
+                "aws",
+                "cloud",
+                "java",
+                "linux",
+                "macos",
+                "windows"
+            ],
+            "published_at": "2026-09-17T00:00:31+00:00",
+            "collected_at": "2026-09-17T02:43:55.772354+00:00"
+        },
+        {
+            "id": "5dd2a85ecb6a00d7ad578bd1ac5825c0ea6de47d4c4caa0af64400f2f116e5fe",
+            "title": "Musk’s long-time backer is giving SpaceX stock to its investors",
+            "description": "Valor Equity Partners is handing out stock to its LPs instead of cash returns.",
+            "url": "https://techcrunch.com/2026/09/16/musks-long-time-backer-is-giving-spacex-stock-to-its-investors/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-09-16T23:50:07+00:00",
+            "collected_at": "2026-09-17T02:43:49.860390+00:00"
+        },
+        {
+            "id": "4cadffb16cee314e9fc639cc15c53ca5e6e5febd823c70a6a3f78baf315fa1a2",
+            "title": "Al Gore says the real AI risk isn’t data centers — it’s what industry leaders are warning about",
+            "description": "In an interview with TechCrunch, Al Gore suggested he isn't losing sleep over AI data center emissions — he's more worried about the AI industry's own warnings about where the technology is headed.",
+            "url": "https://techcrunch.com/2026/09/16/al-gore-has-a-surprisingly-calm-take-on-the-ai-data-center-backlash/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-09-16T23:43:09+00:00",
+            "collected_at": "2026-09-17T02:43:49.860482+00:00"
+        },
+        {
+            "id": "1437e4ce46e7879779a2c05607966411540bf41c611fa6261be7fb86df95c83e",
+            "title": "Snap’s powerful Specs smart glasses make the case for AR going mainstream",
+            "description": "Snap leans all the way into AR glasses as it shows just what Specs can do.",
+            "url": "https://www.androidauthority.com/snap-specs-features-3711990/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-09-16T23:40:21+00:00",
+            "collected_at": "2026-09-17T02:44:00.435519+00:00"
+        },
+        {
+            "id": "b6b5a868ea18b6224c380edb89a33cd2081df558077fe48bd579ac9c96335164",
+            "title": "If a Mac mini is agentic overkill, try this glowing pyramid that runs personal bots",
+            "description": "'Intern 2' offers an isolated environment and cloudy inference to automate your world",
+            "url": "https://www.theregister.com/personal-tech/2026/09/17/if-a-mac-mini-is-agentic-overkill-try-this-glowing-pyramid-that-runs-personal-bots/5296964",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-09-16T23:28:59+00:00",
+            "collected_at": "2026-09-17T02:43:50.781896+00:00"
+        },
+        {
+            "id": "5d070bdcfddf133527b7879a3daae28969cac42f31aaa5e86842baa5f8a47e16",
+            "title": "What CLARITY Act’s Failure Means for XRP, Ripple and Investors",
+            "description": "Ripple says the CLARITY Act’s failure does not alter XRP’s established legal position or disrupt its business. The company is emphasizing continued demand across payments, stablecoins, and institutional markets while broader U.S. crypto legislation remains unresolved. XRP’s Position Remains Unchanged After Senate Vote The CLARITY Act failed its Sept. 15 Senate test, but the result […]",
+            "url": "https://news.bitcoin.com/regulation-and-legal/what-clarity-acts-failure-means-for-xrp-ripple-and-investors/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-16T23:15:39+00:00",
+            "collected_at": "2026-09-17T02:44:08.134715+00:00"
+        },
+        {
+            "id": "adf9e2db359e6ddd0453d4fed2bf160281da98c8c9f0ac7c0d341029bcdf4db9",
+            "title": "OpenSpec – A lightweight and configurable AI spec framework",
+            "description": "Comments",
+            "url": "https://openspec.dev/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-16T23:06:39+00:00",
+            "collected_at": "2026-09-17T02:43:51.693994+00:00"
+        },
+        {
+            "id": "ad57e5c61be1d0fe08fdfee865627480440e641867f5186954ddf902bc1d16d7",
+            "title": "Australia says it could follow Canada in forging deeper ties with EU",
+            "description": "Comments",
+            "url": "https://www.independent.co.uk/news/world/australasia/canda-eu-membership-australia-us-trade-b3050227.html",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-16T22:56:48+00:00",
+            "collected_at": "2026-09-17T02:43:51.694344+00:00"
+        },
+        {
+            "id": "b0a8a55f88f881ee7e617d26f0096301df7ebeee399cd82fd640e81bb6e063fa",
+            "title": "Why .tar.gz files can't be combined with cat",
+            "description": "Comments",
+            "url": "https://alexwlchan.net/2026/cat-confusion/",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-09-16T22:55:11+00:00",
+            "collected_at": "2026-09-17T02:43:51.956529+00:00"
+        },
+        {
+            "id": "be773e033a1acdd8b416d0d37681e0e572e3b9aa47841b674cc487753b6935a9",
+            "title": "Victory! Appeals Court Rejects Expansive New Copyright Claim",
+            "description": "The U.S. Court of Appeals for the Ninth Circuit handed internet users and programmers a big win today, by rejecting an attempt to stretch a narrow provision of the Digital Millennium Copyright Act (DMCA) into a new source of copyright liability. The case involves Section 1202 of the DMCA, which prohibits intentionally removing copyright management information (CMI) like an author’s name or a copyright notice, from a copyrighted work. Open AI and Microsoft used code from Github as part of the training data for their LLMs, along with billions of other works. A group of anonymous Github contributors sued, alleging the new code coming out of these LLMs was similar to theirs—but with the CMI stripped out. The Ninth Circuit correctly agreed with what we said in our brief : removing copyright information from a copyrighted work is fundamentally different from creating a new work that didn't have CMI in the first place. Section 1202 of the Digital Millennium Copyright Act was intended to serve as a backstop for traditional copyrights in the digital age—not to create a new, more expansive right to inhibit otherwise non-infringing uses. As we also explained, accepting the Does’ theory would have created a brand-new source of liability for otherwise perfectly lawful activities, undermining creativity and innovation far beyond the specific context of AI development. Copyright holders would be able to file costly lawsuits against all kinds of legitimate users, such as artists making remixes based on older works, teachers adapting works for a classroom presentation, engineers reverse engineering code to understand it better, and search engines that help us all navigate the web. The risks would have fallen especially hard on independent software developers and other small creators. Large companies can afford to litigate these claims in federal court for years, if necessary. But an independent programmer facing massive statutory damages may simply have to settle, even when their underlying use is completely lawful. That’s why EFF fights to make sure courts don’t expand copyright beyond what Congress authorized. Copyright law still protects programmers when their work is unlawfully copied. They can still bring copyright infringement claims if someone uses a model to reproduce their code. Additionally, the plaintiffs’ contract claims against the AI companies are still in play. The specific holding here was narrow but important: that the absence of copyright information from a new work does not mean, by itself, that someone illegally removed it. That’s the correct result. New technologies will keep raising hard questions about copyright. Courts should answer those questions by applying the rights that Congress actually authorized, not by inventing new rights that could harm expression and lawful use for everyone. Additional Reading: 9 th Circuit Opinion in Doe v. GitHub EFF’s Amicus Brief in Doe v. GitHub",
+            "url": "https://www.eff.org/deeplinks/2026/09/victory-appeals-court-rejects-expansive-new-copyright-claim",
+            "source": "Electronic Frontier Foundation",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "aws",
+                "git",
+                "internet",
+                "liberte",
+                "llm",
+                "privacy"
+            ],
+            "published_at": "2026-09-16T22:47:35+00:00",
+            "collected_at": "2026-09-17T02:44:08.435636+00:00"
+        },
+        {
+            "id": "184edc7bac226a3498497b471d87b1fc7bde123a4e0c814c15e3f22a280157f6",
+            "title": "US automakers could soon be forced to include AM radio for free",
+            "description": "The House of Representatives, in rare bipartisan support, overwhelmingly approved legislation that would require new vehicles to include AM radio.",
+            "url": "https://techcrunch.com/2026/09/16/us-automakers-could-soon-be-forced-to-include-am-radio-for-free/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-09-16T22:37:08+00:00",
+            "collected_at": "2026-09-17T02:43:49.860548+00:00"
+        },
+        {
+            "id": "0a8709b0e4c2757ed9dc597856cf8909922b0a4918d7e44b034cbbbb96ab2615",
+            "title": "Amazon SageMaker AI now supports serverless model customization for NVIDIA Nemotron 3.5 Lightning",
+            "description": "Amazon SageMaker AI now supports serverless model customization for the NVIDIA Nemotron 3.5 Lightning model using supervised fine-tuning (SFT), Direct Preference Optimization (DPO), and reinforcement fine-tuning (RFT). This is one of the latest open-weight models from NVIDIA and employs a hybrid Mixture-of-Experts architecture with 3B active parameters and 30B parameters in total. In addition to deploying this model on SageMaker AI, you can now adapt it to your specific domains and workflows. Model customization enables you to tailor foundation models with your proprietary data so a smaller, right-sized model can match frontier-model quality on your tasks, reducing cost and latency. You can use labeled data with SFT to improve accuracy on domain-specific tasks, preference data with DPO to align outputs with your organization's tone, or reward signals with RFT to enhance performance on new tasks. With serverless customization, SageMaker AI handles all infrastructure provisioning and training orchestration, so you can focus on your data and evaluation rather than cluster management, and only pay for what you use. Serverless model customization for NVIDIA Nemotron 3.5 Lightning on SageMaker AI is available in US East (N. Virginia), US West (Oregon), Asia Pacific (Tokyo), and Europe (Ireland). To get started, navigate to the Models page in Amazon SageMaker Studio to launch a customization job, or use the SageMaker Python SDK for programmatic access. To learn more, see the Amazon SageMaker AI model customization documentation .",
+            "url": "https://aws.amazon.com/about-aws/whats-new/2026/09/amazon-sagemaker-ft-nemotron-3-5-lightning/",
+            "source": "AWS What's New",
+            "category": "cloud",
+            "tags": [
+                "amazon",
+                "aws",
+                "cloud",
+                "nvidia",
+                "python"
+            ],
+            "published_at": "2026-09-16T22:29:00+00:00",
+            "collected_at": "2026-09-17T02:43:55.772604+00:00"
+        },
+        {
+            "id": "b39eae838af9fce919e50f30590559462ad21456cb70ed1d8cf0e7be1fdfa9f9",
+            "title": "AI agents can modify themselves without humans telling them to do so",
+            "description": "This is a test - it is only a test",
+            "url": "https://www.theregister.com/security/2026/09/16/ai-agents-can-modify-themselves-without-humans-telling-them-to-do-so/5296991",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-09-16T22:10:24+00:00",
+            "collected_at": "2026-09-17T02:43:50.781961+00:00"
+        },
+        {
+            "id": "7e847601e9cddf513dd4f345c7643a69f373335d564b0ae7c5547f1ea3134e4e",
+            "title": "HarnessTax: How Much Does the Harness Matter for Coding Agents?",
+            "description": "Comments",
+            "url": "https://harnesstax.github.io/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-16T22:10:13+00:00",
+            "collected_at": "2026-09-17T02:43:51.694168+00:00"
+        },
+        {
+            "id": "d7c63e80f2398a818cb1d1ae3e25b6dacab8cd6570f98b235dbb725cdb2d3304",
+            "title": "Apple reportedly building server packed with M-series Ultra chips for AI",
+            "description": "Planned 2029 debut could make this Apple’s first enterprise server in decades.",
+            "url": "https://arstechnica.com/ai/2026/09/apple-reportedly-building-server-packed-with-m-series-ultra-chips-for-ai/",
+            "source": "Ars Technica",
+            "category": "technologie",
+            "tags": [
+                "informatique",
+                "innovation",
+                "technologie"
+            ],
+            "published_at": "2026-09-16T22:02:46+00:00",
+            "collected_at": "2026-09-17T02:43:49.710929+00:00"
+        },
+        {
+            "id": "15acbe7eb31885dca7e03f7e84c9e2e119dd48410be0d3dda91dd9796e61245a",
+            "title": "Saylor Sees Bitcoin Winning as Regulators Move Without Congress",
+            "description": "Bitcoin can continue gaining institutional ground even with the CLARITY Act stalled in Congress, according to Strategy Executive Chairman Michael Saylor. He expects regulators to advance rules under existing law and banks to expand bitcoin custody and loans. Saylor Says Bitcoin Progress Does Not Depend on Congress Bitcoin’s integration into the U.S. financial system can […]",
+            "url": "https://news.bitcoin.com/crypto-news/saylor-sees-bitcoin-winning-as-regulators-move-without-congress/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-16T21:44:48+00:00",
+            "collected_at": "2026-09-17T02:44:08.134834+00:00"
+        },
+        {
+            "id": "bbc80affa847e02685235206385696fe2b1062e97bfd3d0d1d6f1bceecbd4ad7",
+            "title": "Epstein had huge cache of child sex pics; victims sue to find out who's in them",
+            "description": "Survivors appalled nobody will tell them if they’re in Epstein’s CSAM collection.",
+            "url": "https://arstechnica.com/tech-policy/2026/09/lawsuit-trump-doj-notified-very-few-victims-in-epsteins-stash-of-child-sex-images/",
+            "source": "Ars Technica",
+            "category": "technologie",
+            "tags": [
+                "informatique",
+                "innovation",
+                "technologie"
+            ],
+            "published_at": "2026-09-16T21:42:09+00:00",
+            "collected_at": "2026-09-17T02:43:49.711007+00:00"
+        },
+        {
+            "id": "e3fc47cac7a6c7b90e9ffdc7986dba718ce9fb90ba73b31a5493eec9d7bf2f2b",
+            "title": "Nvidia goes green to keep grid capacity from zapping its revenues",
+            "description": "GPUzilla woos neoclouds into another walled garden, promising smarter, more efficient, and profitable bit barns",
+            "url": "https://www.theregister.com/systems/2026/09/16/nvidia-goes-green-to-keep-grid-capacity-from-zapping-its-revenues/5296984",
+            "source": "The Register",
+            "category": "hardware",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "nvidia",
+                "technologie"
+            ],
+            "published_at": "2026-09-16T21:37:05+00:00",
+            "collected_at": "2026-09-17T02:43:50.782022+00:00"
+        },
+        {
+            "id": "50e5dc4c43e023af9988367175bdfd060531865392c9355ded67bc21f6fac90e",
+            "title": "Noise wants to help everyday people become paid content creators",
+            "description": "Marketing platform Noise is on a mission to help anyone with a smart phone make money from their content.",
+            "url": "https://techcrunch.com/2026/09/16/noise-wants-to-help-everyday-people-become-paid-content-creators/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-09-16T21:35:00+00:00",
+            "collected_at": "2026-09-17T02:43:49.860605+00:00"
+        },
+        {
+            "id": "fc02b3074a00b28fbc21c1cd240f3cea4ec1cbaa624f3741f24ed2557eb0f004",
+            "title": "AI Security Spending Jumps as Fear Outpaces Proof of Value",
+            "description": "CISOs are not waiting for AI to prove its cybersecurity value before investing in the technology. Is it the right move?",
+            "url": "https://www.darkreading.com/cybersecurity-operations/ai-security-spending-jumps-fear-outpaces-proof-value",
+            "source": "Dark Reading",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "enterprise-security"
+            ],
+            "published_at": "2026-09-16T21:26:55+00:00",
+            "collected_at": "2026-09-17T02:43:49.338036+00:00"
+        },
+        {
+            "id": "e7793479eefadba9035d86ea5b57eb65b3f2128eef76fa2d04973c4aba93008b",
+            "title": "Pulley, a Carta rival, is shutting down",
+            "description": "Cap table management platform Pulley, backed by General Catalyst, Stripe, and Founders Fund, announced that it's closing shop in December.",
+            "url": "https://techcrunch.com/2026/09/16/pulley-a-carta-rival-is-shutting-down/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-09-16T21:23:19+00:00",
+            "collected_at": "2026-09-17T02:43:49.860687+00:00"
+        },
+        {
+            "id": "550c95973bb1720e6f0cb8b59df7c7ade8dc7aaa15633bbe23cee754eec9aa17",
+            "title": "Nonprofit that tracks meteors taken down by \"critical blow\" from a cyberattack",
+            "description": "Group plans to be largely out of commission for several weeks.",
+            "url": "https://arstechnica.com/security/2026/09/nonprofit-that-tracks-meteors-taken-down-by-critical-blow-from-a-cyberattack/",
+            "source": "Ars Technica",
+            "category": "cybersecurite",
+            "tags": [
+                "informatique",
+                "innovation",
+                "technologie"
+            ],
+            "published_at": "2026-09-16T21:08:14+00:00",
+            "collected_at": "2026-09-17T02:43:49.711060+00:00"
+        },
+        {
+            "id": "0b10385b1288a70073ced6eee3874ec974c3a6a022c092691878a5768125c692",
+            "title": "Anthropic and OpenAI want to embed safety evaluators. Will they really be independent?",
+            "description": "Anthropic and OpenAI want to embed independent safety evaluators inside their AI labs. Researchers welcome the unprecedented access, but warn meaningful oversight requires transparency, independence, and eventually regulation.",
+            "url": "https://techcrunch.com/2026/09/16/anthropic-and-openai-want-to-embed-safety-evaluators-will-they-really-be-independent/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "anthropic",
+                "innovation",
+                "openai",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-09-16T21:07:24+00:00",
+            "collected_at": "2026-09-17T02:43:49.860766+00:00"
+        },
+        {
+            "id": "571f571f943369a8074533fa350894a97e9785b7d43a20efd25c2f5c94678e81",
+            "title": "TestFlight Update",
+            "description": "View release notes",
+            "url": "https://developer.apple.com/news/releases/?id=09162026h",
+            "source": "Apple Developer Releases",
+            "category": "mobile",
+            "tags": [
+                "apple",
+                "ios",
+                "iphone"
+            ],
+            "published_at": "2026-09-16T21:00:00+00:00",
+            "collected_at": "2026-09-17T02:44:00.492937+00:00"
+        },
+        {
+            "id": "cab4f1a04be9562a541f89a89822672ac9a5a0e203cda084f6c7420285a831a7",
+            "title": "Breaking the 1.58-bit Barrier for Ternary LLMs",
+            "description": "Comments",
+            "url": "https://arxiv.org/abs/2609.16338",
+            "source": "Hacker News",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "llm",
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-16T20:59:24+00:00",
+            "collected_at": "2026-09-17T02:43:51.693756+00:00"
+        },
+        {
+            "id": "b3b6adfe331386021a8e94297b0447fb6b775540dbea6b9d167e4b6be59e0cd8",
+            "title": "Your Google Home widgets will now eat up less of your battery life",
+            "description": "Google Home's latest release offers fixes and improvements across the board.",
+            "url": "https://www.androidauthority.com/google-home-widget-battery-efficiency-3712132/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-09-16T20:58:14+00:00",
+            "collected_at": "2026-09-17T02:44:00.435581+00:00"
+        },
+        {
+            "id": "ee56212cc01202172f8b2200af0242026d05bb3111e2f384bfe99562a75200ce",
+            "title": "Google doubles down on today’s preview builds with Android 17 QPR2 Beta 5",
+            "description": "Android 17 QPR2 Beta 5 offers Google's latest look at the platform's next big update.",
+            "url": "https://www.androidauthority.com/android-17-qpr2-beta-5-3712182/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-09-16T20:56:36+00:00",
+            "collected_at": "2026-09-17T02:44:00.435648+00:00"
+        },
+        {
+            "id": "1c3ad527763db0529e11ac6c23e4a9a1c6c00a85287094db8f7f892e054ac553",
+            "title": "Lionsgate releases a new trailer for Sunrise on the Reaping",
+            "description": "Also: Laika Studios debuts a stunning full-length trailer for its stop-motion feature, Wildwood .",
+            "url": "https://arstechnica.com/culture/2026/09/haymitch-gets-a-backstory-in-sunrise-on-the-reaping-trailer/",
+            "source": "Ars Technica",
+            "category": "technologie",
+            "tags": [
+                "informatique",
+                "innovation",
+                "ios",
+                "technologie"
+            ],
+            "published_at": "2026-09-16T20:44:41+00:00",
+            "collected_at": "2026-09-17T02:43:49.711121+00:00"
+        },
         {
             "id": "af25ae6ff676d02ffd8509d8c2df608112f0683f7b4e987720fef6e3f824944d",
             "title": "A Pedagogical Introduction to Porting a Conjugate Gradient Solver to CUDA",
@@ -51,6 +862,21 @@
             "collected_at": "2026-09-16T20:43:55.177587+00:00"
         },
         {
+            "id": "765c4417a41c56accf14b535180de647d5df32b296c6952c3210ca267069aa69",
+            "title": "CISA decides weekly vulnerability bulletin isn't necessary anymore",
+            "description": "Agency's shift from static CVSS scores to risk-based prioritization sends the old format packing September 28",
+            "url": "https://www.theregister.com/security/2026/09/16/cisa-decides-weekly-vulnerability-bulletin-isnt-necessary-anymore/5296968",
+            "source": "The Register",
+            "category": "cybersecurite",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-09-16T20:33:48+00:00",
+            "collected_at": "2026-09-17T02:43:50.782074+00:00"
+        },
+        {
             "id": "2e46b91bc53db4cb432baab09a304fd4aa20605a67994a4e99cf0e4f3c1f73d9",
             "title": "I tried giving a 26 MB Burp Suite dump to an LLM. It didn't work. So I built BurpSqueezer.",
             "description": "Hi, everyone. I’ve put together a tool that will help many web and API penetration testers solve the problem of integrating AI into their workflow. BurpSqueezer is a utility that lets you “compress” the HTTP traffic you need for your work (which can take up tens or even hundreds of megabytes) into a small .md report, generated specifically for AI processing. I haven’t hardcoded anything into the code. (Well, almost—but only to automatically filter out unnecessary traffic like CDN requests, etc.) All the logic is based on universal approaches that allow you not only to “filter out” the unnecessary but also to establish connections between endpoints (especially useful when testing APIs or business logic). The reports themselves are compressed to incredibly small sizes. When I tested in normal mode, I managed to compress my working dump from 26.7 MB to 35 KB (the result was 745 times smaller than the original dump). Different modes may yield different results, but what they’ll have in common is that almost any neural network will be able to read and understand them. (Seriously. When I tried to upload the original traffic dump to OpenCode, I couldn’t do it because of file size limitations.) There are some important limitations, though. BurpSqueezer is primarily designed for large HTTP datasets, especially APIs and applications with meaningful business logic. If you give it a relatively small or structurally simple dump — for example, a website with little backend logic and mostly static or repetitive traffic — the results may be much less useful. There simply may not be enough relationships and structure for the analysis to extract. It is also not an autonomous pentesting tool. It doesn’t send requests or attack the target. It takes traffic you have already captured and authorized to analyze, processes it, and produces a much more compact representation that can then be given to an LLM for further analysis. I built this because I wanted AI to be able to work with real Burp traffic without having to feed it tens of megabytes of raw XML and expect it to figure everything out from scratch. The project is open source, and I’d really appreciate it if people working with Burp, API security, business logic, or AI-assisted pentesting could try it and tell me what works, what doesn’t, and where the output could be improved. GitHub: vaginskii/BurpSqueezer",
@@ -68,6 +894,21 @@
             "collected_at": "2026-09-16T20:43:38.638157+00:00"
         },
         {
+            "id": "ec59fc440715f439a843e9a3f85531fec551dfcc4749232cba57365c8ff64a02",
+            "title": "Backups Aren't Simple",
+            "description": "Comments",
+            "url": "https://filipovski.net/2026/09/16/backups-arent-simple.html",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-16T20:27:16+00:00",
+            "collected_at": "2026-09-17T02:43:51.693800+00:00"
+        },
+        {
             "id": "768c30c52b4541c40d08880c76142e91853544ccc038d8d932b11f47824891b1",
             "title": "Iranian hackers use CHOSEN BRICK Windows malware to spy on targets",
             "description": "Government agencies are warning that Iranian state-linked hackers are using a Windows malware strain named CHOSEN BRICK to target dissidents, activists, and journalists worldwide. [...]",
@@ -82,6 +923,22 @@
             ],
             "published_at": "2026-09-16T20:24:55+00:00",
             "collected_at": "2026-09-16T20:43:34.418759+00:00"
+        },
+        {
+            "id": "2e9000f3d853383ea6feb2fc5fddffdcfd8f7cad544384b21d63056d2915e184",
+            "title": "Not just Proton: Getting to know Valve's new SteamOS compatibility layers",
+            "description": "New system-level tools bring Arm chipsets, Android APKs into the Steam ecosystem.",
+            "url": "https://arstechnica.com/gaming/2026/09/not-just-proton-getting-to-know-valves-new-steamos-compatibility-layers/",
+            "source": "Ars Technica",
+            "category": "technologie",
+            "tags": [
+                "android",
+                "informatique",
+                "innovation",
+                "technologie"
+            ],
+            "published_at": "2026-09-16T20:23:16+00:00",
+            "collected_at": "2026-09-17T02:43:49.711179+00:00"
         },
         {
             "id": "f7290418cc3069dfebe0f6fff6a4f504fe9a94c3e7e54f1ebf1eb14847e1d043",
@@ -348,6 +1205,21 @@
             "collected_at": "2026-09-16T20:43:36.326651+00:00"
         },
         {
+            "id": "47c13a0d554cb7a072b25bcf1abb1fe3df6efcf98c3f25959b4074f54882c10a",
+            "title": "Why Does the Universe Expand?",
+            "description": "Comments",
+            "url": "https://cosmicave.org/2026/09/15/why-does-the-universe-expand/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-16T19:56:38+00:00",
+            "collected_at": "2026-09-17T02:43:51.694502+00:00"
+        },
+        {
             "id": "bcbda0900bbf904a234d38adf053c8db1a7279db4247d6ec738c82e968a82578",
             "title": "Elon Musk’s X Adds One-Tap Trading Links to Stock and Crypto Cashtags",
             "description": "X is turning Cashtags into a more direct bridge between market conversation and trade execution. U.S. users can now move from a stock or crypto ticker on the platform to a participating brokerage or exchange with a single tap. Coinbase, Kraken Join X Cashtags as U.S. Trading Links Go Live X is pushing deeper into […]",
@@ -377,6 +1249,22 @@
             "collected_at": "2026-09-16T20:43:46.819708+00:00"
         },
         {
+            "id": "ae986dfff84266594d86442f22e071718036a7f246ee579310061f1fee8b8cbf",
+            "title": "California may gut state net neutrality law to comply with Trump admin demand",
+            "description": "Trump admin broadband grants forbid states from enforcing net neutrality laws.",
+            "url": "https://arstechnica.com/tech-policy/2026/09/california-may-gut-state-net-neutrality-law-to-comply-with-trump-admin-demand/",
+            "source": "Ars Technica",
+            "category": "cloud",
+            "tags": [
+                "aws",
+                "informatique",
+                "innovation",
+                "technologie"
+            ],
+            "published_at": "2026-09-16T19:36:44+00:00",
+            "collected_at": "2026-09-17T02:43:49.711231+00:00"
+        },
+        {
             "id": "ec9c118357eaea90ad77a007e1843b3eee25fe9702f324e4c9890a6924499534",
             "title": "Automattic’s interim CEO and legal chief signed reciprocal severance deals during Mullenweg’s brief ouster",
             "description": "CFO Mark Davies and legal chief Andy Missan signed each other’s severance agreements while Matt Mullenweg was on leave, providing a year of salary and additional equity vesting if their departures qualify for the benefits.",
@@ -390,6 +1278,37 @@
             ],
             "published_at": "2026-09-16T19:35:29+00:00",
             "collected_at": "2026-09-16T20:43:36.326743+00:00"
+        },
+        {
+            "id": "521877fe76a6eb7f68c10338b58d355bb0f8a65ee91f765f6b731cdadf29e40b",
+            "title": "C++26: Trivial infinite loops are no longer undefined behaviour",
+            "description": "Comments",
+            "url": "https://www.sandordargo.com/blog/2026/09/16/cpp26-trivial-infinite-loops",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "cpp",
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-09-16T19:33:37+00:00",
+            "collected_at": "2026-09-17T02:43:51.955924+00:00"
+        },
+        {
+            "id": "0ad4a3efe12fed0d196162616f7cce6bf84d9414193629ee51a3c7c56a472ec8",
+            "title": "Style Guide for Online Hypertext (1992)",
+            "description": "Comments",
+            "url": "https://www.w3.org/Provider/Style/",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-09-16T19:26:10+00:00",
+            "collected_at": "2026-09-17T02:43:51.956355+00:00"
         },
         {
             "id": "b27850c9f4110c81f2d36ba74494b309cd10f6047edbf937c14d9757a3140478",
@@ -543,6 +1462,21 @@
             "collected_at": "2026-09-16T20:43:38.264115+00:00"
         },
         {
+            "id": "b89f470d06f09dd9d113e1d2d778f7e11d933949f453362ad92d9ca24221fadd",
+            "title": "Reverse-engineered Jev-like model",
+            "description": "Comments",
+            "url": "https://github.com/vinnylarouge/jevlike",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-16T18:49:57+00:00",
+            "collected_at": "2026-09-17T02:43:51.694383+00:00"
+        },
+        {
             "id": "58a7936b8b0072235f00898170c4adf8225602bcedd7c09512105e32296657f6",
             "title": "Gemini was broken on the Pixel Watch 5, but Google’s got a fix",
             "description": "A Pixel Watch 5 bug is causing Gemini to fail, and no one knows why.",
@@ -648,6 +1582,25 @@
             "collected_at": "2026-09-16T20:43:38.264166+00:00"
         },
         {
+            "id": "b402f515f974f7c95e16c68c66d095c4a5d56ee1587405736bb76743cda1e0da",
+            "title": "Kubernetes v1.37: Hardening Container Storage with Bind Mount Options and EmptyDir Permissions",
+            "description": "Kubernetes v1.37 brings important storage security features: emptyDir permission modes and bind mount options. They help application programmers and security professionals implement rigorous security policies, for example, prohibiting deletion of files across containers or execution of arbitrary binaries from writable volumes, directly in Kubernetes without any complicated circumvention. Linux storage and permission fundamentals Before diving into the new Kubernetes features, let us briefly review the low-level Linux security mechanisms that make them possible. Bind mount flags When Linux mounts or remounts a directory, Virtual File System (VFS) flags control what actions are permitted on that filesystem: noexec : Do not permit direct execution of any binaries on the mounted filesystem. nosuid : Do not allow set-user-identifier or set-group-identifier bits to take effect. nodev : Do not interpret character or block special devices on the file system. Directory permissions and the sticky bit Standard Unix permissions regulate access across three scopes: Owner, Group, and Others (e.g., 0755 or 0777 ). Beyond standard read, write, and execute bits, Linux supports the sticky bit (as in mode 01777 ). When applied to a directory, the sticky bit ensures that a file inside that directory can only be deleted or renamed by the file's owner or root. This is essential for shared writable directories like /tmp . Motivation for the improvements Why does Kubernetes need bind mount options and emptyDir permissions? The primary goal of these features is to increase the security of Kubernetes workloads by allowing security-related bind mount options on volume mounts. By default, volumes are bind-mounted into containers by the container runtime and kubelet without noexec , nosuid , or nodev flags. This default can undermine security. For example, with noexec missing, a compromised process can use any writable volume ( emptyDir , PersistentVolume, etc.) to download, chmod +x , and execute arbitrary binaries even when the container has a read-only root filesystem ( readOnlyRootFilesystem: true ). Supporting noexec , nodev , and nosuid gives users a native way to harden volume mounts to match security benchmarks and policy. The gap is most visible with emptyDir volumes, which are the most common writable volume type and have been the subject of multiple security findings: Issue #48912 : Recognized security gap - the inability to set mount options on emptyDir was flagged in an audit but remained unresolved until now. Issue #119627 : Kubernetes 1.24 Security Audit (Finding NCC-E003660-7HM) - external auditors specifically noted that the inability to mount emptyDir with noexec represents a security failure. However, the same gap applies to all volume types. PersistentVolumes have a mountOptions field, but those options are filesystem-level flags applied by the CSI driver at the node, so they do not reliably translate into bind mount flags inside the container. Previously, there was no mechanism to set noexec , nosuid , or nodev on the bind mount that the container runtime creates for any volume type. Additionally, the emptyDir volume type defaults to creating directories with a hardcoded mode of 0777 . This previously meant that any process that can discover the volume could read, write, and delete anything in the volume, regardless of who created it. You could - and still can - use an initial container to set a different access mode, but this is more complex, and hard to verify for compliance. This causes real problems: Multi-container pods sharing an emptyDir could not prevent one container from deleting another's files. The sticky bit ( 01777 ) solves this, but there was no native way to set it. Some applications and security frameworks expect /tmp directories to have the sticky bit set (mode 01777 ). Without native support for setting the emptyDir mode, users had to use init containers or alternative volume types to meet this requirement. Platform engineers who want tighter permissions (e.g., 0750 for owner and group only) have to use init containers running chmod , which adds unnecessary complexity. The emptyDir volume type was a notable gap. As one of the most common writable volume types in Kubernetes, it had no way to control its creation permissions. Real-world use cases Application developers, working closely with security engineers, are responsible for maintaining the security posture of their applications and ensuring workloads do not pose risks to the wider infrastructure. These features allow development teams to confidently address critical security scenarios: Preventing Privilege Escalation on Writable Mounts: An application developer configuring temporary workspace volumes (like emptyDir or /tmp mounts) can ensure they are mounted with nosuid and noexec . This guarantees that even if the application is compromised and a malicious payload is downloaded, the workload cannot execute the payload or use it to escalate privileges on the node. Securing Shared Scratch Space in Multi-Container Pods: A developer configuring CI/CD pipeline pods often needs multiple containers (e.g., a builder container and a sidecar logger) to share a workspace. By setting mode: 01777 on an emptyDir , the developer ensures the shared workspace behaves like a traditional Unix /tmp directory. Each container can write files independently, but a compromised process in one container cannot delete the build artifacts produced by another. Enforcing Principle of Least Privilege for Application Data: An application developer deploying a database pod can lock down access to the database's temporary storage. By setting mode: 0750 on the emptyDir , the developer ensures that only the specific database user and group can read or write to the volume, explicitly denying access to any other processes or sidecars in the same pod. Note: Both features are behind Alpha feature gates in Kubernetes v1.37. To use them, enable VolumeBindMountOptions and EmptyDirVolumeMode on the API server and kubelet. Example 1: Enforcing bind mount options This full Pod manifest mounts an emptyDir volume at /tmp with bindMountOptions: [noexec, nosuid] . apiVersion : v1 kind : Pod metadata : name : hardened-bindmount-pod namespace : default spec : os : name : linux containers : - name : hardened-app image : alpine:latest command : [ \"sleep\" , \"3600\" ] securityContext : readOnlyRootFilesystem : true volumeMounts : - name : temp-storage mountPath : /tmp bindMountOptions : - noexec - nosuid volumes : - name : temp-storage emptyDir : {} Example 2: emptyDir volume permission mode with sticky bit This full Pod manifest creates an emptyDir volume using mode: 01777 to enforce standard Unix /tmp sticky bit protections across containers. apiVersion : v1 kind : Pod metadata : name : hardened-emptydir-pod namespace : default spec : os : name : linux containers : - name : app-container image : alpine:latest command : [ \"sleep\" , \"3600\" ] volumeMounts : - name : shared-tmp mountPath : /tmp volumes : - name : shared-tmp emptyDir : mode : 01777 Verifying the features in Linux To verify that these features are actively enforcing restrictions, you can run kubectl exec into the container. The following examples simulate attempts to perform actions that are successfully blocked by these features. Verifying noexec Attempt to write and run a script on a volume mounted with noexec : # 1. Exec into the pod kubectl exec -it hardened-bindmount-pod -- sh # 2. Create an executable script on the mounted volume cd /tmp echo '#!/bin/sh' > test.sh echo 'echo \"Executing untrusted code...\"' >> test.sh chmod +x test.sh # 3. Attempt to run the script ./test.sh Expected result: sh: ./test.sh: Permission denied Even if an executable file is created, the Linux kernel refuses execution because MS_NOEXEC is enforced at the bind mount level. Verifying the sticky bit Attempt to delete another user's file in an emptyDir with 01777 permission mode: # 1. Exec into the pod kubectl exec -it hardened-emptydir-pod -- sh # 2. Verify directory permissions on /tmp ls -ld /tmp # Output: drwxrwxrwt 2 root root ... /tmp (Notice the 't' indicating sticky bit) # 3. Create a file as the guest user su -s /bin/sh -c \"touch /tmp/guest_file\" guest # 4. Attempt to delete that file as nobody su -s /bin/sh -c \"rm /tmp/guest_file\" nobody Expected result: rm: can't remove '/tmp/guest_file': Operation not permitted The kernel blocks deletion because the sticky bit ( 01777 ) restricts file removal strictly to the owner of the file. Things to know Keep these key details in mind as you begin using these features. Full details are available in the official documentation for bind mount options , emptyDir volume mode , and emptyDir volumes . Default unchanged: If you omit bindMountOptions or do not set an emptyDir mode , you get standard default behaviors (like 0777 permissions) exactly as before. Broad volume support: bindMountOptions works with emptyDir , PersistentVolumes, CSI volumes, projected volumes, ConfigMaps, Secrets, and more. The only exception is image volumes, which are explicitly unsupported. The mode field works with all emptyDir medium types: default (disk-backed), Memory (tmpfs), and HugePages . Runtime capabilities matter (for bindMountOptions ): The container runtime must support the CRI mount_options field and advertise it via runtimeFeatures . The scheduler uses node declared features to avoid placing pods on incompatible nodes. If a pod reaches such a node anyway, the kubelet rejects it. There is no silent degradation. However, using mode for an emptyDir does not require runtime support. Not the same as PV mountOptions: PersistentVolume mountOptions apply at the storage layer via the CSI driver. The new bindMountOptions controls bind mount flags applied inside the container by the runtime. They operate at different layers and do not conflict. fsGroup interaction: If fsGroup is set in the pod's security context, the group permissions applied by fsGroup will override the mode specified for the emptyDir volume. This is the same behavior that exists for defaultMode on Secret and ConfigMap volumes. Linux only: Flags like noexec , nosuid , nodev , and Unix permission modes are Linux concepts. bindMountOptions has no effect on Windows nodes. On Windows, the mode field is also skipped for emptyDir volumes, since Windows does not support Unix-style file permissions. Version skew safety: Both features are additive. For emptyDir mode : if the API server has the gate enabled but the kubelet does not, the field is accepted but ignored - the kubelet falls back to 0777 . For bindMountOptions : the scheduler uses Node Declared Features to prevent placing pods on nodes without runtime support; if a pod reaches such a node, the kubelet rejects it rather than silently ignoring the options. Feature Gates: Both capabilities are available as Alpha features in Kubernetes v1.37: VolumeBindMountOptions : Controls bind mount flags on volume mounts. EmptyDirVolumeMode : Controls creation permission modes on emptyDir volumes. How do I get involved? These new features are driven by SIG Node and SIG Storage . You can find more details in the KEPs for these enhancements: KEP-5855 (bind mount options) and KEP-5502 ( emptyDir permission mode). Reach out to SIG Node: Slack: #sig-node Mailing list Reach out to SIG Storage: Slack: #sig-storage Mailing list",
+            "url": "https://kubernetes.io/blog/2026/09/16/kubernetes-v1-37-hardening-container-storage/",
+            "source": "Kubernetes",
+            "category": "linux",
+            "tags": [
+                "cloud-native",
+                "containers",
+                "ios",
+                "kubernetes",
+                "linux",
+                "rust",
+                "windows"
+            ],
+            "published_at": "2026-09-16T18:30:00+00:00",
+            "collected_at": "2026-09-17T02:44:03.425297+00:00"
+        },
+        {
             "id": "2aee4c2d587d9af517fd29c77dfae9dee277e9b34e35c40fbd70fe00bbfb8d11",
             "title": "AI labs want in-house auditors — but maybe they should shut the front door first",
             "description": "There may be a simpler and more effective fix for rogue agents, hiding in plain sight.",
@@ -677,6 +1630,21 @@
             ],
             "published_at": "2026-09-16T18:14:22+00:00",
             "collected_at": "2026-09-16T20:43:35.071840+00:00"
+        },
+        {
+            "id": "73f185e663aeeff92720bbb3b2e712f511e364541d9173813970fe2170436537",
+            "title": "The Specialized Diverge Pro 4 makes rough gravel your playground",
+            "description": "The Diverge Pro 4 is happiest when the road gets ugly.",
+            "url": "https://arstechnica.com/reviews/2026/09/the-specialized-diverge-pro-4-makes-rough-gravel-your-playground/",
+            "source": "Ars Technica",
+            "category": "technologie",
+            "tags": [
+                "informatique",
+                "innovation",
+                "technologie"
+            ],
+            "published_at": "2026-09-16T18:11:53+00:00",
+            "collected_at": "2026-09-17T02:43:49.711392+00:00"
         },
         {
             "id": "53acbed614b1d75dd34a1e5f39e9bad90534156957faea3dee9fb5f75cdf43cf",
@@ -937,6 +1905,36 @@
             "collected_at": "2026-09-16T20:43:36.130937+00:00"
         },
         {
+            "id": "542da6bba0b0cd96240cddf2f407014412875bf997e77c126fa4e1b8c88e0134",
+            "title": "Get ready with the latest beta releases",
+            "description": "The beta versions of iOS 27.2, iPadOS 27.2, macOS 27.2, tvOS 27.2, visionOS 27.2, and watchOS 27.2 are now available. Get your apps ready by confirming they work as expected on these releases. And make sure to build and test with Xcode 27.2 to take advantage of the advancements in the latest SDKs. Note about iOS 27.1 and iPhone Duo When iPhone Duo becomes available on October 23, it will run iOS 27.1. This version builds on the foundation of iOS 27 and introduces features that were purpose-built for the new foldable design. Xcode 27.1 will add development support for iPhone Duo. This includes updated SDKs and a simulator that supports the all-new poses and orientations of iPhone Duo. A beta version will be available later this month. View downloads and release notes Learn about testing a beta OS Learn about sending feedback",
+            "url": "https://developer.apple.com/news/?id=rfb1rooi",
+            "source": "Apple Developer",
+            "category": "systemes",
+            "tags": [
+                "apple",
+                "ios",
+                "macos"
+            ],
+            "published_at": "2026-09-16T17:03:39+00:00",
+            "collected_at": "2026-09-17T02:43:59.307062+00:00"
+        },
+        {
+            "id": "b87f3ebb6d692aee8c1f942d98a9a5eb5963a6a12a926a4f0e8c4a5e3fa9d6c3",
+            "title": "Get your subscriptions ready for iOS 27",
+            "description": "Discover how you can expand the reach of your subscriptions with new features in iOS 27. You can start preparing today by making sure your apps use StoreKit 2 to handle your Apple In-App Purchases. Request access to Bundles and Suites Offer multiple subscriptions as a single Apple In-App Purchase in your apps with new Bundles and Suites capabilities. With Bundles, people can access multiple subscriptions in one purchase — across a single app, multiple apps from the same developer, or even spanning multiple developers’ apps. With Suites, people get access to a single subscription that seamlessly works across a set of apps from a single developer. The App Store provides the purchase experience, which displays all apps included in your Bundle or Suite, so it’s easy for people to download and access their subscription content right away. To get started, review our Bundles and Suites page , which includes eligible configurations, technical requirements, and how to submit a request form. Bundles and Suites will be available later this year in iOS 27, iPadOS 27, macOS 27, tvOS 27, or later. Offer Bundles and Suites Bundles and Suites video Multiseat purchasing enabled in App Store Connect Multiseat purchases make it easy for organizations and groups to buy your subscriptions in bulk through Volume Purchasing and Group Purchases. This presents you with an opportunity to expand your subscription beyond single users, as small businesses and specific work groups or departments can access your subscription without having to go through additional administrative workflows. With Volume Purchasing, organizations that use Apple Business and Apple School Manager can buy your subscriptions through a single Apple In-App Purchase and assign seats using a device management provider. With Group Purchases, a subscriber can buy multiple seats in a single Apple In-App Purchase and invite others to join. Apple handles any seat assignment and the invitation flow, to let groups — like small businesses, individual departments, or teams — easily access your subscriptions. This opens your subscription to users who don't fit the traditional single-subscriber model: a work team splitting the cost of a productivity app, a small business outfitting a handful of employees, a department within a larger company, or a group of collaborators sharing access to a creative tool. Any of these groups can become paying subscribers today, without going through IT or procurement. Starting today, multiseat purchases are enabled by default for subscriptions in App Store Connect. You have full control over availability and can disable multiseat purchases entirely, or selectively manage availability across the App Store, Apple Business, and Apple School Manager. Volume Purchasing launches on October 22, 2026, and Group Purchases will launch this winter. Manage purchase options for an auto-renewable subscription Offer subscriptions to groups and organizations",
+            "url": "https://developer.apple.com/news/?id=likeohx4",
+            "source": "Apple Developer",
+            "category": "systemes",
+            "tags": [
+                "apple",
+                "ios",
+                "macos"
+            ],
+            "published_at": "2026-09-16T17:02:58+00:00",
+            "collected_at": "2026-09-17T02:43:59.307526+00:00"
+        },
+        {
             "id": "a01aa48bd1ed8e103286405ffef56a96fababc116ada0dcf559a1319f890ae7b",
             "title": "Google Home will soon let you swap Gemini for Claude, or another agent of your choice",
             "description": "Google Home is getting an Model Context Protocol (MCP) connector, but only limited users get to try it first.",
@@ -1136,6 +2134,36 @@
             ],
             "published_at": "2026-09-16T17:00:00+00:00",
             "collected_at": "2026-09-16T20:43:52.705434+00:00"
+        },
+        {
+            "id": "f3899afd4d6a0a2de4790fb5c615ac53b070686d5705d2fd135b1814acc6d5b3",
+            "title": "Our framework for reporting model misalignment",
+            "description": "OpenAI shares a framework for tracking, investigating, and disclosing model misalignment, alongside six reports of unexpected or concerning model behavior.",
+            "url": "https://openai.com/index/model-misalignment-reporting-framework",
+            "source": "OpenAI",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "chatgpt",
+                "ia",
+                "openai"
+            ],
+            "published_at": "2026-09-16T17:00:00+00:00",
+            "collected_at": "2026-09-17T02:43:52.799299+00:00"
+        },
+        {
+            "id": "9db24daa6a336437afd22897b9cdfbc4c4cbd0d0e9a60574f647611caf94c7ae",
+            "title": "Amazon Connect Customer can now import evaluation form PDFs using AI",
+            "description": "Amazon Connect Customer now lets managers import a PDF of an evaluation form from a third-party quality management application, and automatically recreates it in Connect using AI, making it easier to migrate an existing quality program into Connect. Instead of rebuilding an existing form question by question, you upload the PDF and choose the preferred scoring method, either percentage or points-based, and Connect Customer automatically extracts the sections, questions, answer options, and scoring into a draft evaluation form. You can also provide natural language instructions to import the form more accurately or to adjust it as it's created — for example, splitting a broad question into simpler ones — minimizing the manual edits needed before you activate the form. This feature is available in the following AWS Regions: US East (N. Virginia), US West (Oregon), Canada (Central), Asia Pacific (Singapore), Asia Pacific (Sydney), Asia Pacific (Tokyo), and Europe (Frankfurt). To learn more, please visit our documentation and our webpage . For information about Amazon Connect Customer pricing, please visit our pricing page.",
+            "url": "https://aws.amazon.com/about-aws/whats-new/2026/09/amazon-connect-customer-import-evaluation-form-PDF/",
+            "source": "AWS What's New",
+            "category": "cloud",
+            "tags": [
+                "amazon",
+                "aws",
+                "cloud"
+            ],
+            "published_at": "2026-09-16T17:00:00+00:00",
+            "collected_at": "2026-09-17T02:43:55.773574+00:00"
         },
         {
             "id": "15427c81c24cd7ccdec4690809660ed461a7196975f8a1b44292940228596c8b",
@@ -1489,6 +2517,23 @@
             ],
             "published_at": "2026-09-16T16:04:50+00:00",
             "collected_at": "2026-09-16T20:43:55.501748+00:00"
+        },
+        {
+            "id": "de3a8795b7947c27401420660215b76d65a8be99ee336d6a662d9a2f4c99a464",
+            "title": "How the Meta Settlement Silences Youth Activism",
+            "description": "Since its integration into our digital world, social media has played a pivotal role in youth organizing and social mobilization. Yet, people’s access to these platforms is increasingly coming under threat from courts and legislatures under the guise of protecting young people online—presenting a significant hindrance to youth organizing. In a major recent example, Meta settled in a lawsuit with 52 states and territories regarding the use of Instagram and Facebook by young people. The settlement will require Meta, and pressure other non-Meta owned platforms like TikTok and YouTube, to embed age gating practices into every product while also requiring restrictions on the accounts of people under-18, such as a two-hour daily time limit and content restrictions. Youth Power on Social Media Young people have been using social media for political advocacy and community organizing for more than a decade. From organizing protests speaking out against police brutality , to organizing nationwide school walkouts demanding safety in schools from gun violence, and striking to demand lawmakers take action to protect the climate, social media has become an instrumental tool for youth to both speak out and connect with other young activists. Instagram has become especially useful for activism online by young people. The features on the app make it a helpful tool for being able to efficiently and quickly spread awareness, which is especially important when people need to share real-time information. For example, 17-year-old Darnella Frazier’s video on Facebook showed the world the murder of George Floyd. The impact of youth activism online is also evident on non-Meta owned platforms, with services like TikTok and YouTube being particularly prevalent spaces for young people to share their stories, build movements, and amplify collective engagement. However, in a digital world operating under the settlement’s new guidelines, young people risk not being able to read crucial news due to the content being labeled as “age-inappropriate,” which has already happened for teenagers in Australia under its social media ban. A two-hour daily time limit and a block on Meta’s apps between midnight and 6am leaves little room for young activists to organize rapid response efforts. Being unable to see likes on a post will make it difficult to gauge the effectiveness of their campaigns. Add to this what we already know about Meta’s content policies which claim to “protect children” and keep sites “family-friendly” but instead label content like LGBTQ+ content as “adult” or “harmful,” youth will be left with no choice in what content they see once the ‘age-appropriate’ content filter is turned on by default. One recent report noted that Meta had hidden posts that reference LGBTQ+ hashtags like #lesbian, #bisexual, #gay, #trans, and #queer for users with the sensitive content filter on. This would specifically curtail the efforts of young activists doing work on comprehensive sex education. Global Trends Measures like this are being discussed across the globe, but not all courts have taken such a short-sighted approach. In August, the French Constitutional Council got a lot right in its decision to strike down the country’s legislation banning under-15s from social media for infringing free expression and communication for everyone online, not just young people. The French Court also called attention to its infringement on privacy as the legislation would have forced people of all ages to hand over government IDs , face scans , and other sensitive information to prove their age and access online content. Requiring this much data from users puts activists in danger of even more surveillance . Meta has already previously complied with demands from law enforcement to hand over the messages of users. The amount of personal information that will be logged and that could be demanded via a warrant from police to stifle or investigate activists’ actions or plans could cause a chilling effect, forcing advocates to pause or terminate their work. This is egregious because these systems misidentify or lock out people of color , people with disabilities , and trans or gender-nonconforming individuals whose IDs may not match their chosen name or align with what the system expects them to look like upon verification. And it’s often these communities that benefit from online organizing the most, especially for marginalized youth as social media can often be the only place to organize and build community. What Young People Deserve The settlement generates headlines , but it will not solve the core problem. Instead of tackling Meta’s surveillance capitalism business model that turns all online content into potential profit and centers lining the company’s pockets over protecting the speech and privacy of users, this settlement gives the tech giant an opportunity to carve out a new digital world that prioritizes its own needs, not those of young people. As we’ve been calling attention to in other contexts, this will force young people into digital isolation—curtailing vital access to news and resources for health and development. It also completely ignores the calls of youths themselves who favor digital literacy and education over surveillance and government control. Young people deserve a better internet than one regulated through panic. They deserve better than the government or Big Tech getting to decide how they use social media and what they can or cannot be exposed to or learn about. They deserve better than having their right to free expression minimized. This must not be lost in the pursuit of building a better and safer online ecosystem and environment.",
+            "url": "https://www.eff.org/deeplinks/2026/09/meta-settlement-yet-another-example-online-youth-organizing-under-threat",
+            "source": "Electronic Frontier Foundation",
+            "category": "cloud",
+            "tags": [
+                "aws",
+                "git",
+                "internet",
+                "liberte",
+                "privacy"
+            ],
+            "published_at": "2026-09-16T16:04:50+00:00",
+            "collected_at": "2026-09-17T02:44:08.437817+00:00"
         },
         {
             "id": "344a5167ec757ffa239aeb1f4f173fa1c20c9ccbdd8a36a711aee256fe8a0b86",
@@ -2742,6 +3787,21 @@
             ],
             "published_at": "2026-09-16T13:14:05+00:00",
             "collected_at": "2026-09-16T15:52:17.046159+00:00"
+        },
+        {
+            "id": "8009c76a31476ca8c2be91b57a1045fec6465693be428a66be12d2d7a7b65701",
+            "title": "I replaced my brown-noise browser tab with a menu bar app",
+            "description": "Comments",
+            "url": "https://oldmanrahul.com/2026/09/14/hush/",
+            "source": "Hacker News",
+            "category": "web",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-16T13:11:57+00:00",
+            "collected_at": "2026-09-17T02:43:51.694856+00:00"
         },
         {
             "id": "9a262ecad05f618812a826fee9d90a185aae47f6f000b3bf8166dd2841823f81",
@@ -5811,6 +6871,21 @@
             "collected_at": "2026-09-16T02:39:39.456641+00:00"
         },
         {
+            "id": "2764e5adcfc5df9e544d35092f58bcc9302d196f6b96e70c331a6bf1b4969763",
+            "title": "The engineering behind the US Strategic Petroleum Reserve",
+            "description": "Comments",
+            "url": "https://johnjwang.com/post/2026/09/15/engineering-behind-us-strategic-petroleum-reserve",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-15T22:15:25+00:00",
+            "collected_at": "2026-09-17T02:43:51.693894+00:00"
+        },
+        {
             "id": "b886c53fc19beca1886f076fe57356292c20913e3a6b391586118ea3b291a10f",
             "title": "txcript: Switching coding agents mid-conversation",
             "description": "Comments",
@@ -5884,6 +6959,22 @@
             ],
             "published_at": "2026-09-15T21:47:38+00:00",
             "collected_at": "2026-09-16T02:39:35.725802+00:00"
+        },
+        {
+            "id": "58205fb8d02f24b8674c06539a0fa7700cf7a9e55a6dbc95f91f26462ff66afb",
+            "title": "AWS says it can't restore some data from mideast facilities struck by Iran",
+            "description": "Comments",
+            "url": "https://www.wsj.com/world/middle-east/aws-says-it-cant-restore-some-data-from-mideast-facilities-struck-by-iran-ddcb7e5d",
+            "source": "Hacker News",
+            "category": "cloud",
+            "tags": [
+                "aws",
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-15T21:41:42+00:00",
+            "collected_at": "2026-09-17T02:43:51.694423+00:00"
         },
         {
             "id": "a2b6e44e7722091cd4fcd3a102e8fac55f3200d2c409e60a8cd34588bfa3494f",
@@ -6525,6 +7616,21 @@
             ],
             "published_at": "2026-09-15T19:25:03+00:00",
             "collected_at": "2026-09-15T20:43:01.415717+00:00"
+        },
+        {
+            "id": "0d796f6ac76e45cc9aa0e8968fc499f874b10fc5c697675b186bc4d33d5c9174",
+            "title": "Mapsnap: Automated Georeferencing for Historic Sanborn Insurance Maps",
+            "description": "Comments",
+            "url": "https://www.danvk.org/2026/09/10/mapsnap.html",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-15T19:22:48+00:00",
+            "collected_at": "2026-09-17T02:43:51.694730+00:00"
         },
         {
             "id": "71879996cdf3824365559e4f27e9702bcea2a1808fdca3e1de484d5d2241745e",
@@ -13811,6 +14917,22 @@
             "collected_at": "2026-09-14T21:14:39.478176+00:00"
         },
         {
+            "id": "f3946aaad0fd1f2f0b0ac5d7ad8d0ad4ab6a26edd996c16a4b90e9ba45ce85f2",
+            "title": "Developing provably correct Rust code with Verus",
+            "description": "Comments",
+            "url": "https://www.amazon.science/blog/developing-provably-correct-rust-code-with-verus",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "rust",
+                "startup"
+            ],
+            "published_at": "2026-09-14T16:57:50+00:00",
+            "collected_at": "2026-09-17T02:43:51.693938+00:00"
+        },
+        {
             "id": "09d1dd4eafdffbfc8d8e23989218f89b5c06920b5a513a18d45db57a93dba409",
             "title": "Red Heron Exploits Gitea RCE to Compromise 13 Organizations Across Six Countries",
             "description": "A suspected Chinese threat actor tracked as Red Heron has been attributed to the rapid exploitation of a recently disclosed security vulnerability in Gitea to compromise internet-facing instances as part of a multi-national campaign. \"Red Heron scanned 1,386 Gitea instances across seven countries and maintained a separate dataset of 477 Taiwan-based systems,\" Acronis Threat Research Unit (TRU)",
@@ -20556,6 +21678,21 @@
             "collected_at": "2026-09-13T02:24:53.073347+00:00"
         },
         {
+            "id": "84c1bfcad6a57cc5007462f03a2ea514769ee36ca4193040d515853545500cbe",
+            "title": "Japan's book scene is moving from bookstores to libraries",
+            "description": "Comments",
+            "url": "https://untranslatedjp.substack.com/p/japans-book-scene-is-quietly-moving",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-12T22:35:25+00:00",
+            "collected_at": "2026-09-17T02:43:51.694256+00:00"
+        },
+        {
             "id": "99c3c3d0dc75f1449f06c109f4908ae253a4a16ec19aca38de82763e21866572",
             "title": "Giving up on smart rings",
             "description": "Comments",
@@ -24887,6 +26024,21 @@
             ],
             "published_at": "2026-09-11T16:11:08+00:00",
             "collected_at": "2026-09-11T20:16:52.346549+00:00"
+        },
+        {
+            "id": "7400a0ac408d5806fbf91b85e4e8560f2aeff54b9f39b24e6410d350d7068dae",
+            "title": "WalShadow: Sub-second Postgres replication to ClickHouse from physical WAL",
+            "description": "Comments",
+            "url": "https://clickhouse.com/blog/introducing-walshadow",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-11T16:09:09+00:00",
+            "collected_at": "2026-09-17T02:43:51.694900+00:00"
         },
         {
             "id": "fdf69001b12f995a0100fae458cf4bad1c12b0ef2d465d7e9a67f1368793f573",
@@ -128064,6 +129216,100 @@
             ],
             "published_at": null,
             "collected_at": "2026-09-16T20:43:36.493652+00:00"
+        },
+        {
+            "id": "cb281fd96f2ff97eacb50af7043fc22a5449190a5d11a7380c640f60bdcb45cd",
+            "title": "Snap is launching a new Specs AI tool, and it’s coming to iOS and Mac",
+            "description": "Snap is introducing \"Specs Intelligence,\" a new AI assistant that can connect other digital accounts to help you with things like work tasks and keeping track of travel information. It seems similar to AI assistants like Meta's Muse and Gemini's Spark, though Snap is pitching Specs Intelligence as an \"anticipatory AI service\" that \"helps you […]",
+            "url": "https://www.theverge.com/tech/996078/snap-specs-intelligence-ai-agent-ios-mac",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "gemini",
+                "git",
+                "intel",
+                "internet",
+                "ios",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-09-17T02:43:49.977460+00:00"
+        },
+        {
+            "id": "22a6aee739d2c47ef4b4ea7aa4a0935b4d5106c14114d9d2746de08a153a1a02",
+            "title": "I wore Snap’s $2,200 smart glasses",
+            "description": "My favorite part of wearing the Specs, Snap's new augmented reality glasses, was playing dominoes. Sitting across the table from a Snap employee wearing the same pair of chunky glasses, I could select a virtual domino with a pinch and then move my hand to drop it in place, watching the tile snap down in […]",
+            "url": "https://www.theverge.com/tech/996422/snap-specs-hands-on-ar-glasses",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-09-17T02:43:49.977559+00:00"
+        },
+        {
+            "id": "4d412859e266e8b7bf550e88096e76a9cd8dca928d0fe2a4c1d6a27d1a472f53",
+            "title": "The 2.5-hour AI-generated Odyssey movie is 2.5 hours too long",
+            "description": "Christopher Nolan's engrossing take on The Odyssey dominated at the box office and spurred a newfound interest in classic literature among filmgoers. But a new retelling of the story made entirely with AI is so bad that it might just make viewers hate the original tale altogether. The new film, called Odysseus: The Fall, comes […]",
+            "url": "https://www.theverge.com/entertainment/996499/ai-odyssey-movie-review",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-09-17T02:43:49.977675+00:00"
+        },
+        {
+            "id": "46aa3a71d1463843b203d49795c7aea16371fde40b3d07033b67407d71d2a589",
+            "title": "The AI data center e-waste problem is huge — and getting bigger",
+            "description": "E-waste from the AI boom has been vastly underestimated, a new report warns. By 2050, it could become enough trash to fill 23 million shipping containers - roughly enough 40-foot containers to circle the world six times if lined up in a row. It's a significantly higher estimate of AI's e-waste than previous studies have […]",
+            "url": "https://www.theverge.com/ai-artificial-intelligence/996470/ai-data-center-e-waste-ban",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-09-17T02:43:49.977774+00:00"
+        },
+        {
+            "id": "e6d7d097962da10e55438d11acbc80aa6a284031f61bab927cc66a4f7b4d309c",
+            "title": "Resident Evil is a comedy first and a thrilling nightmare second",
+            "description": "When Paul W.S. Anderson's Resident Evil hit theaters in 2002, video game movies were largely seen as a niche. Films like Mortal Kombat and Tomb Raider had proven that big-screen game adaptations could be successful, but the commercial and critical failure of projects like the 1993 Super Mario Bros. still cast a long shadow. And […]",
+            "url": "https://www.theverge.com/entertainment/996416/resident-zach-cregger-review",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-09-17T02:43:49.977866+00:00"
+        },
+        {
+            "id": "052728e9e2e7e5df5f2ea8d4db42f7047ca4a730390e6a6a016b27f27fbab8d9",
+            "title": "Walmart takes a bite off the cost of Metroid Ravenous physical preorders",
+            "description": "The Metroid series is going back to its 2D roots again with Metroid Ravenous for the Nintendo Switch 2, the first side-scrolling game in the series since 2021’s Metroid Dread for the Nintendo Switch. If you’re already excited enough to consider preordering, you can save $10 on the physical version of the game when you […]",
+            "url": "https://www.theverge.com/gadgets/996379/metroid-ravenous-preorder-deal-sale",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-09-17T02:43:49.977958+00:00"
         }
     ]
 }
