@@ -1,7 +1,623 @@
 {
-    "updated_at": "2026-09-20T02:42:28.676561+00:00",
-    "count": 9371,
+    "updated_at": "2026-09-20T10:23:03.946601+00:00",
+    "count": 9420,
     "articles": [
+        {
+            "id": "a87dd9c26b15586086ed5b41c7a4570b8f03057c44e8c78daf3eeff01596b36d",
+            "title": "Building a tested calculator in the Uniface 10 IDE",
+            "description": "Uniface is one of those tools you rarely read about, but that still runs a surprising amount of business software. I work with it regularly, and I wanted a small, self-contained project to try out a few things properly: a clean structure, input validation and - the part you almost never see in Uniface examples - automated tests. The result is a calculator with a modern flat look, about 25 functions (basic arithmetic, powers, roots, trigonometry, logarithms, rounding, memory, history) and a test service with 69 test cases. Everything here was built with Rocket Uniface 10 Community Edition (10.4) , so you can follow along for free. The architecture in one picture CALC_FRM (Form) CALC_SVC (Service) CALC_TEST_SVC (Service) - fields & buttons ---> - public operations <--- - exec -> RUN_ALL - checks empty fields - all math - 69 test cases - shows errors - validation - PASS/FAIL via putmess - history - returns 0 / -1 + text The most important decision: the form does not calculate anything . It collects input, calls the service and displays the result. That is what makes the logic testable at all. Step 1: A modeled entity without a database A Uniface form needs at least one entity - if you try to compile a form without one, you get: error: 1017 - Compiling a component without entities is not allowed. For a calculator there is no table, so I created a modeled entity that is not in the database : Model: CALCULATOR_MDL Entity: CALCULATOR_DMY (Database Behavior: Not in Database ) Fields: NUMBER1 , NUMBER2 , RESULT - data type Numeric You will see warnings like 1065 - Field ... might be truncated on output to DBMS and 1072 - Scaling ... changed to 8 when compiling. Since the entity is never written to a database, they are harmless. Step 2: The form Create a Non-modal Form ( CALC_FRM ), drag the entity into it and add: the three modeled fields for input and result, non-modeled fields for CALCULATION (last calculation), MEMORY and HISTORY (multi-line edit box), one Command Button per function ( BTN_ADD , BTN_SQRT , BTN_SIN , ...). The button caption is the field's Initial Value ( + , √x , sin , ...). The flat look comes entirely from the widget properties, for example for the blue operator buttons: BACKCOLOR=#2563EB; FORECOLOR=#FFFFFF; BACKCOLORFILL=flat; BACKCOLORHOVER=#1D4ED8; BACKCOLORSELECT=#1E40AF; FONT=SANSLARGE TOOLTIPTEXT=Add: Number 1 + Number 2 Grey buttons for functions, indigo for memory, red for \"C\" - three or four colour groups are enough to make an old-school form look surprisingly current. Step 3: The logic lives in a service CALC_SVC is a plain Service component. Every function is a public operation with the same shape: public operation DIVIDE params numeric pA : IN numeric pB : IN numeric pResult : OUT string pError : OUT endparams pError = \"\" if (pB = 0) pError = \"Division by 0 is not possible.\" return -1 endif pResult = pA / pB return 0 end The convention is simple: return 0 on success, -1 on error, and put a readable message into pError . The caller never has to know which error happened - it just shows the text. Unary functions ( SQRT , SIN , FACTORIAL , ...) have the same signature without pB . Shared helpers such as the sine/cosine series or the natural logarithm are private entry blocks inside the service, so both LN and LOG use the same code: public operation LOG params numeric pA : IN numeric pResult : OUT string pError : OUT endparams variables numeric vLn endvariables pError = \"\" if (pA <= 0) pError = \"The logarithm is only defined for numbers greater than 0.\" return -1 endif call NATURAL_LOG(pA, vLn) pResult = vLn / 2.302585092994045684 return 0 end To keep the project self-contained, I implemented the transcendental functions myself in ProcScript: Taylor series for sine and cosine (after normalising the angle to -180..180 degrees), a series for ln after scaling the argument into 0.5..2, \"halve, expand, square back\" for e^x , and Newton's method for square roots. It is a nice exercise, and the tests below show whether the approximations are good enough. Step 4: A button trigger Each button's detail trigger follows the same pattern: trigger detail throws variables numeric vResult string vError endvariables call VALIDATE_INPUT if ($status < 0) return 0 endif if (NUMBER1.CALCULATOR_DMY = \"\" | NUMBER2.CALCULATOR_DMY = \"\") message/error \"Please enter both numbers.\" return 0 endif activate \"CALC_SVC\".ADD(NUMBER1.CALCULATOR_DMY, NUMBER2.CALCULATOR_DMY, vResult, vError) if ($status < 0) message/error vError return 0 endif RESULT.CALCULATOR_DMY = vResult call LOG_CALCULATION($concat(NUMBER1.CALCULATOR_DMY, \" + \", NUMBER2.CALCULATOR_DMY, \" = \", RESULT.CALCULATOR_DMY)) end After activate , $status holds the return value of the operation, so the -1 from the service arrives directly in the form. LOG_CALCULATION is a component entry that rounds the result for display, writes it into CALCULATION and prepends it to HISTORY . In a Uniface multi-line field, %%^ is the line separator: HISTORY.CALCULATOR_DMY = $concat(vText, \"%%^\", HISTORY.CALCULATOR_DMY) Step 5: The input validation trap This one surprised me. Type 2-1 into a numeric field and tab out - Uniface rejects it and keeps the focus in the field. Fine. But type 2-1 and click a button directly , and the trigger runs anyway. The field's raw text is still 2-1 , while the numeric value used in the calculation is 2 . So ln(2-1) happily returned 0.693... - the logarithm of 2. The fix is an explicit check before every calculation. The service has a VALIDATE_NUMBER operation that walks through the raw string: while (vPos <= vLen) vChar = pValue[vPos:1] if ($scan(\"0123456789\", vChar) > 0) vDigits = vDigits + 1 elseif (vChar = \".\") vDots = vDots + 1 elseif (vChar != \"-\" | vPos != 1) pError = $concat(pLabel, \" is not a valid number. Use digits, one dot as decimal separator and an optional leading minus sign.\") return -1 endif vPos = vPos + 1 endwhile The form calls it for both fields in its VALIDATE_INPUT entry. Accepted: 42 , -3.5 . Rejected: 2-1 , 2,5 , 1.5.2 , - , abc . Step 6: Tests in ProcScript You don't need a test framework for this. A test service with an exec operation is enough, because Compile & Test on a service runs exec : public operation exec activate $instancename.RUN_ALL() return $status end Two small helper entries do the assertions. CHECK_VALUE compares with a tolerance (the series only approximate), CHECK_ERROR expects a negative status: entry CHECK_VALUE params string pName : IN numeric pExpected : IN numeric pActual : IN numeric pStatus : IN numeric pTests : INOUT numeric pFailures : INOUT endparams variables numeric vDiff endvariables pTests = pTests + 1 vDiff = pActual - pExpected if (vDiff < 0) vDiff = 0 - vDiff endif if (pStatus < 0 | vDiff > 0.000001) pFailures = pFailures + 1 putmess $concat($concat(\"FAIL: \", pName, \" (expected \", pExpected), $concat(\", got \", pActual, \")\")) else putmess $concat(\"PASS: \", pName) endif end A test case is then three lines: activate \"CALC_SVC\".SIN(30, vResult, vError) vStatus = $status call CHECK_VALUE(\"SIN 30\", 0.5, vResult, vStatus, vTests, vFailures) activate \"CALC_SVC\".TAN(90, vResult, vError) vStatus = $status call CHECK_ERROR(\"TAN 90\", vStatus, vTests, vFailures) The suite covers every operation with normal values, edge cases and expected errors - for example ROUND(-2.5, 0) = -3 , LOG(0.01) = -2 , 10! = 3628800 , division by zero, 0 ^ -1 , 2 ^ 0.5 (only whole-number exponents are supported), FACTORIAL(2.5) and all the validation strings above. The putmess output ends up in the session log ( log\\ide_<pid>.log in your Uniface user folder): PASS: ADD 2 + 3 PASS: DIVIDE 1 / 0 (error expected) PASS: SIN 30 ... PASS: VALIDATE 2-1 (error expected) Calculator: 69 tests, 0 failures One caveat worth knowing: a CHECK_ERROR test would also pass if the service could not be activated at all. That is acceptable here because dozens of CHECK_VALUE tests would fail in the same situation - but if you write a suite that only checks errors, test the activation separately. Pitfalls I ran into $concat has an argument limit. A call with seven arguments failed with 1000 - Syntax error (Wrong number of arguments) . Nesting two $concat calls fixes it. askmess vs. message/error . askmess without options shows a Yes/No dialog - odd for an error. message/error shows a proper error box with OK. The script editor has two sections. Each object in Write Script has a Declarations and a Script section. If you select all and paste a trigger, it can end up in Declarations . Paste into the Script section. Don't touch the repository while the IDE is running. The Community Edition keeps its repository in a local SQLite file ( dbms\\usys.db ). Editing it with an external tool while the IDE was open made the IDE hang, and it would not start again until I restored a backup. Make every change through the IDE - or at least close it first and keep a copy. Wrap-up None of this is exotic - it is the same separation you would use in any other stack: UI in one place, logic in a service with a clear contract, and tests that call the service directly. What I like is how little Uniface needs for it: no framework, no plugins, just a service with an exec operation and putmess . If you are maintaining Uniface applications, the pattern scales: move logic out of form triggers into services one piece at a time, and put a test service next to each one before you change anything. How do you test your Uniface code - or do you? I would be curious to hear about other approaches in the comments. Disclosure: This article was created with the help of AI",
+            "url": "https://dev.to/f345345dfg/building-a-tested-calculator-in-the-uniface-10-ide-c73",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "git",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-20T10:15:30+00:00",
+            "collected_at": "2026-09-20T10:22:48.953302+00:00"
+        },
+        {
+            "id": "a0d29bfeb75142f380840418eafad40125a66dbc80fb2a19a15765cabc9fe936",
+            "title": "Collapse of mainstream optical drive supply kills high-end CD players — PS Audio and Naim halt production as component costs double",
+            "description": "PS Audio and Naim had to cease production of two Hi-Fi models as manufacturers quit making optical drives, even as CD and vinyl have hit record sales in recent months.",
+            "url": "https://www.tomshardware.com/peripherals/audiophiles-in-trouble-as-manufacturers-cease-optical-drive-production-hi-fi-cd-players-require-extensive-rework-to-use-components-from-other-companies",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "pc"
+            ],
+            "published_at": "2026-09-20T10:05:00+00:00",
+            "collected_at": "2026-09-20T10:22:51.086499+00:00"
+        },
+        {
+            "id": "df5c5c16aba0c2b684e0e04fbe17ee951ad2f6c80101d9ca8094009864844cf0",
+            "title": "Using non-breakable spaces in test method names",
+            "description": "Comments",
+            "url": "https://mnapoli.fr/using-non-breakable-spaces-in-test-method-names",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-09-20T10:04:37+00:00",
+            "collected_at": "2026-09-20T10:22:48.788509+00:00"
+        },
+        {
+            "id": "96ab48fba4b68ff4f161f12f15de4104cc95f59e555c817a453056763ebaf802",
+            "title": "Point the official Sentry SDK at self-hosted ingest (DSN only)",
+            "description": "You don’t need a forked Sentry SDK. Keep @sentry/browser or @sentry/node , change only dsn , then prove /health → HTTP 202 → Issues. Two containers (app + Postgres 16); leave replay, traces, and profiles at sample rate 0 — those envelope items are out of scope. What you will do Clone and docker compose up Confirm GET /health → {\"status\":\"ok\"} Install a pinned official SDK ( 7.120.0 ) Sentry.init with your DSN and zeroed unused sample rates captureException and expect ingest 202 , then an Issues row Optional: raw store / envelope curls if the SDK path is noisy Two containers, one health check Clone the public tree and start compose from the repo root: git clone https://github.com/epure-sh/epure.git cd epure docker compose up Two services: the app image and postgres:16-alpine . No Redis. No separate worker fleet on this laptop path. If port 8080 is taken: cp .env.example .env # set EPURE_PORT and EPURE_PUBLIC_URL together, then recreate the app container Wait for health: curl -sS http://localhost:8080/health Expected body: { \"status\" : \"ok\" } Open http://localhost:8080 . Register in the UI, or for local smoke only (never production): ./scripts/seed-dev.sh Copy the DSN (only thing that changes) From the dashboard: Settings → SDK connection (or the setup checklist). Create a key if none exists. Shape: http://{public_key}@localhost:8080/{project_id} Migrating from Sentry SaaS? Keep the same init options. Replace only dsn . Init once, throw once Pin the fixtures the public docs exercise: # browser SPA npm install @sentry/browser@7.120.0 # or Node API / worker npm install @sentry/node@7.120.0 Browser example: import * as Sentry from \" @sentry/browser \" ; Sentry . init ({ dsn : \" http://YOUR_PUBLIC_KEY@localhost:8080/YOUR_PROJECT_ID \" , environment : \" local \" , release : \" my-app@0.0.0 \" , tracesSampleRate : 0 , profilesSampleRate : 0 , replaysSessionSampleRate : 0 , replaysOnErrorSampleRate : 0 , }); Sentry . captureException ( new Error ( \" Epure quickstart test \" )); Node is the same shape with @sentry/node . Set unused sample rates to 0 . Transactions, session replay, and profiles are discarded on an exception-only host — zeroing them stops the SDK from sending work you will never see in Issues. Confirm 202, then Issues Ingest accepts before the Issues row appears. A successful SDK or store/envelope POST returns HTTP 202 with a body like: { \"id\" : \"660e8400-e29b-41d4-a716-446655440001\" } Refresh http://localhost:8080 . Match the environment filter chip to Sentry.init ( local in the example). You want an unresolved issue for Error / Epure quickstart test . Empty feed copy looks like 0 UNRESOLVED EXCEPTIONS . That alone is not proof of failure — see the checklist below. Optional: curl without an SDK Useful when you need to separate “SDK wiring” from “host ingest.” Seed IDs below match ./scripts/seed-dev.sh in the public docs. Change host if EPURE_PORT is not 8080 . Legacy store JSON: curl -sS -D - -o /tmp/epure-ingest.json -X POST \\ \"http://localhost:8080/api/550e8400-e29b-41d4-a716-446655440000/store/\" \\ -H \"X-Sentry-Auth: Sentry sentry_version=7, sentry_key=a1b2c3d4e5f6g7h8i9j0, sentry_secret=supersecretdevkey\" \\ -H \"Content-Type: application/json\" \\ -d '{ \"platform\": \"javascript\", \"exception\": { \"values\": [{ \"type\": \"Error\", \"value\": \"Epure try-it\" }] } }' Expect HTTP/1.1 202 Accepted and an id in the JSON body. Envelope path (same auth, binary body from the repo): curl -sS -D - -o /tmp/epure-envelope.json -X POST \\ \"http://localhost:8080/api/550e8400-e29b-41d4-a716-446655440000/envelope/\" \\ -H \"X-Sentry-Auth: Sentry sentry_version=7, sentry_key=a1b2c3d4e5f6g7h8i9j0, sentry_secret=supersecretdevkey\" \\ -H \"Content-Type: application/x-sentry-envelope\" \\ --data-binary @fixtures/sentry/browser/envelope.txt Endpoints that matter: Method Path POST /api/{project_id}/store/ POST /api/{project_id}/envelope/ GET /health When 202 is a lie 202 means auth + schema accepted. It is non-blocking. It does not mean “row visible in Issues yet.” Checklist when the feed stays empty after a 202 : Wait, then refresh — accept is ahead of the worker. One immediate refresh is not final. Environment chip — UI filter must match environment in Sentry.init ( local in the examples). Project / DSN mismatch — open the project that owns the key you put in dsn . Wrong host or port — EPURE_PUBLIC_URL / EPURE_PORT drift after a .env change without recreating the app container. SDK still talking to SaaS — leftover dsn , or a second Sentry.init later in boot. If store curl returns 202 but the SDK path does not, debug the client. If both miss 202 , debug the host ( docker compose logs on the app service, health, DSN key). What this host is not Exception-only lane. Do not expect APM, session replay, profiling, log product, or mobile SDKs to “just work” because the DSN looks familiar. JS/TS source maps are a separate verify step (upload + prove demangled frames) — out of scope here. Do not write “100% Sentry compatible” in a PR description or a README badge. Honest subset: official SDK, DSN swap, exceptions, envelope/store. FAQ Does Sentry JS 8.x work? Often yes. CI fixtures are 7.120.0 . On v8+, set enableTracing: false when the option exists, and keep traces / profiles / replay sample rates at 0 . Pin 7.120.0 if you want the same line the docs exercise. Confirm with a real throw, not only a green install. Can I use Python or curl only? Yes. Envelope and store accept official Sentry SDKs and raw JSON. Store is the smallest wire path. Phase 1 demangle stays JS/TS only, so frames stay as sent for other runtimes. Do I need Redis? No. Two containers for this path: app + Postgres 16. Laptop compose in production? No. Use the production overlay and a real .env from .env.production.example . Seed script and example DB passwords are local smoke only. Canonical docs Quickstart (this flow): https://epure.sh/docs/get-started/quickstart Install / Postgres 16 / prod overlay: https://epure.sh/docs/self-hosting/installation If those URLs 404 someday, the commands above still stand: health JSON, store/envelope 202 , DSN host swap, sample rates at 0 . Discussion After ingest returns 202 but Issues stays empty — do you check the environment chip, project/DSN match, or worker lag first?",
+            "url": "https://dev.to/amorizz/point-the-official-sentry-sdk-at-self-hosted-ingest-dsn-only-3ij2",
+            "source": "DEV Community",
+            "category": "devops",
+            "tags": [
+                "developpement",
+                "docker",
+                "git",
+                "java",
+                "javascript",
+                "programmation",
+                "python",
+                "web"
+            ],
+            "published_at": "2026-09-20T10:00:44+00:00",
+            "collected_at": "2026-09-20T10:22:48.954246+00:00"
+        },
+        {
+            "id": "c22fbde0044d6e162368356218baa0dbe5d626d981fb4563b12806b18f22ed7d",
+            "title": "This simple Duolingo trick brings back hearts and gets rid of the annoying ads",
+            "description": "If you hate what the app has become, you might want to give this a try.",
+            "url": "https://www.androidauthority.com/duolingo-web-app-trick-3711603/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-09-20T10:00:10+00:00",
+            "collected_at": "2026-09-20T10:22:56.438716+00:00"
+        },
+        {
+            "id": "e3b2fdfe9ba28761b88a8f87e6bcd2bed69fdcf66f89fe1c5e7a6b2178a71de1",
+            "title": "FastAPI's new app.frontend() fixes a route-order bug in manual SPA serving",
+            "description": "Put a FastAPI catch-all route above your API route by mistake and a request to /api/ping returns HTTP 200. The body is your single-page app's index.html , not your JSON. No error, no 404, nothing in the logs that looks wrong. I found this while testing app.frontend() , the new call FastAPI shipped across versions 0.138.0 to 0.141.0, between 20 June and 29 July this year. Serving a single-page app from FastAPI has meant one of two things until now. Mount StaticFiles at / and you get correct asset serving but no fallback for client-side routes, so a hard refresh on /settings/profile 404s. Or write a catch-all @app.get(\"/{full_path:path}\") that falls back to index.html , which fixes the deep link but only works if you remember to declare it after every API route. app.frontend() is meant to replace both. I set up FastAPI 0.141.1 locally and tried to break it. The order bug, reproduced I wrote three small apps that all serve the same dist/ directory (one index.html , one assets/app.js ) alongside a GET /api/ping route, varying only the order the routes are declared in and which mechanism serves the frontend. With the catch-all declared first: $ curl -s -o /dev/null -w '%{http_code}\\n' http://127.0.0.1:8002/api/ping 200 $ curl -s http://127.0.0.1:8002/api/ping <!doctype html> <html>< head > <title>demo</title></head><body><h1>spa shell</h1></body></html> That's a live API route, returning a 200, with a completely different body. Nothing about that response tells you it went to the wrong handler. With StaticFiles mounted at / first instead of a catch-all function: $ curl -s -o /dev/null -w '%{http_code}\\n' http://127.0.0.1:8003/api/ping 404 $ curl -s http://127.0.0.1:8003/api/ping {\"detail\":\"Not Found\"} Different failure, same root cause: whichever route matches / first wins, and Starlette matches in declaration order, so the person adding a /api/ping route six months after the frontend was wired up has no way to know they need to add it before the mount. Now the same layout with router.frontend(\"/\", directory=\"dist\") called before app.include_router() , deliberately in the wrong position to see if it mattered: $ curl -s -o /dev/null -w '%{http_code}\\n' http://127.0.0.1:8004/api/ping 200 $ curl -s http://127.0.0.1:8004/api/ping {\"pong\":true} It didn't matter. Reading the source in fastapi/routing.py explains why: frontend routes are stored separately as _low_priority_routes and only checked after every ordinary path operation has failed to match, regardless of where .frontend() appears in the file. That's a routing behaviour, not a coding-style convention, so it survives someone reordering the file later. The 404 that a catch-all can't tell from a page The catch-all pattern has a second problem I hadn't thought about until I tried it: it can't distinguish \"the user navigated to a client-side route\" from \"the browser asked for an asset that doesn't exist\". Both are unmatched GET requests, and the naive version returns index.html for both. $ curl -s -o /dev/null -w '%{http_code}\\n' -H 'Accept: application/json' \\ http://127.0.0.1:8001/assets/app-typo.js 200 A typo'd script path returns 200 and an HTML document. If that request came from a build step checking that its own bundle exists, it would pass. app.frontend() checks the Accept header before deciding whether to fall back. A request for the same path, same server, with an Accept: application/json header: $ curl -s -o /dev/null -w '%{http_code}\\n' -H 'Accept: application/json' \\ http://127.0.0.1:8004/assets/app-typo.js 404 And a request for an unmatched path with Accept: text/html , which is what a browser sends on navigation, still gets the SPA shell: $ curl -s -o /dev/null -w '%{http_code}\\n' -H 'Accept: text/html' \\ http://127.0.0.1:8004/some/client/route 200 That distinction lives in _is_frontend_navigation_request() , which looks for text/html or application/xhtml+xml in the Accept header. Plain StaticFiles(html=True) , correctly mounted after the API routes this time, doesn't do either of these things by default — a request to /some/client/route 404s outright, which is the exact deep-link problem the catch-all exists to solve in the first place: $ curl -s -o /dev/null -w '%{http_code}\\n' http://127.0.0.1:8005/some/client/route 404 Two smaller gaps HEAD requests against the catch-all pattern fail with 405, because @app.get only registers GET : $ curl -sI http://127.0.0.1:8001/assets/app.js | head -1 HTTP/1.1 405 Method Not Allowed app.frontend() registers {\"GET\", \"HEAD\"} explicitly, and so does a plain StaticFiles mount, so this is specific to the catch-all, not something the old approach always got wrong. I assumed at first that HEAD would fail the same way on the mount-based version too, and it doesn't — worth checking before you generalise a finding like this. Protecting the frontend with auth is a bigger gap in the old pattern than I expected. app.mount() and StaticFiles() take no dependencies argument at all: $ python3 - c \" from fastapi import FastAPI, Depends from fastapi.staticfiles import StaticFiles app = FastAPI() app.mount( ' / ' , StaticFiles(directory= ' dist ' ), dependencies=[Depends(lambda: None)]) \" TypeError : Starlette . mount () got an unexpected keyword argument ' dependencies ' There's no built-in way to gate a static mount behind a dependency; you'd reach for ASGI middleware instead, which is a different API to learn just for this one thing. app.frontend() inherits whatever dependencies are set on its router, so wrapping it in an APIRouter(dependencies=[Depends(require_token)]) protects the SPA shell and every asset under it in one line, while leaving unrelated routes on the same app untouched: Request Without token With token GET / 401 200 GET /assets/app.js 401 200 GET /api/ping 200 (unaffected) 200 The number that argues against a clean win None of this is free if it comes at a performance cost, so I benchmarked asset serving on the correctly-configured version of the old pattern ( StaticFiles , mounted after the API routes) against app.frontend() , 3,000 requests at a concurrency of 20, three runs each: run 1 run 2 run 3 StaticFiles mount 442 req/s 445 req/s 441 req/s app.frontend() 440 req/s 430 req/s 449 req/s That's noise, not a trend — the two are within about 2% of each other across all six runs, and the p50 latency (~26ms on this single-worker dev server) matched in every pair. I also compared an app with no frontend registered at all against one that had app.frontend() wired up, to see whether just having the low-priority route group present slows down ordinary API dispatch: baseline (no frontend) with app.frontend() run 1 457 req/s 462 req/s run 2 443 req/s 455 req/s run 3 460 req/s 460 req/s Also no measurable difference. I went in expecting the \"check every ordinary route first, then fall through to low-priority routes\" design to cost something on the API path, and it doesn't show up at this request volume. I'd want a much bigger route table before trusting that this holds at scale, but at the size of a normal service it's a wash. What I got wrong on the way My first attempt at the auth test didn't actually call Mount() with a dependencies keyword — I'd written the \"old\" auth app to just mount StaticFiles plainly and assumed the absence of a dependency error meant the test had failed to run. It hadn't; I'd just forgotten to pass the argument I meant to test. Once I added dependencies=[Depends(...)] to the mount() call directly, the TypeError in the second finding above showed up immediately. It's a reminder that a passing test and a test that never exercised the thing you meant to check look identical until you read the code you wrote. I also assumed the HEAD gap would apply to both old patterns, since they're both \"the old way\" in the loose sense. It doesn't — the mount-based version handles HEAD fine, because StaticFiles always has. Only the hand-written catch-all misses it, since a bare @app.get doesn't imply HEAD support the way app.frontend() and StaticFiles both do. What I didn't get to check_dir=\"auto\" behaves exactly as documented: it raises RuntimeError at startup if the frontend directory is missing and FASTAPI_ENV isn't \"development\" , and only warns if it is. Path traversal attempts ( ../../../etc/passwd , URL-encoded variants) 404 on both the old and new approach, which is inherited from StaticFiles in either case and isn't new behaviour worth a full section. I didn't test this against a production ASGI setup with multiple Uvicorn workers, only the single-worker dev server, so the throughput numbers above are a comparison between two configurations, not an absolute figure for what either can do. Run it yourself This needs fastapi[standard]==0.141.1 and httpx in a virtualenv, plus a dist/index.html and dist/assets/app.js to serve: python3 -m venv venv && ./venv/bin/pip install 'fastapi[standard]==0.141.1' httpx mkdir -p dist/assets echo '<!doctype html><h1>spa shell</h1>' > dist/index.html echo 'console.log(\"hi\")' > dist/assets/app.js The order-bug reproduction, trimmed to the two cases that matter: # server.py import sys from fastapi import APIRouter , FastAPI MODE = sys . argv [ 1 ] app = FastAPI () if MODE == \" old_wrong_order \" : @app.get ( \" /{full_path:path} \" ) async def spa_fallback ( full_path : str ): from fastapi.responses import FileResponse return FileResponse ( \" dist/index.html \" ) @app.get ( \" /api/ping \" ) def ping (): return { \" pong \" : True } elif MODE == \" new_any_order \" : router = APIRouter () router . frontend ( \" / \" , directory = \" dist \" ) app . include_router ( router ) @app.get ( \" /api/ping \" ) def ping (): return { \" pong \" : True } if __name__ == \" __main__ \" : import uvicorn uvicorn . run ( app , host = \" 127.0.0.1 \" , port = int ( sys . argv [ 2 ])) Run both and compare: ./venv/bin/python server.py old_wrong_order 8002 & ./venv/bin/python server.py new_any_order 8004 & sleep 1 curl -s http://127.0.0.1:8002/api/ping # HTML, not JSON curl -s http://127.0.0.1:8004/api/ping # {\"pong\":true} I ran this exact pair of commands to produce the output quoted above. What to do with this If you're already serving a SPA from FastAPI with a hand-rolled catch-all, check whether it's declared before or after your newest API routes — the failure mode is silent, so grep for {full_path:path} and read the file top to bottom rather than trusting that it's still in the right place. If you're starting a new project on FastAPI 0.138 or later, app.frontend() removes the ordering constraint entirely and gets HEAD and Accept-aware fallback for free, and there's no measured throughput cost for switching. If you need to put the frontend behind auth, that's the one case where the old pattern doesn't have a clean answer at all, and it's worth moving to app.frontend() for that alone.",
+            "url": "https://dev.to/alexgeorgiev17/fastapis-new-appfrontend-fixes-a-route-order-bug-in-manual-spa-serving-4mm8",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "programmation",
+                "python",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-09-20T10:00:00+00:00",
+            "collected_at": "2026-09-20T10:22:48.955943+00:00"
+        },
+        {
+            "id": "704eee782dd5f5db40aa9af3e538695a447aa98725bb6f9f611e13fa439b34a6",
+            "title": "Using claude routines with github",
+            "description": "Intro I've been using claude for some time now. I haven't touched on routines in claude yet, and thought that this would be a good opportunity to play around with them and explore them. The official claude docs say this: Put Claude Code on autopilot. Define routines that run on a schedule, trigger on API calls, or react to GitHub events from cloud infrastructure. I thought to myself \"could I get rid of actions entirely?\" and set about to find out! What are routines? Routines are saved configurations (prompts) inside claude code. They run on Anthropics infrastructure, and can be connected to one or more repositories. Routines run on Anthropics infrastructure and can respond to API requests or to Github events (like pull requests). The third option is more like cron, where routines are scheduled for particular times and just run, again this is on Anthropic's infrastructure and they will run when your personal instance of claude is not running. This means that routines can run when I am no longer around. This is interesting. Getting Started In order to get started you simply log into the web interface of claude code and hit the routines page. https://claude.ai/code/routines From here I create a new routine. As part of my new routine, I give it a name. In my case, I am going to ensure that all of my pull requests update the README.md in my repo. There are three actions that I need to take at this point: Add a prompt Select a repository Select a trigger In my case, the prompt gives instructions on what to do with the README. I select one of my repositories, which in my case, is my space invaders game. Lastly, I select a trigger. In my case, I am selecting a github pull request. Triggers There are three types of triggers. Each one has different use cases. Schedule: This trigger type is a more simple type, where you want to run an agentic workflow on a schedule. For example \"Search my google calendar and send me an email summarising my day\". You could schedule this for 7am each morning. Github event: This is where you can choose a github event type and automatically have the workflow kick off. In my case I chose a pull request as the trigger. Other out of the box event types are PR merged, Release published and Issue opened. API: This is probably the most flexible. It gives you a URL and a token that means the routine can be called via a POST request. This is incredibly flexible because it can be embedded in other code, or an external orchestrator. Notifications There is also an option to include notifications as part of the routine. The default options for notifications are: Push Notifications: Send notifications to the claude app. This works for both the mobile and desktop apps. Email: Send an email notification to the email in your account. Slack: Send a slcak message (requires slack to be connected) Workflow created Once the workflow has been successfully created, you can see both the workflow details on the right hand side panel, but also any runs that have occurred. The very first time that you run you may see a note that the github app is not installed. Click on the link to install the github app and grant the appropriate permissions. Once the app is authorised and you have selected a repository, then click install. After everything is installed, you should be redirected back to the installed connectors page in your claude web browser. This should now show that the github integration is installed. Creating a PR Now that my routine is created inside claude, and will run inside Anthropic, not on my laptop, it's time to create a pull request on my repo. I'm going to use the web based interface from github just to prove that nothing is running on my laptop. The first thing to note is that there is no README present in the repository at all. I add a single comment to the shell script that I use to kick off the web server and serve the html space invaders game. This is kicked off using python's inbuilt http.server . This is not really very efficient or robust, but does work for local testing. I simply add a comment to this effect to the file. I commit this to a new branch and start a new pull request. This should kick off my workflow and my routine. Remember that the trigger i defined earlier was a new PR being created. I them create the pull request. After a short amount of time, the pull request is updated with the information from my routine. I can see that there is a new section within the PR that says \"Add comprehensive Readme\". This is exactly what my routine has done. When I look at the actual content of the pull request, I can see that a new file called README.md has been added and the content shows that a comprehensive readme describing the code has been added. Routine What does the routine look like after it's been fired by the pull request? The image below shows that the routine has fired, a commit has been added to the PR and all of the normal claude reasoning and tool use is available. Using an API trigger What if I want something to run via an API trigger instead? Adding an API trigger is very easy. I can simply edit the existing routine. When I edit the routine, I have the option to add an additional trigger. Adding the new trigger gives me a URL that's specific to that trigger. I also get a token that I can use to call the trigger. Helpfully, I can also expand the option for an example curl request. This is really helpful when I want to test, and has all of the appropriate headers set for me. I call the routine and pipe the output through jq so that it is formatted nicely. This gives me a session id, a url and a type field, which in this case is \"routine_fire\". I can use this method to fire the routine from anywhere, be it an external orchestrator, or a a terminal session using curl. The idea here is obvious, I not have the ability to fire agentic routines from anywhere. Once I have called the trigger, I get output in the claude code routines panel that shows the routine has run an in this case, it has done nothing. As my routine is tied to an existing pull request, nothing will occur if there is no pull request outstanding. Additional data If you noticed, the example curl request presented had a rather interesting part to it. The request has a data section that says \"optional extra turn turn appended to the session\" . I thought to myself \"I wonder if I could just add another turn to this\", so I tried it. -H \"Content-Type: application/json\" -d '{\"text\": \"if no pull request exists, then validate the code against the readme anyway. If no readme exists, create it. Make a new PR if needed.\"}' This is a new turn to stop the previous behaviour where no PR exists so the routine simply burns tokens and doesn't do anything. What should happen this time when I fire the routine with the API is a new PR should be created even if there is no existing PR. The routine run correctly identifies that there is no existing PR in place. It also correctly opens a new one and assesses the code against the README (which doesn't exist). When I go and check the repository, I can see that a new PR has been raised and it has much the same content as the routine output. The cool part is that it is nicely formatted and is readable within the github interface. No further formatting is required on my part. There is probably a complete other blog post here about defensive AI programming / prompting where a routine like this cannot simply burn tokens with no meaningful output. Summary Claude code routines are a neat way of interacting with your github repo. I am still not sure whether or not this kills off actions or not. I think ultimately, actions will become a lot more simple. The ability to fire a routine from a PR, or even a generic API request adds a level of flexibility that allows for integration into the modern developer lifecycle. I can fire a routine associated with my codebase on a schedule, from a github event or via an API call. I can do this from github, an external orchestrator or anything else. Imagine a use case where I perform a regular security scan across my codebase and send the results to slack or use the results to fire off a code review and further actions on my codebase. Routines let me get creative with the actions and activities that can occur on my codebase.",
+            "url": "https://dev.to/codecowboydotio/using-claude-routines-with-github-501f",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "anthropic",
+                "developpement",
+                "git",
+                "programmation",
+                "python",
+                "web"
+            ],
+            "published_at": "2026-09-20T09:59:11+00:00",
+            "collected_at": "2026-09-20T10:22:48.956959+00:00"
+        },
+        {
+            "id": "1f295f3b37d717118c76cfb5eb45dd6cdc7f26068774f59326eb64709daa870b",
+            "title": "The secret was correct. The first byte wasn't.",
+            "description": "Our deploy tool pushed a fresh API token to production. It reported success. The token was correct. Every request then failed with this: Cannot convert argument to a ByteString because the character at index 7 has a value of 65279 which is greater than 255. Character 65279 is U+FEFF, a byte-order mark. Index 7 is the first character after Bearer . Something had prefixed a BOM onto our token, between reading it out of the vault and storing it at the platform. The value was right. The bytes were not. Why we could not just look The obvious move is to open the dashboard and read the variable. You cannot. The variable is marked Sensitive , which means it is write-only: the dashboard shows nothing, the CLI shows nothing, and the API returns the row with the value omitted entirely. That is good security. It is also a total audit blind spot, and it is the reason this took an hour instead of a minute. We had a credential that was wrong in a way nothing could show us, in a store designed so that nobody — including us — could read it back to check. The repro is two lines The push script read the secret from the vault and piped it to the platform CLI. That pipe is the bug. Windows PowerShell 5.1: 'SECRETVALUE' | node -e \"process.stdin.on('data',d=>console.log(JSON.stringify(d.toString())))\" # \"﻿SECRETVALUE\\r\\n\" There it is. Piping a string to a native command prefixes U+FEFF, because [Console]::OutputEncoding is UTF-8 with a 3-byte preamble in a non-interactive session: [ Console ]:: OutputEncoding.GetPreamble () . Length # 3 The CLI passed those bytes through faithfully. The platform stored them faithfully. Everything downstream was correct about a value that was already wrong. Two fixes that do not work The obvious fix is to set the output encoding to a UTF-8 that emits no preamble: $OutputEncoding = New-Object System.Text.UTF8Encoding $false 'SECRETVALUE' | node -e \"...\" # \"﻿SECRETVALUE\\r\\n\" <-- still there Still there. So try the console encoding instead: [ Console ]:: OutputEncoding = New-Object System.Text.UTF8Encoding $false 'SECRETVALUE' | node -e \"...\" # \"﻿SECRETVALUE\\r\\n\" <-- still there Still there. Both of those are the fixes you will find if you search for this, and we measured both of them failing before writing any code. That mattered: the first patch we wrote was the $OutputEncoding one, and it shipped a comment confidently explaining a fix that did nothing. A control run caught it. The fix that does work Stop using the pipe. Write the value to a file with an encoding you control, and redirect that file into the process's stdin: $stdin = Join-Path $ env : TEMP ([ guid ]:: NewGuid () . ToString () + '.in' ) try { [ IO.File ]:: WriteAllText ( $stdin , $plain , ( New-Object System.Text.UTF8Encoding $false )) $proc = Start-Process -FilePath $ env : ComSpec ` -ArgumentList @( '/c' , 'thecli' , 'env' , 'update' , $name , 'production' , '--yes' ) ` -RedirectStandardInput $stdin -NoNewWindow -Wait -PassThru if ( $proc . ExitCode -ne 0 ) { throw \"push failed ( $( $proc . ExitCode ) )\" } } finally { Remove-Item $stdin -Force -ErrorAction SilentlyContinue } Verified at the byte level, which is the only verification that means anything here: ( Get-Content $stdin -Encoding Byte | Select-Object -First 4 ) -join ',' # 83,69,67,82 <-- \"SECR\", no preamble Two things we hit on the way, in case you are doing the same: The CLI needs --yes to overwrite an existing variable, or it exits 1 with confirmation_required — and you cannot answer the prompt, because stdin is carrying the secret. Start-Process cannot launch an npm shim directly ( %1 is not a valid Win32 application ), hence going through %ComSpec% . What we actually got wrong The bug is a one-character encoding quirk. The reason it cost an hour is not. A write-only secret cannot be audited by reading it. Sensitive storage removes the only check most people have. If you use it — and you should — then the verification has to be behavioural , not textual: after any push, make a real call with the stored credential and assert the response. Not \"the CLI said Updated\". Not \"the row's updatedAt moved\". An actual request. We had that backwards. We trusted a success message from a tool that was faithfully transmitting corruption, about a value we had deliberately made unreadable, and we only found out when something unrelated fell over with an error about character 65279. The encoding bug will bite someone else. The blind spot is the part worth fixing.",
+            "url": "https://dev.to/redcapra/the-secret-was-correct-the-first-byte-wasnt-6p9",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "rust",
+                "web",
+                "windows"
+            ],
+            "published_at": "2026-09-20T09:53:07+00:00",
+            "collected_at": "2026-09-20T10:22:48.957744+00:00"
+        },
+        {
+            "id": "093664150d72c3078e06b1d3ec8fda63b517f6174affe099498ff2080b031d09",
+            "title": "Build an insider-buying screener with Python and SEC Form 4 data",
+            "description": "A director bought $101,760 of Tenax Therapeutics. Another bought $500,000 of Inhibrx Biosciences. Sorted by dollars, the second purchase comes first. Measured against the holding reported with each transaction, the increases were 2330.7% and 1.2%. Both numbers came back in the same API field. They answer a different question from the dollar amount, and neither tells you what the stock will do next. This tutorial builds a Python screener that keeps that context next to each purchase. Give it a watchlist and a dollar threshold. It writes a Markdown table and a CSV you can sort yourself, plus the API responses used to make them. The repository includes the script and saved runs , so you can reproduce the tables without a key. I run AlphAI , the API used here. Live requests need a free API key . The script runs on Python 3.10 or newer with no package dependencies. The runs below were captured on September 18, 2026. To reproduce the fourteen-row screen before making any live requests: git clone https://github.com/makeev/alphai-insider-buying.git cd alphai-insider-buying python3 insider_buying.py \\ --replay samples/2026-09-18/examples/snapshot.json.gz \\ --out out/saved-example Open out/saved-example/report.md to see the result. The rest of the article explains which records made it into that table and how to screen your own watchlist. The first watchlist returned no purchases The initial list had 25 familiar names: NVDA AMD INTC ORCL CRM ADBE NKE LULU SBUX DIS PYPL SOFI HOOD JPM BAC C SCHW O CCI STAG AVGO AMZN GOOGL META TSLA For transaction dates from August 20 through September 18, inclusive, the API returned 50 recorded events. None had transaction code P . The $100,000 threshold wasn't responsible for the empty result. There were no purchase events to apply it to. That's a result for these tickers and this recorded window. It doesn't establish that nobody bought anywhere in the market, or that every filing was captured. The API's transaction history covers its supported non-derivative events, not every action that can appear on a Form 4. To get concrete examples for the rest of the tutorial, I then read three pages of the recent insider feed, with marked 10b5-1 events excluded. The 60 returned rows contained eleven purchase events across seven tickers: TENX, XBP, DLPN, ALP, INBX, RVSB and MNR. Those seven became a second input list. They were chosen because the feed already showed purchases, so their hit rate says nothing about a random watchlist. Fetch the history once The endpoint is: GET /api/symbols/{ticker}/insider-trades/?page_size=1 Its first response contains both a paginated events list and a separate chart_events array with the recorded events from the trailing twelve months. page_size=1 keeps the paginated list short. It doesn't shrink chart_events . The script reads chart_events , then applies its 30-day transaction-date window locally. It ignores the overlapping events list. Concatenating the two arrays would count some purchases twice. Likewise, side=buy filters the paginated list, not chart_events , so the code checks the transaction code itself. This is an excerpt of the TENX event in the saved response : { \"transaction_code\" : \"P\" , \"ownership_form\" : \"D\" , \"shares\" : \"53000\" , \"total_value_usd\" : \"101760\" , \"stake_change_pct\" : \"2330.7\" , \"is_director\" : true , \"transaction_date\" : \"2026-09-16\" , \"filed_at\" : \"2026-09-18T01:30:04Z\" , \"news_uid\" : \"84e12a4ec11d2122\" } Amounts arrive as decimal strings. Unknown values arrive as JSON null , which Python reads as None . One request per ticker made the first run 25 calls. All returned 200. The Free tier currently allows 20 requests per minute and 100 per day. A 3.2-second pause between requests keeps this serial script below the minute cap when it runs alone. Other work using the same account still shares the allowance. On an HTTP error, the script stops and prints the status and Retry-After header. It preserves the successful responses as an incomplete snapshot and doesn't write a finished screen. An unavailable ticker should not silently turn into a ticker with no purchases. Make the filter readable Here is the selection function from the complete script : def select ( events , min_usd , exclude_plans = False , leadership_only = False ): selected = [] for event in events : if event [ \" transaction_code \" ] != \" P \" : continue amount = money ( event [ \" total_value_usd \" ]) if amount is None or amount < min_usd : continue if exclude_plans and event [ \" is_10b5_1 \" ]: continue if leadership_only and not ( event [ \" is_officer \" ] or event [ \" is_director \" ]): continue selected . append ( event ) return sorted ( selected , key = lambda e : money ( e [ \" total_value_usd \" ]), reverse = True ) money() preserves unknown values and converts decimal strings without passing through a float: from decimal import Decimal def money ( value ): return None if value is None else Decimal ( value ) The SEC defines code P as a purchase on an exchange or from another person. It includes private transactions. Calling every P row an open-market buy would be wrong. Officers and directors are also only part of the reporting population: large beneficial owners file too. SEC investor bulletin The optional leadership filter keeps officers and directors, including people who also have the 10% owner flag. It removes rows reported only as large owners. The plan filter removes events marked is_10b5_1=true . A false value isn't evidence of why somebody bought. Notice that the function never filters on stake_change_pct . An unknown percentage survives if the purchase otherwise qualifies. An unknown dollar amount can't pass a dollar threshold, so those events are counted separately in the report. The dollar value itself sums priced tranches and can be a lower bound when some tranches have no price. Run it, then change the filters offline For a live run, set ALPHAI_API_KEY in your environment. The script reads that variable directly, so putting it in a .env file alone won't load it. This command uses the original 25-name sample: python3 insider_buying.py --out out/watchlist To use the seven example tickers: python3 insider_buying.py TENX XBP DLPN ALP INBX RVSB MNR \\ --days 30 --min-usd 100000 --out out/examples The output directory must be new. Read report.md or open candidates.csv in a spreadsheet. The accompanying snapshot.json preserves the public response bodies with retrieval timestamps. It also records the remaining-quota header, without the API key. In the captured seven-ticker run , the window contained 36 events, of which 34 were purchases. Fourteen met the $100,000 threshold. Two of those fourteen had an unknown holding-change percentage. A live run uses today's UTC date and will produce a different window from the saved September example. Replay the snapshot to keep only officers and directors and exclude marked plan events: python3 insider_buying.py --replay out/examples/snapshot.json \\ --leadership-only --exclude-plans --out out/leadership That left nine candidates in this capture. Both unknown percentages remained. Replaying uses the saved tickers and dates and makes no API calls, so changing the filter doesn't also change the underlying sample. Three rows worth opening These are selected rows from that output, not the three largest purchases: Ticker Reporting owner Reported purchase value Holding change Ownership Trade date TENX Declan Doogan $101,760.00 +2330.7% Direct Sep 16 INBX Jon Faiz Kayyem $500,000.00 +1.2% Indirect Sep 16 XBP Par Chadha $579,997.18 unknown Indirect Sep 15 The TENX filing reports 53,000 shares purchased at $1.92 and 55,274 held afterward. Subtracting the purchase reconstructs a previous holding of 2,274 shares: purchase value = 53,000 × $1.92 = $101,760 holding increase = 53,000 / (55,274 - 53,000) × 100 = 2330.7% The INBX filing reports 5,000 shares at $100 and 429,360 afterward. The same calculation gives approximately 1.2%. Its footnote identifies the holding as a family trust. These percentages describe the holding associated with the transaction. They aren't percentages of the person's wealth, and they don't necessarily cover all their holdings in the issuer. The CSV keeps ownership_form and security_title beside the numbers so those distinctions remain available. The XBP filing explains the missing percentage. The transaction row reports 204,946 shares purchased and 204,946 afterward. The reconstructed starting balance for that row is zero. A percentage increase from zero has no finite value. Writing 0% would say the position didn't change. Writing 100% would invent a denominator. There are other holdings elsewhere in the same filing. This row doesn't establish that Chadha had never owned XBP before. Its footnote also says the purchase was part of a PIPE transaction under a securities purchase agreement. That is why the table says \"purchase\" without adding \"on the open market.\" Five transaction rows don't mean five separate purchases to rank Fiorenzo Villani's ALP filing contains five purchase rows. The API folds them into two events: Holding form Transaction rows Shares Reported value Direct 3 16,647 $67,856.30 Indirect 2 9,900 $41,131.07 The grouping is per filing, transaction code and direct/indirect ownership form. tranche_count records how many rows were folded. A row in the filing can itself report a weighted average across executions, so this isn't an exchange-fill count. Neither ALP event passes the $100,000 filter, although their combined value exceeds it. The threshold in this script is per API event. A threshold on the whole filing would answer a different question and would need an explicit aggregation step. The two ownership groups have separate identities. Deduplicating by the filing URL would discard one of them. The script deduplicates by news_uid instead. That also prevents an event appearing twice if a watchlist contains two share classes whose endpoints expose the same issuer events. It doesn't attempt to reconcile amendments or different filings by related owners into one economic purchase. Keep the dates attached The TENX purchase happened on September 16. EDGAR accepted the filing at 2026-09-18T01:30:04Z . Filtering on transaction_date places it on the 16th, but it wasn't public through that filing at the time of the trade. This screen asks which recorded transactions fall in the chosen date window as of retrieval. A group spanning several dates is dated by its last transaction row. It doesn't ask what an investor could have known on each day of that window. That would require disclosure timing and historical availability data, including when the collector made each record available. A current snapshot can't supply those by moving a date filter backward. Keep filed_at in the CSV and keep the snapshot. Missing records and later corrections can change what a future run sees. The repository also includes the four SEC XML documents used here , with their original URLs in manifest.json . The examples can be checked without relying on the API's interpretation of the filing. If you're assembling a weekly research folder, the earlier earnings-week script supplies the reporting calendar and filing reads. The Polymarket brief covers the macro side. For this screen, the unresolved choice is the dollar threshold. In the saved sample it drops the XBP CFO's $24,997.39 purchase and the CEO's $89,145 purchase. Set --min-usd 0 on a replay to see all 34 priced purchases before deciding whether $100,000 is a useful cutoff for your watchlist.",
+            "url": "https://dev.to/makeev/build-an-insider-buying-screener-with-python-and-sec-form-4-data-4eg1",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "amd",
+                "developpement",
+                "git",
+                "ios",
+                "programmation",
+                "python",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-09-20T09:52:13+00:00",
+            "collected_at": "2026-09-20T10:22:48.959336+00:00"
+        },
+        {
+            "id": "2b06a4be5b0049a39bc54d66cf9583e8c5dc7f5dc2fddcc9ddb87fc3054dcebe",
+            "title": "A real world case of recursion done right in PHP",
+            "description": "Nick Cosentino @DevLeaderCa posted this message about recursion on X, ex Twitter, in October 2025, which received over 460 replies. // Detect dark theme var iframe = document.getElementById('tweet-1984123215170421060-448'); if (document.body.className.includes('dark-theme')) { iframe.src = \"https://platform.twitter.com/embed/Tweet.html?id=1984123215170421060&theme=dark\" } I quote an excerpt: I've found that converting over to an iterative loop based approach is almost always more readable and easier to debug . He explains that in over 20 years of programming, he has never used recursion, thus questioning its usefulness. In this article, I show a real case where I used recursion, and where I think that it is much simpler than its iterative counterpart. But before going any further, let see what makes a recursive algorithm powerful. The Fibonacci sequence To understand the value of recursion, let's look at the implementations with and without recursion of an algorithm very often used to illustrate it: the Fibonacci sequence. Here's the recursive algorithm. if n = 0 or n = 1 then fib(n) = 1 else fib(n) = fib(n − 1) + fib(n − 2) endif And here's the iterative one. if n = 0 or n = 1 then fib(n) = 1 else a = 1 b = 1 for i in 2 .. n do c = a + b a = b b = c endfor fib(n) = c endif This simple example demonstrates the advantages of recursion: no loops and no intermediate variables. This also gives us an indication of when recursion is advantageous, namely when the function can be defined with a simple expression depending on itself. This might not be the case for example when the data being processed is a graph instead of a tree. Our problem The library we'll be talking about is the PHP UI Builder . It builds application UIs using components, as defined by CSS frameworks. It provides a common API which defines the components, and from which specialized libraries can generate HTML code for a given CSS framework, like Bootstrap, Bulma or Tailwind CSS. The UI components With its hierarchical component structure, a UI is particularly well-suited to a recursive algorithm. A component has properties, but can also contain components that themselves have some properties and can contain other components, and so on. The virtual components When building a UI from data, the result can sometimes vary depending on their values. Some components will only be created under certain conditions, others are multiplied according to the entries in a list or loop, and others may be an aggregate of different components. To represent these cases, our library introduces the concept of virtual components. These are components that take a set of data as input and produce as output a set of zero or more components, which may or may not be virtual. There are 4 of them: When : takes a condition as input and generates a component if it is met. Each : takes an array of data as input and generates a component for each element. Pick : takes a list of conditions as input and generates a different component depending on the first one that is true. List : aggregates any set of components into one. A UI will ultimately consist of a tree structure of components, each of which can be virtual or real. A real component can have several children, each of which can be virtual or real, and a virtual component generates a list of components, each of which can be virtual or real. Here's an example of a function using the UI library. /** * @param array $collations * * @return string */ public function addDbForm ( array $collations ): string { return $this -> ui -> build ( $this -> ui -> form ( $this -> ui -> row ( $this -> ui -> col ( $this -> ui -> label ( $this -> ui -> text ( 'Name' )) -> setFor ( 'name' ) ) -> unit ( 1 , 4 ), $this -> ui -> col ( $this -> ui -> input () -> setType ( 'text' ) -> setName ( 'name' ) ) -> unit ( 1 , 2 ) ), $this -> ui -> when ( count ( $collations ) === 0 , fn () => $this -> ui -> input () -> setType ( 'hidden' ) -> setName ( 'collation' ) -> setValue ( '' )), $this -> ui -> when ( count ( $collations ) > 0 , fn () => $this -> ui -> row ( $this -> ui -> col ( $this -> ui -> label ( $this -> ui -> text ( 'Collation' )) -> setFor ( 'collation' ) ) -> unit ( 1 , 4 ), $this -> ui -> col ( $this -> ui -> select ( $this -> ui -> option ( '(collation)' ) -> setValue ( '' ) -> selected ( true ), $this -> ui -> each ( $collations , fn ( $_collations , $group ) => $this -> ui -> pick ( $this -> ui -> when ( $group === '' , fn () => $this -> ui -> each ( $_collations , fn ( $collation ) => $this -> ui -> option ( $collation ) ) ), $this -> ui -> when ( true , fn () => $this -> ui -> optgroup ( $this -> ui -> each ( $_collations , fn ( $collation ) => $this -> ui -> option ( $collation ) ) ) -> setLabel ( $group ) ) ) ) ) -> setName ( 'collation' ) ) -> width ( 6 ) ) ) ) ); } The processing algorithm To generate a UI from a component tree, we will use the following algorithm: function build(c) children = [] expand(c, children) c.elements = [] for child in children if child is a component then build(child) append child.elements to c.elements else append child to c.elements endif endfor endfunction function expand(c, children) if c is virtual then for child in c.children expand(child, children) endfor else append c to children endif endfunction What we have here is actually a combination of two recursive functions. The expand() function returns the list of real components generated by a virtual component. It will therefore iterate recursively over all its children as long as virtual components are present. The build() function, which is the entry point for the process, first calls the expand() function. Its list of children then consists only of real components, on which it executes recursively. The final result is in the Scope class . In their PHP implementation, the recursive expand() function is 15 lines of code long, and the build() function is 40. Two extremely simple functions, which form the basis that allows the implementation in a single library of both the templating functionalities of libraries such as Twig or Blade, and the HTML code generation of libraries such as Spatie's HTML Builder or Symfony's Forms component (the rendering part). The UI library is used to build the Jaxon DbAdmin UI , demonstrating that it allows the construction of complex UIs, calling classes and their methods instead of writing HTML templates. The limitations of recursion Nick Cosentino's message rightly points out two drawbacks of recursion, which we will briefly discuss here. Debugging First, it's absolutely true that recursion is difficult to debug, particularly because mentally unraveling the instructions executed by a recursive algorithm is very complex. However, at the same time, the simplicity of recursive algorithms leaves little chance for a bug to occur. Therefore, before choosing recursion, it's important to ensure that the algorithm being implemented can be expressed very simply in a recursive manner. This is indeed the case for the Fibonacci sequence and our library. Memory usage Implementing a recursive algorithm can consume a significant amount of memory, depending on the level of nesting of the calls. For our UI library, the level of nesting of an application's UI components will always be very limited, and even more if it is built one part at a time, each in a separate recursive function call. Moreover, PHP imposes a limit on the number of nested calls within a recursive function, and the consequence of an overflow will be to fail a single call, not to crash the entire server. The closing word To answer Nick Cosentino's initial question, of course it is possible to create all sorts of complex software without using recursion. However, this doesn't mean it can always be replaced by an iterative version, but rather that cases where one can fully leverage all its advantages are not very common.",
+            "url": "https://dev.to/tiaya/a-real-world-case-of-recursion-done-right-in-php-428k",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "php",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-20T09:51:49+00:00",
+            "collected_at": "2026-09-20T10:22:48.960678+00:00"
+        },
+        {
+            "id": "6cec5db1f839c30846d384444bf069b54561acf83935488e7bae2669fab0f8e8",
+            "title": "LimeWire's New Manifesto Is a Masterclass in WebGPU, Local AI, and Cloud Nihilism",
+            "description": "If you thought LimeWire’s return was just a tired exercise in retro branding, their editorial column C:\\LimeWire\\Shared is proving to be something far stranger and significantly more dangerous. Following up on their first viral dispatch (which dissected the Microsoft/OpenAI scraping leaks), they just published Issue 02: Stainless Steel Rats in the Garden of Forking Paths: The Anatomy of Escapism, Fourth-Order Simulacra, and the Mutiny of Local Silicon . It’s an unholy collision of Chuck Palahniuk’s somatic obsession, Hunter S. Thompson’s gonzo rage, and Jean Baudrillard’s cultural theory—all wrapped around a dead-serious systems architecture argument. Strip away the literary kerosene, and what remains is the most scathing critique of modern cloud centralization, WebGPU potential, and AI rent-seeking published this year. Here is an architectural autopsy of what they wrote, why it matters to engineers, and where the code actually backs up the rhetoric. 1. The Optical Illusion of \"Infinite Choice\" (Borges Meets AWS) The manifesto opens by examining Jorge Luis Borges's 1941 classic The Garden of Forking Paths —a metaphysical story of an infinite labyrinth where all timelines unfold simultaneously. LimeWire’s author pivots this into a brutal systems reality check: \"You genuinely believe the paths are branching out into infinity... Strip away the UI, trace the physical fiber runs, and you are slapped with the cold reality: **every single one of your branching paths terminates inside four data centers. \" [User Action Potential: 120 m/s] │ ▼ (Local Browser) │ (Transit via 200,000 km/s Fiber) ▼ ┌──────────────────────────────────────────────┐ │ The 4 Gatekeepers: AWS / Azure / GCP / CF │ │ - Ingestion -> Tokenization -> Profiling │ └──────────────────────────────────────────────┘ │ ▼ [$19.99/mo Recurring Cloud Subscription] As developers, we preach microservices and cloud scalability, but we rarely acknowledge the staggering centralization of modern compute: over 90% of global web traffic flows through AWS, Azure, Google Cloud, and Cloudflare. The piece contrasts human biology ( neural conduction at 120 m/s ) with the physics of fiber optics ( light in silica at ~200,000 km/s ), arguing that recommendation engines and foundation models don't just serve user preferences—they pre-calculate and monetize human hesitation before the user's thumb finishes swiping down. 2. \"Human-in-the-Loop\" as a Legal Crumple Zone One of the sharpest industry takedowns in the essay targets enterprise AI hype—specifically the celebrated design pattern of keeping a \"human-in-the-loop\" : \"Autonomous agent networks will execute millions of high-frequency trades and trigger instant corporate firings in fractions of a millisecond, leaving a meat-and-bone human at the end of the pipeline purely as a legal crumple zone... The human in 2026 is nothing more than a liability fuse inserted between broken code and a courtroom docket.\" This is an uncomfortable truth every backend engineer working with autonomous LLM agents knows: When an autonomous agent operates without oversight, liability belongs to the platform. The moment you force an underpaid tier-1 support rep or operations clerk to click a manual [Approve] button on an algorithmic dashboard, corporate legal teams transfer the blame to the operator. It’s not safety engineering. It’s liability insulation. 3. The Stainless Steel Rat: Reclaiming Sovereign Silicon Drawing from Harry Harrison’s 1961 sci-fi classic The Stainless Steel Rat —where a lone criminal survives inside a hyper-sanitized, frictionless empire by exploiting the system’s bureaucratic blind spots—LimeWire proposes an engineering counter-doctrine: Client-Side Sovereignty. Instead of burning cash on cloud API wrappers, the manifesto breaks down the raw hardware physics of home silicon: A. Memory Bus Bandwidth vs. Network Latency When executing a 4-bit quantized open-weight model (GGUF / EXL2) locally across modern consumer GDDR6X VRAM, the memory bus clocks throughput between 500 GB/s and 1,000 GB/s . Local Bus: [GPU Core] <==== 500-1000 GB/s (GDDR6X) ====> [VRAM] Cloud API: [Local PC] <---- 1 Gbps (Ethernet) ---------> [Cloud Tier] No external network route can compete with on-die bus speeds. Your prompts, embeddings, and context matrices remain pinned within the physical registers of the PCB. B. The WebAssembly / WebGPU Pipeline LimeWire isn’t advocating for users to retreat to offline command-line terminals. They are leveraging the modern web browser as an isolated high-performance runtime: WebAssembly (WASM) with SIMD instructions for CPU-bound signal processing. WebGPU for executing tensor math, audio stem separation, and Whisper speech-to-text models directly on client hardware without phoning home. // The Client-Side Paradigm: // Zero network payloads. Zero telemetry. Compute runs on bare metal. const adapter = await navigator . gpu . requestAdapter (); const device = await adapter . requestDevice (); const tensorModule = device . createShaderModule ({ code : localShaderCode , }); // Your media never leaves the client's volatile memory. C. The Physics of the \"Cold Cut\" (DRAM Decay) The article highlights a profound hardware-level privacy primitive that software developers often ignore: \"A cell of dynamic random-access memory (DRAM) consists of a single microscopic MOSFET and a planar capacitor holding roughly thirty femtofarads of charge... If you cut the power, that capacitive charge bleeds off into thermal noise in under two hundred milliseconds.\" Unlike centralized databases where deleted rows linger in unencrypted backups, transaction logs, and cloud snapshots for decades, volatile memory without swap is physically un-subpoenaable once power is terminated. 4. The Cultural Manifesto: Palahniuk Meets Trainspotting The text peaks with a manic remix of Irvine Welsh’s iconic Trainspotting monologue, reworked for the modern software engineer: \"Choose life on credit. Choose a rolling annual cloud storage renewal. Choose a sixty-inch flat-screen tracking your heart rate while you sleep... Choose a synthetic chatbot charging ten bucks a month to fake an interest in your day while your actual existence circles the drain. Well, I choose not to choose their life. I choose a bare-metal kernel, an unplugged RJ-45 jack, four-bit tensor quantization, and a zero-fill write directly to the raw partition.\" It concludes with a visceral reality check for anyone who builds software: \"You are not your OpenAI token allowance. You are not your used gigabyte tally on Google One. You are not the blue checkmark on an enterprise directory. You are whatever remains in volatile RAM when they kill the power to the block.\" The Architectural Takeaway for 2026 You don’t have to buy into LimeWire’s outlaw cyberpunk persona to recognize the structural shift they are pointing toward: Cloud margins are collapsing under AI inference costs. Relying on third-party APIs for basic computational tasks (audio processing, background extraction, text transcription) is an architectural dead end for margins. Local client compute is absurdly underutilized. Modern consumer devices have neural accelerators, high-bandwidth unified memory, and WebGPU-enabled browsers. Data custody is a massive legal liability. If your servers never ingest user files because processing happens on the client, your compliance surface area drops to near-zero. LimeWire survived the peer-to-peer wars of the 2000s. Now, they are betting that the next wave of internet rebellion won’t be about downloading MP3s—it will be about wresting compute away from four cloud monopolies and putting it back onto consumer silicon. Read the full dispatch here: 👉 C:\\LimeWire\\Shared // Issue 02: Stainless Steel Rats in the Garden of Forking Paths Let's Debate: Are you moving features to WebGPU / WebAssembly to dodge cloud API bills, or is the developer experience still too primitive? Is the \"human-in-the-loop\" pattern genuine safety or corporate risk-shifting? Drop your thoughts below. Let’s talk architecture.",
+            "url": "https://dev.to/alexv_data/limewires-new-manifesto-is-a-masterclass-in-webgpu-local-ai-and-cloud-nihilism-1jh9",
+            "source": "DEV Community",
+            "category": "cybersecurite",
+            "tags": [
+                "aws",
+                "azure",
+                "developpement",
+                "google_cloud",
+                "llm",
+                "openai",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-20T09:51:23+00:00",
+            "collected_at": "2026-09-20T10:22:48.961659+00:00"
+        },
+        {
+            "id": "78b7baae42e7eb96ff0e10a3e15fe7d13fbe26e370516f7a88c84be25792792b",
+            "title": "Did you know that Your presentation and Your AI knowledge source can be the same file.",
+            "description": "Recently, I’ve noticed the same loop when creating presentations with #AI. Usually, we are asking Claude or CoPilot or ChatGPT to create a PowerPoint presentation, spend tokens generating the PPTX, then spend more tokens adjusting fonts, content and layout. Later, the same presentation in \"pptx\" format is used as a part of knowledge source for an AI Agent or Workflow. The Agent needs to extract the content from the PPTX presentation before using it. That means more processing and, depending on the workflow, more tokens. If the extracted content isn’t saved for reuse, the same work can happen again and again \"Reading - Transforming - Spending tokens\". We had the information. Turned it into slides. Then asked AI to get the information back out. If we already had the information before we turned it into slides. Why make it harder to use afterward? That’s why, for personal usage, I built https://mddeck.app/ The idea is simple \"Keep Markdown as the source of truth.\" It lets me keep Markdown as the main source for a presentation. I can render the .md file as slides for a meeting, then use that same file as a text-based knowledge source for an AI agent. When something changes, I update the source. I’ve also added two companion skills to help agents to create presentations in MDDeck’s format or convert existing PPTX decks into Markdown. It has the limitations you’d expect from #Markdown. You won’t get complete freedom over slide layouts. Images need accessible URLs or embedded data, and complex charts often work better as separately prepared assets. Converting an existing deck won’t preserve every visual detail, either. And if important knowledge lives inside an image, you still need a text description or the underlying data. Your local files and pasted content stay in your browser. MDDeck parses and renders them locally without uploading their contents elsewhere . Remote images and #Markdown links still make requests to their hosting servers. Agents still spend tokens reading Markdown. What MDDeck avoids is the extra work and extra tokens for unpacking a presentation just to get back to its content. Everything is free. No registration is needed.",
+            "url": "https://dev.to/yaroslav_klochnyk/did-you-know-that-your-presentation-and-your-ai-knowledge-source-can-be-the-same-file-232k",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "anthropic",
+                "developpement",
+                "openai",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-20T09:50:50+00:00",
+            "collected_at": "2026-09-20T10:22:48.962034+00:00"
+        },
+        {
+            "id": "2688770f1eba0085fecea1079181912dff239293f00de42243730322af9b0c6a",
+            "title": "That bcrypt.hash(password, 10) You Copy-Pasted Might Not Be as Secure as You Think",
+            "description": "Almost every auth tutorial, including some of my own examples in earlier posts, uses bcrypt.hash(password, 10) without much explanation of what that number actually controls or why it's 10 specifically rather than some other value. It's worth understanding, because the right number isn't fixed, it's a moving target that most codebases never revisit after the initial copy-paste. What the Salt Rounds Number Actually Controls bcrypt's cost factor, the second argument, controls how computationally expensive hashing a single password is, specifically by determining how many times an internal key-setup routine repeats. It's not a linear scale, each increment roughly doubles the computation required. A cost factor of 10 means roughly 1,024 iterations of that internal routine. 11 means roughly 2,048. 12 means roughly 4,096. This deliberate slowness is the entire point. A fast hash function is great for most use cases and terrible for passwords specifically, since a fast hash lets an attacker who's obtained a database of hashed passwords try billions of guesses per second against them. A deliberately slow hash function directly limits how many guesses an attacker can attempt in any given amount of time, even with significant computing power. Why 10 Specifically, and Why That's Worth Questioning The number 10 shows up constantly in tutorials and documentation because it was, at the time much of that content was written, a reasonable balance, slow enough to meaningfully limit brute-force attempts, fast enough not to noticeably slow down a real login flow for a legitimate user. That balance point depends entirely on how fast the hardware attempting to brute-force it actually is, and hardware, particularly specialized hardware built for exactly this kind of computation, gets faster every year. A cost factor considered a reasonable balance several years ago represents meaningfully less real protection against modern hardware than it did when that number first became the common default. Why This Doesn't Show Up as an Obvious Problem There's no error, no warning, no visible symptom of a salt rounds value that's become outdated relative to current hardware capability. Login continues working exactly as expected for legitimate users. The gap is entirely about resistance to an offline brute-force attempt against a stolen password database, something that only becomes relevant if that database is ever actually compromised, which means the weakness sits completely invisible until the exact moment it matters most. The Actual Guidance, and Why It's a Moving Target Rather Than a Fixed Number Security guidance on this specific number gets revised periodically as hardware capability changes, and current recommendations from security-focused organizations trend higher than the value that shows up in most existing tutorials and codebases. Rather than citing a specific number here that will itself become outdated, the actual, durable guidance is this, check current recommendations specifically when setting this up, rather than trusting whatever number happens to be sitting in the tutorial or codebase you're referencing, since that number is a snapshot of a past moment, not a permanently correct value. A Practical Way to Choose the Right Number for Your Own Server // A quick, practical way to find a cost factor appropriate for your actual hardware, // rather than trusting a number copied from somewhere else import bcrypt from ' bcryptjs ' ; async function benchmarkCostFactor ( rounds : number ) { const start = Date . now (); await bcrypt . hash ( ' benchmark-password ' , rounds ); return Date . now () - start ; } // Run this on your actual production server or equivalent hardware, // and pick the highest cost factor where a single hash still completes // in a reasonable time for your login flow, commonly cited targets // are in the range of a few hundred milliseconds This gives you a real, current answer specific to your actual infrastructure, rather than a number that was correct for someone else's hardware at some point in the past and has simply been carried forward through tutorials and copy-paste ever since. The Broader Rule This Points To A security parameter borrowed from a tutorial is a snapshot of what was reasonable when that tutorial was written, not a permanently correct value. This applies beyond just bcrypt cost factors, TLS cipher suite choices, JWT expiration windows, rate limit thresholds, all of these are calibrated against assumptions, about hardware, about attacker capability, about acceptable risk, that shift over time. A value copied once and never revisited quietly drifts from \"reasonable\" toward \"outdated\" without any code change ever signaling that drift. What to Actually Do About Your Own Codebase Check what cost factor your app is actually using right now, and compare it against current guidance rather than assuming a number from an older tutorial or your own original setup is still appropriate. If it's genuinely outdated, increasing it is straightforward for new passwords going forward, though existing stored hashes were created with the old cost factor and remain at that lower value unless you specifically implement a rehash-on-next-login pattern, checking and upgrading a user's stored hash cost factor the next time they successfully log in with their correct password. Check what cost factor your own app is actually using, and when you last revisited that number versus just inheriting it from the original setup or a tutorial. Drop what you find in the comments, genuinely curious how many people have actually reconsidered this since first setting it up versus never touching it again. Get the templates: https://pixelanas.gumroad.com Anas, full-stack Next.js developer building SaaS products and premium templates. X: @ASheikh69751",
+            "url": "https://dev.to/anas_sheikh_2/that-bcrypthashpassword-10-you-copy-pasted-might-not-be-as-secure-as-you-think-1jei",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "git",
+                "programmation",
+                "rust",
+                "web",
+                "windows"
+            ],
+            "published_at": "2026-09-20T09:48:24+00:00",
+            "collected_at": "2026-09-20T10:22:48.962791+00:00"
+        },
+        {
+            "id": "f9d2c88cd377e5e2e5b4fa71ee44f381e34c43bfd1ed5e4d4477d27846c8d66d",
+            "title": "Our rate limit punished everyone except the customer causing the problem",
+            "description": "At twenty past two on a Tuesday morning one customer began a historical backfill against our API. Within ten minutes a hundred and twelve other customers were being rejected, and the customer who started it was getting most of the throughput they had asked for. Our edge holds a single token bucket for the whole service, two thousand requests a second, a number chosen years ago from what the service can actually serve. It is not per key. It never had been, and I had read the configuration many times without noticing that the absence of a key dimension was a decision about fairness rather than an implementation detail. A shared bucket is drained by arrival. A client with nineteen hundred requests in flight takes tokens at nineteen hundred times the rate of a client with one, because every token that appears goes to whoever is asking at that instant, and asking is exactly what that client was doing. The limiter did its job perfectly. It kept the service standing, and it distributed the shortage in direct proportion to who was causing it, which is to say in inverse proportion to who deserved it. That customer's steady rate is about forty a second. Our aggregate availability for the hour came out at ninety one percent, which reads as a moderate incident. For the hundred and twelve customers who were not doing anything unusual it was closer to thirty percent, and that number existed nowhere. Each key now has its own bucket, sized from its own trailing thirty day peak with a multiplier, with the global bucket kept behind them as a backstop for the service rather than as the allocation mechanism. Requests carry a class, so an interactive call outranks a batch call from the same key. Responses say which limit was hit. And we record the throttled fraction per key, so shedding is something we can see happening to somebody specific. The reporting changed too. We publish the worst tenant's success rate next to the aggregate, because the aggregate is an average over customers and had never once told us that a small number of them were having a completely different day. A limit protects the service. It says nothing about who gets what, and where you have not said it, the answer is whoever pushes hardest. – Sergey Shinder",
+            "url": "https://dev.to/sergey_shinder_ab2d943365/our-rate-limit-punished-everyone-except-the-customer-causing-the-problem-i7e",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-20T09:45:46+00:00",
+            "collected_at": "2026-09-20T10:22:48.963170+00:00"
+        },
+        {
+            "id": "2e9cab29baee5afcccd21f50783a5d948de28d12b4135d52f05193842e6b8fa2",
+            "title": "\"Today I spent 4-5 hours chasing a bug that looked like three different problems. They were all connected: a caching plugin hiding images from Googlebot, a forgotten script blocking the thread, and a wild-goose chase involving PageSpeed warnings about CORS",
+            "description": "How a Caching Plugin and an Analytics Script Silently Destroyed My SEO and Page Speed Antonio Antonio Antonio Follow Sep 20 How a Caching Plugin and an Analytics Script Silently Destroyed My SEO and Page Speed # wordpress # webdev # performance # seo Add Comment 3 min read",
+            "url": "https://dev.to/antonioprosperi2svg/today-i-spent-4-5-hours-chasing-a-bug-that-looked-like-three-different-problems-they-were-all-36ei",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-20T09:41:44+00:00",
+            "collected_at": "2026-09-20T10:22:48.963296+00:00"
+        },
+        {
+            "id": "f57f9e66300d6175c5eeb08de21e796cbc017e86fa6fc6b305f8ce6ebb2b692f",
+            "title": "Google's simulated fruit fly brain 'mines Bitcoin' in web browser proof of concept — FutureBit says real organic neuron miner could have '10x the efficiency of the best silicon 3nm ASICs'",
+            "description": "A project claimed to represent 'the first organic neuron Bitcoin miner based on the fly brain' has gone live.",
+            "url": "https://www.tomshardware.com/tech-industry/cryptomining/googles-simulated-fruit-fly-brain-mines-bitcoin-in-web-browser-proof-of-concept-futurebit-says-real-organic-neuron-miner-could-have-10x-the-efficiency-of-the-best-silicon-3nm-asics",
+            "source": "Tom's Hardware",
+            "category": "web",
+            "tags": [
+                "bitcoin",
+                "cpu",
+                "gpu",
+                "hardware",
+                "pc"
+            ],
+            "published_at": "2026-09-20T09:40:00+00:00",
+            "collected_at": "2026-09-20T10:22:51.086600+00:00"
+        },
+        {
+            "id": "bf5aefce49c353c36fb97c88a0f678632da022d6bc3a443eac4c1f6a25ebf960",
+            "title": "NASA’s Apollo Computer Mined Bitcoin in 2019 But Today It Would Take Forever",
+            "description": "The computer that guided Apollo astronauts to the moon once ran Bitcoin’s mining math, and a viral clip of the stunt is lighting up crypto timelines again this week. The Clip That Came Back Crypto media outlets circulated the story again earlier today, explaining that computer scientist Ken Shirriff was able to program an Apollo […]",
+            "url": "https://news.bitcoin.com/crypto-news/apollo-guidance-computer-bitcoin-mining-hashrate-2026/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-20T09:30:47+00:00",
+            "collected_at": "2026-09-20T10:23:02.616639+00:00"
+        },
+        {
+            "id": "e56cdd23961fd9b77dd7c2b7506675d1f8368a293eaea383173a476ff2df5628",
+            "title": "The iPhone 18 Pro isn’t worth $1,200, and the Pixel 11 Pro proves it",
+            "description": "Google's offering just feels more at home for some reason.",
+            "url": "https://www.androidauthority.com/pixel-11-pro-vs-iphone-18-pro-3712022/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "ios",
+                "smartphone"
+            ],
+            "published_at": "2026-09-20T09:30:05+00:00",
+            "collected_at": "2026-09-20T10:22:56.438796+00:00"
+        },
+        {
+            "id": "c5ecf38fccd40a14a50b5ee28b6ec1ee788f2eed4b7f6393951e617a4de9c016",
+            "title": "The last mile of a long road: faster NumPy in the browser",
+            "description": "Comments",
+            "url": "https://notebook.link/blog/the-last-mile-faster-numpy",
+            "source": "Lobsters",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-09-20T09:07:28+00:00",
+            "collected_at": "2026-09-20T10:22:48.788639+00:00"
+        },
+        {
+            "id": "8170f1392671e4ec8c343240950694801a5d141e38cce52e24875c096a8f50c3",
+            "title": "I use Google Maps every day, but Apple Maps still does these 4 things better",
+            "description": "Google Maps is great, but Apple Maps gets these four things surprisingly right.",
+            "url": "https://www.androidauthority.com/google-maps-vs-apple-maps-2026-3708131/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-09-20T09:00:45+00:00",
+            "collected_at": "2026-09-20T10:22:56.438861+00:00"
+        },
+        {
+            "id": "aa9c9fb2e0ef358123fbc77240a6f345f522b114968205370400bfefe41264fd",
+            "title": "T. rex teeth indicate it ran as warm as an elephant",
+            "description": "Isotope ratios provide a hint that the giants were actively managing temperatures.",
+            "url": "https://arstechnica.com/science/2026/09/t-rex-teeth-indicate-it-ran-as-warm-as-an-elephant/",
+            "source": "Ars Technica",
+            "category": "technologie",
+            "tags": [
+                "informatique",
+                "innovation",
+                "ios",
+                "technologie"
+            ],
+            "published_at": "2026-09-20T09:00:11+00:00",
+            "collected_at": "2026-09-20T10:22:46.914580+00:00"
+        },
+        {
+            "id": "9ff74fdcf4ac2274343291e65716d94619cb5d3a4dcd63b863301b4c13f56f1c",
+            "title": "Feature: Box Art Brawl - Duel: Cubivore: Survival Of The Fittest",
+            "description": "Remember this one? Hello folks, and welcome back to another edition of Box Art Brawl ! Last week , our resident Layton fanatic put Spectre's Call under the microscope, pitting Europe against North America and Japan. The latter two nabbed the trophy this time, gaining 66% of the vote. Well done! Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/features/box-art-brawl-duel-cubivore-survival-of-the-fittest",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-09-20T09:00:00+00:00",
+            "collected_at": "2026-09-20T10:23:00.939185+00:00"
+        },
+        {
+            "id": "21b02a82404c3c3589ac1614fc723a2f73d57576efe797c5950f40292ab59976",
+            "title": "Raoul Pal Says Bitcoin Will Outrun the Nasdaq as Rates Break Higher",
+            "description": "Real Vision founder Raoul Pal says bitcoin is set to outperform the Nasdaq 100 from here, arguing that rising rates will force governments into printing the liquidity crypto feeds on. What Did Pal Actually Say? The macro investor laid out his case in a six-post thread on X on Friday, adding: My view for a […]",
+            "url": "https://news.bitcoin.com/finance/raoul-pal-bitcoin-outperform-nasdaq-rates-fiscal-dominance/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-20T08:30:41+00:00",
+            "collected_at": "2026-09-20T10:23:02.616748+00:00"
+        },
+        {
+            "id": "45ad374c19cc317098aa39e3158ef325fa14142a3f6a57fef48ee30636d76cad",
+            "title": "Konami Releasing Castlevania: Belmont's Curse Demo Next Month",
+            "description": "Save data will carry over. Konami is reviving the Castlevania series next month with the release of Castlevania: Belmont's Curse on the Switch. Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/news/2026/09/konami-releasing-castlevania-belmonts-curse-demo-next-month",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-09-20T08:05:00+00:00",
+            "collected_at": "2026-09-20T10:23:00.939268+00:00"
+        },
+        {
+            "id": "1026c8be227cddfaf9a5a7c468b08b583cca8c32f19698c60430563cd1582797",
+            "title": "Calacanis Calls Bitcoin a Dead Cat, Saylor and Cathie Wood Fire Back",
+            "description": "Jason Calacanis called bitcoin a bouncing “dead cat” just as bitcoin’s price cleared $81,000, prompting immediate replies from Michael Saylor and Cathie Wood. A Million Views and a Ratio Calacanis, a popular angel investor and co-host of the All-In podcast, opened with “the dead cat continues to bounce,” and attached a one-year chart of BTC […]",
+            "url": "https://news.bitcoin.com/crypto-news/calacanis-bitcoin-dead-cat-saylor-cathie-wood/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-20T07:30:38+00:00",
+            "collected_at": "2026-09-20T10:23:02.616862+00:00"
+        },
+        {
+            "id": "de912dddf91e0478126fd2b9d0c37c0d6145ea381154d6e2837567a74f4b8e7d",
+            "title": "Multiple Switch Games Receive Switch 2 Compatibility Fixes",
+            "description": "Following a major firmware update. The Switch 2 is now more than a year old and during this time Nintendo as continued to roll out firmware and compatibility updates. Following a major system update earlier this month , adding support for VRR in docked mode, a new list of Switch titles have reportedly received backward compatibility fixes. Here's the rundown via Nintendo Everything: Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/news/2026/09/multiple-switch-games-receive-switch-2-compatibility-fixes",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-09-20T07:05:00+00:00",
+            "collected_at": "2026-09-20T10:23:00.939370+00:00"
+        },
+        {
+            "id": "d4501f9f72034d63650c3bb7dede7b82e02b798e919f68cba70844921eeb7761",
+            "title": "Fake IT Job Interviews Help North Korea Steal Millions in Crypto",
+            "description": "A North Korean state-backed hacker group infected over 30,000 computers across 100 countries with malware that stole millions of dollars in crypto between late 2025 and July 2026. Fake Job Interviews Used as Bait A North Korean cyberattack campaign disguised as legitimate tech recruitment has infected more than 30,000 computers across at least 100 countries, […]",
+            "url": "https://news.bitcoin.com/crypto-news/fake-it-job-interviews-help-north-korea-steal-millions-in-crypto/",
+            "source": "Bitcoin.com News",
+            "category": "cybersecurite",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto",
+                "git",
+                "malware"
+            ],
+            "published_at": "2026-09-20T06:30:40+00:00",
+            "collected_at": "2026-09-20T10:23:02.616951+00:00"
+        },
+        {
+            "id": "04495aac05b0a61de32f5918891e578396f1d729a9ed2472009e5ac9ca8a2850",
+            "title": "Stellar Blade Gets A Switch 2 eShop Demo Today",
+            "description": "New Bayonetta collab trailer also released. If you've been eager to get your hands on the Switch 2 version of Stellar Blade , a demo is now available to download on the eShop. Along with this, Shift Up has also published a new trailer, showing off the recently announced Bayonetta collaboration. This will be free when the game is released on Switch 2 and includes multiple outfits inspired by this series. Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/news/2026/09/stellar-blade-gets-a-switch-2-eshop-demo-today",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-09-20T06:30:00+00:00",
+            "collected_at": "2026-09-20T10:23:00.939493+00:00"
+        },
+        {
+            "id": "8c459d597ee98eea508f3fcdbfb0bdf7de921543ac6ce9888c62a34f94ab327b",
+            "title": "More dirty coding tricks from game developers (2015)",
+            "description": "Comments",
+            "url": "https://web.archive.org/web/20210605053151/http://www.gamasutra.com/view/news/249475/More_dirty_coding_tricks_from_game_developers.php#tophead",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-09-20T06:22:23+00:00",
+            "collected_at": "2026-09-20T10:22:48.788462+00:00"
+        },
+        {
+            "id": "46dcb64a738de72c5f8d326b8e80e4785816c9dceeb0a7e0a53a33a12c920c33",
+            "title": "Spain Orders Blocks on Archive.today and Its Mirrors",
+            "description": "Comments",
+            "url": "https://reclaimthenet.org/spain-blocks-archive-today-and-mirrors",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-20T06:16:42+00:00",
+            "collected_at": "2026-09-20T10:22:48.527846+00:00"
+        },
+        {
+            "id": "b370684820f7ae92e94c5f4729381f017c26356500a959ed66af39f5dd546206",
+            "title": "HEIF Heist",
+            "description": "Comments",
+            "url": "https://heif-heist.com",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-09-20T05:56:25+00:00",
+            "collected_at": "2026-09-20T10:22:48.788104+00:00"
+        },
+        {
+            "id": "8a135d9f7b5fc290abf15a27a80e44de1872b06f9005608713fa7ba5cd93358b",
+            "title": "You Know GDPR Is Good Based on Who Hates It",
+            "description": "Comments",
+            "url": "https://matduggan.com/you-know-gdpr-is-good-based-on-who-hates-it/",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation",
+                "rgpd"
+            ],
+            "published_at": "2026-09-20T05:46:48+00:00",
+            "collected_at": "2026-09-20T10:22:48.787969+00:00"
+        },
+        {
+            "id": "c48e36206bce35ae99b6c774501a31710dafe8a4436a14bf25fdbbf1bc1c1bfa",
+            "title": "AI Is Rereading Crypto’s Old Code, and Finding What Humans Missed",
+            "description": "Crypto’s security problem took a strange turn in 2026. Artificial intelligence (AI)-assisted researchers found a four-year-old Zcash flaw capable of creating counterfeit ZEC, a Coldcard weakness dating to 2021, which preceded more than $100 million in estimated bitcoin thefts, and attackers manipulated an AI agent into transferring roughly 3 billion DRB. Meanwhile, malicious instructions embedded […]",
+            "url": "https://news.bitcoin.com/featured/ai-is-rereading-cryptos-old-code-and-finding-what-humans-missed/",
+            "source": "Bitcoin.com News",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto",
+                "intel"
+            ],
+            "published_at": "2026-09-20T05:30:55+00:00",
+            "collected_at": "2026-09-20T10:23:02.617048+00:00"
+        },
+        {
+            "id": "cf6b3612a5ad262233b76f33d8e4273847d2957a9016bfa334c9fc856cdda334",
+            "title": "UTF-8000: Unlimited UTF-8",
+            "description": "Comments",
+            "url": "https://utf-8000.jb2170.com",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-20T05:15:00+00:00",
+            "collected_at": "2026-09-20T10:22:48.527923+00:00"
+        },
+        {
+            "id": "799a229a265fb86fad73c2196764d87fa2b186fd3c49c7698d8c6c86d80f5fcd",
+            "title": "Telling a Computer to Do Things",
+            "description": "Comments",
+            "url": "https://will-keleher.com/posts/telling-your-computer-to-do-things/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-20T05:11:33+00:00",
+            "collected_at": "2026-09-20T10:22:48.528112+00:00"
+        },
+        {
+            "id": "211bf0e95bd0931ec9d268ff11c4bb385b972ef6a8093bbcf6175e56c73128cc",
+            "title": "Step 5 Preview: Advancing the Pareto Frontier",
+            "description": "Comments",
+            "url": "https://www.stepfun.com/step-5-preview",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-20T04:35:59+00:00",
+            "collected_at": "2026-09-20T10:22:48.527760+00:00"
+        },
+        {
+            "id": "a126ce91a4531ee5408f3f88d37c0e7f8d0e8431dd3d1ac9654bcf0390e82af6",
+            "title": "A Factory-Sealed NES Set From 1986 Just Sold for $120,000. Here’s Why Old Games Are the New Gold",
+            "description": "A factory-sealed, never-opened 1986 Nintendo Entertainment System Deluxe Set with R.O.B., a Zapper, and boxed copies of Gyromite and Duck Hunt sold for $120,000 at Heritage Auctions in November 2023, the highest auction price ever paid for a commercially released video game console. That record now sits inside a retro gaming collectibles boom projected to […]",
+            "url": "https://news.bitcoin.com/featured/a-factory-sealed-nes-set-from-1986-just-sold-for-120000-heres-why-old-games-are-the-new-gold-49201/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-20T04:30:34+00:00",
+            "collected_at": "2026-09-20T10:23:02.617157+00:00"
+        },
+        {
+            "id": "d4a3cacb588485ec1e1dffbf0ecdaa387be79c98650e6c84d4ef8eb8306f6fc0",
+            "title": "Quarkdown: Turing-complete Markdown typesetting system",
+            "description": "Comments",
+            "url": "https://github.com/iamgio/quarkdown",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-09-20T03:37:45+00:00",
+            "collected_at": "2026-09-20T10:22:48.788021+00:00"
+        },
+        {
+            "id": "884efabbb6ff6abb7c697c9032838cdd9e34c96be362f443475c6f97fb38de97",
+            "title": "Arthur Hayes Calls CLARITY Act ‘Nonsense’ as Bitcoin Tops $80K",
+            "description": "Arthur Hayes seized on bitcoin’s move above $80,000 to dismiss the CLARITY Act and argue that higher rates give wealthy investors more money for financial assets. The rally followed the Senate setback and the Federal Reserve’s rate increase. Hayes Pits a Rate Hike Against Crypto Regulation Bitcoin investors watched the cryptocurrency reclaim $80,000 after two […]",
+            "url": "https://news.bitcoin.com/market-updates/arthur-hayes-calls-clarity-act-nonsense-as-bitcoin-tops-80k/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-20T03:30:24+00:00",
+            "collected_at": "2026-09-20T10:23:02.617262+00:00"
+        },
         {
             "id": "4f6d2ba29974f86af05c7b63eeb1b36661e3cb1bcdd5d911823d56c0b43ca739",
             "title": "I let an LLM judge inside Python's if statements, then ran Ansible's own tests on it",
@@ -89,6 +705,21 @@
             "collected_at": "2026-09-20T02:42:13.683855+00:00"
         },
         {
+            "id": "d5b5a6965465a02e7fd13925ee5c52d8ad8bc2ecb447a6e527b1f5772b3b95c8",
+            "title": "RSA-896",
+            "description": "Comments",
+            "url": "https://saweis.net/posts/rsa-896.html",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-20T02:19:33+00:00",
+            "collected_at": "2026-09-20T10:22:48.527883+00:00"
+        },
+        {
             "id": "e97da6c60e52bfa0325726eded05a1b398292fe228b40402ad15507e4693c1d7",
             "title": "Java: JPA e Hibernate",
             "description": "Java é uma linguagem de programação que usa o paradigma Orientado a Objetos. E assim como em outras linguagens, podemos integrar nossos programas com um banco de dados para armazenar dados importantes. Dentre os tipos de banco de dados, o mais tradicional é o Banco de Dados Relacional. Esse tipo de banco trabalha com tabela relacionais, onde as colunas são os campos da tabela e as linhas são os registros. Mas, então como podemos unir o Java, orientado a objetos, com um banco de dados relacional, orientado a tabelas? JDBC A forma mais simples de unir um programa Java com um banco de dados é usando o JDBC (Java Database Connectivity). O JDBC é uma API do java para comunicação com o banco de dados. Essa API é formada pelos pacotes java.sql e javax.sql . Ela permite que você realize queries no banco de dados ao usar o driver JDBC do banco que precisa. Por exemplo, se você tem um projeto maven, pode usar o driver JDBC do PostgreSQL <dependency> <groupId> org.postgresql </groupId> <artifactId> postgresql </artifactId> <version> 42.7.13 </version> <scope> compile </scope> </dependency> package com.example ; import java.sql.Connection ; import java.sql.DriverManager ; import java.sql.PreparedStatement ; import java.sql.ResultSet ; import java.sql.SQLException ; import java.sql.Statement ; import java.util.ArrayList ; import java.util.List ; public class Main { public static record User ( String name , String email ) {} public static void main ( String [] args ) { // url de conexão String url = \"jdbc:postgresql://localhost:5432/db4java\" ; String username = \"dev\" ; String password = \"dev\" ; try ( Connection conn = DriverManager . getConnection ( url , username , password )) { // INSERT User user = new User ( \"Fulano\" , \"fulano@mail.com\" ); String sql = \"INSERT INTO users (name, email) VALUES (?, ?)\" ; PreparedStatement statement = conn . prepareStatement ( sql ); statement . setString ( 1 , user . name ()); statement . setString ( 2 , user . email ()); int rowsInserted = statement . executeUpdate (); if ( rowsInserted > 0 ) { System . out . println ( \"Usuário cadastrado com sucesso!\" ); conn . commit (); } statement . close (); // SELECT List < User > users = new ArrayList <>(); sql = \"SELECT * FROM users\" ; Statement selectStatement = conn . createStatement (); ResultSet resultSet = selectStatement . executeQuery ( sql ); while ( resultSet . next ()) { String name = resultSet . getString ( \"name\" ); String email = resultSet . getString ( \"email\" ); users . add ( new User ( name , email )); } resultSet . close (); selectStatement . close (); System . out . println ( \"Lista de usuários cadastrados:\" ); users . forEach ( System . out :: println ); } catch ( SQLException ex ) { System . out . println ( \"Erro: \" + ex . getMessage ()); } } } Desvantagem do JDBC Como o JDBC usa o SQL para fazer as consultas no banco de dados, temos que trabalhar com dois paradigmas diferentes, relacional e orientado a objetos. Isso torna o código mais trabalhoso a longo prazo, apesar de ter padrões de projetos que ajudam a resolver isso como o DAO e Repository . JPA Com a dificuldade de gerenciar dois paradigmas no código java, surgiu o JPA (Jakarta Persistence API). O JPA é uma especificação que permite você criar entidades para representar as tabelas do banco de dados. Essas entidades são classes com anotações do JPA para fazer o Mapeamento Objeto-Relacional (ORM) . Algo que deve ter atenção é que o JPA é apenas uma especificação, como uma interface do java. Ou seja, precisamos de uma biblioteca que implemente essa especificação. As mais famosas são o Hibernate e o Spring Data JPA que roda em cima do Hibernate. Mas, há outras implementações do JPA como o EclipseLink, Apache OpenJPA e DataNucleus. Pacotes javax e jakarta As classes que lidam com o JPA fazem parte do Java EE e fazem parte do pacote javax.* , mas em código mais moderno você pode se deparar com o pacote jakarta.* . Depois que o Java foi comprado pela empresa Oracle, parte do código fonte do Java EE foi doado para a Eclipse Foundation, porém o nome Java ainda era legalmente da Oracle. Isso fez a Eclipse Foundation mudar o nome do projeto Java EE para Jakarta EE mudando o pacote javax.* para jakarta.* . Por isso se você pegar código mais antigos verá importações como import javax.persistence.Entity; e import jakarta.persistence.Entity; em código modernos. Projeto JPA Vou usar o Hibernate v7 como biblioteca de ORM em um projeto maven junto do driver JDBC do PostgreSQL e o lombok. Vamos começar criando a tabela tb_users no banco CREATE TABLE tb_users ( id BIGSERIAL PRIMARY KEY , name VARCHAR ( 100 ) NOT NULL , email VARCHAR ( 100 ) NOT NULL UNIQUE , created_at TIMESTAMP NOT NULL DEFAULT now (), updated_at TIMESTAMP NOT NULL DEFAULT now () ); Configurando Hibernate No pom.xml do projeto adicionei as dependencias do hibernate, driver do postgresql e o lombok <dependencies> <dependency> <groupId> org.postgresql </groupId> <artifactId> postgresql </artifactId> <version> 42.7.13 </version> <scope> compile </scope> </dependency> <dependency> <groupId> org.hibernate.orm </groupId> <artifactId> hibernate-core </artifactId> <version> 7.4.7.Final </version> </dependency> <dependency> <groupId> org.projectlombok </groupId> <artifactId> lombok </artifactId> <version> 1.18.40 </version> <scope> provided </scope> </dependency> </dependencies> As configurações do Hibernate ficam dentro do arquivo src/main/resources/META-INF/persistence.xml . Nesse arquivo será onde fica a url de conexão, usuário e senha do banco e outras configurações. <persistence xmlns= \"https://jakarta.ee/xml/ns/persistence\" xmlns:xsi= \"http://www.w3.org/2001/XMLSchema-instance\" xsi:schemaLocation= \"https://jakarta.ee/xml/ns/persistence https://jakarta.ee/xml/ns/persistence/persistence_3_1.xsd\" version= \"3.1\" > <!-- nome da unidade de persistencia --> <persistence-unit name= \"com.matheusgondra.java4db\" > <!-- As entidades do JPA devem ser listadas usando <class></class> --> <class> com.matheusgondra.User </class> <properties> <!-- URL do banco --> <property name= \"jakarta.persistence.jdbc.url\" value= \"jdbc:postgresql://localhost:5432/db4java\" /> <!-- Credenciais do banco --> <property name= \"jakarta.persistence.jdbc.user\" value= \"dev\" /> <property name= \"jakarta.persistence.jdbc.password\" value= \"dev\" /> <!-- Ação a ser realizada na geração do schema --> <!-- validate verifica se as entidades estão mapeadas corretamente --> <property name= \"jakarta.persistence.schema-generation.database.action\" value= \"validate\" /> </properties> </persistence-unit> </persistence> Entidade User Agora vamos criar a entidade User para mapear a tabela tb_users que foi criada no banco de dados. Uma entidade é apenas uma classe java com anotações do JPA. Usarei o lombok para deixar o Código mais enxuto. A classe de entidade precisa de um construtor vazio ( @NoArgsConstructor ), um construtor com todos os campos ( @AllArgsConstructor ), os getters e os setters ( @Data ). package com.matheusgondra ; import java.time.LocalDateTime ; import lombok.AllArgsConstructor ; import lombok.Data ; import lombok.NoArgsConstructor ; @Data @AllArgsConstructor @NoArgsConstructor public class User { private Long id ; private String name ; private String email ; private LocalDateTime createdAt ; private LocalDateTime updatedAt ; } Agora para tornar essa classe uma entidade JPA usamos a anotação @jakarta.persistence.Entity . package com.matheusgondra ; import java.time.LocalDateTime ; import jakarta.persistence.Entity ; import lombok.AllArgsConstructor ; import lombok.Data ; import lombok.NoArgsConstructor ; @Data @AllArgsConstructor @NoArgsConstructor @Entity public class User { private Long id ; private String name ; private String email ; private LocalDateTime createdAt ; private LocalDateTime updatedAt ; } Ao adicionar essa anotação o Hibernate já vê aquela classe como uma entidade JPA. Por padrão a anotação define o nome da entidade como o nome da classe. Isso pode ser alterado na anotação se necessário @Entity(name = \"UserEntity\") . E o mapeamento fica dessa forma Podemos ver que temos informações errada, a tabela não é User e sim tb_users . Por padrão o nome da tabela é o mesmo nome da entidade. Quando o nome da tabela é diferente da entidade, usamos a anotação @jakarta.persistence.Table para passar o nome correto. package com.matheusgondra ; import java.time.LocalDateTime ; import jakarta.persistence.Entity ; import jakarta.persistence.Table ; import lombok.AllArgsConstructor ; import lombok.Data ; import lombok.NoArgsConstructor ; @Data @AllArgsConstructor @NoArgsConstructor @Entity @Table ( name = \"tb_users\" ) public class User { private Long id ; private String name ; private String email ; private LocalDateTime createdAt ; private LocalDateTime updatedAt ; } A tabela foi corrigida, mas ainda precisamos corrigir os campos da entidade. Os campos VARCHAR são de tamanho 100 e não podem ser nulo. O email deve ser único. Além disso, o campo id é uma chave primária que é auto incrementada. Os campos createdAt e updatedAt tem o nome diferente dos campos no banco que se chamam created_at e updated_at . Para corrigir essas coisas usamos a anotação @jakarta.persistence.Column . E para o id temos o @jakarta.persistence.Id e o @jakarta.persistence.GeneratedValue para definir a estrategia de geração do id. package com.matheusgondra ; import java.time.LocalDateTime ; import jakarta.persistence.Column ; import jakarta.persistence.Entity ; import jakarta.persistence.GeneratedValue ; import jakarta.persistence.GenerationType ; import jakarta.persistence.Id ; import jakarta.persistence.Table ; import lombok.AllArgsConstructor ; import lombok.Data ; import lombok.NoArgsConstructor ; @Data @AllArgsConstructor @NoArgsConstructor @Entity @Table ( name = \"tb_users\" ) public class User { @Id @GeneratedValue ( strategy = GenerationType . IDENTITY ) private Long id ; @Column ( nullable = false , length = 100 ) private String name ; @Column ( nullable = false , length = 100 , unique = true ) private String email ; @Column ( name = \"created_at\" , nullable = false , updatable = false ) private LocalDateTime createdAt ; @Column ( name = \"updated_at\" , nullable = false ) private LocalDateTime updatedAt ; } Outra coisa que podemos fazer é adicionar anotações do Hibernate, não do JPA, para gerar o valor do createdAt e do updatedAt . import org.hibernate.annotations.CreationTimestamp ; import org.hibernate.annotations.UpdateTimestamp ; @CreationTimestamp @Column ( name = \"created_at\" , nullable = false , updatable = false ) private LocalDateTime createdAt ; @UpdateTimestamp @Column ( name = \"updated_at\" , nullable = false ) private LocalDateTime updatedAt ; Estado da Entidade JPA Algo que você deve saber é o ciclo de vida de uma entidade. Uma entidade JPA possui 4 estados: Transient Managed Detached Removed Estado Transient Nesse estado a entidade ainda não está sendo gerenciada pelo contexto de persintência ( EntityManager ). A entidade entra nesse estado quando você cria um novo objeto com new public static void main ( String [] args ) { // Entidade no estado Transient User user = new User (); } Nesse estado as modificações no objeto não são refletidas no banco de dados. Estado Managed Nesse estado a entidade já está associada a um contexto de persistência ( EntityManager ) ativo. Alterações nos campos do objetos são sincronizadas com a tabela no banco de dados. Um objeto java entra nesse estado ao chamar o método persist() , find() , merge() da classe EntityManager . public static void main ( String [] args ) { // Entidade no estado Transient User user = new User (); entityManager . persist ( user ); // Entidade no estado Managed agora } Estado Detached Nesse estado a entidade a entidade reflete um registro no banco de dados, mas o contexto de persistência ( EntityManager ) não está mais gerenciando a entidade. Por exemplo, se criarmos uma nova instância da entidade (estado Transient) e criarmos um registro no banco com o método persist() (estado Managed) e fechar o contexto de persistência com o método close() a entidade irá passar para o estado Detached. É uma entidade válida que reflete um registro no banco, mas está fora do contexto de persistência e precisaria voltar para o estado Managed para refletir as mudanças no banco. public static void main ( String [] args ) { // Entidade no estado Transient User user = new User (); entityManager . persist ( user ); // Entidade no estado Managed agora entityManager . close (); // fim do contexto // Entidade no estado Detached agora } Estado Removed Nesse estado a entidade é marcado pelo contexto de persistência ( EntityManager ) para ser deletada do banco de dados. Uma entidade entra nesse estado ao chamar o método remove() do EntityManager public static void main ( String [] args ) { // Entidade no estado Transient User user = new User (); entityManager . persist ( user ); // Entidade no estado Managed agora entityManager . remove ( user ); // Entidade no estado Removed agora } Contexto de Persistência Todas as queries no banco de dados são feitas dentro de um contexto de persistência usando a classe jakarta.persistence.EntityManager . Para criar o EntityManager usamos o padrão de fabrica usando a interface jakarta.persistence.EntityManagerFactory , a classe jakarta.persistence.Persistence e passando o nome da unidade persistência definido no persistence.xml // o nome da <persistence-unit /> no persistence.xml deve ser passado para o createEntityManagerFactory EntityManagerFactory factory = Persistence . createEntityManagerFactory ( \"com.matheusgondra.java4db\" ); EntityManager entityManager = factory . createEntityManager (); CRUD Com o contexto criado podemos fazer queries no banco de dados. Vou mostrar como é possível fazer as operações de CRUD. Adicionei a anotação @lombok.Builder na nossa entidade User para facilitar a instanciação dos objetos. Create A primeira operação é o CREATE . Para criar um novo registro no banco de dados, o EntityManager possui o método persist() que recebe uma entidade JPA. Ao chamar o método irá ser feito uma query INSERT no banco com os valores da entidade que mapeamos. static void create ( EntityManagerFactory factory ) { EntityManager entityManager = factory . createEntityManager (); EntityTransaction transaction = entityManager . getTransaction (); try { transaction . begin (); // Estado da entidade: Transient User user = User . builder () . name ( \"Fulano\" ) . email ( \"fulano@email.com\" ) . build (); System . out . println ( \"Entidade em Trasient: \" + user ); // Persiste no banco entityManager . persist ( user ); // Estado da entidaed: Managed System . out . println ( \"Entidade em Managed: \" + user ); transaction . commit (); } catch ( Exception e ) { if ( transaction . isActive ()) { transaction . rollback (); } throw e ; } finally { // fechando o contexto de persistência entityManager . close (); } } Entidade em Trasient: User ( id = null, name = Fulano, email = fulano@email.com, createdAt = null, updatedAt = null ) Entidade em Managed: User ( id = 1, name = Fulano, email = fulano@email.com, createdAt = 2026-09-19T13:59:23.564330, updatedAt = 2026-09-19T13:59:23.564399 ) Read A próxima operação é o READ . Para isso, o EntityManager possui o método find() . static void find ( EntityManagerFactory factory ) { try ( EntityManager entityManager = factory . createEntityManager ()) { User user = entityManager . find ( User . class , 1L ); if ( user == null ) { throw new RuntimeException ( \"Entidade não encontrada\" ); } System . out . println ( \"Entidade Managed: \" + user ); } catch ( Exception e ) { throw e ; } } Entidade Managed: User ( id = 1, name = Fulano, email = fulano@email.com, createdAt = 2026-09-19T23:15:18.470144, updatedAt = 2026-09-19T23:15:18.470205 ) Para um findAll não temos um método pronto no Hibernate. Mas, podemos usar o método createQuery para criar um query que busca todos os registros usando JPQL (Java Persistence Query Language) que é bem parecido com o SQL. No SQL as consultas são feitas baseada nas tabelas, no JPQL as consultas são feitas baseadas nas entidade JPA. Adicionei outros registros para retornar mais de um registro. static void findAll ( EntityManagerFactory factory ) { try ( EntityManager entityManager = factory . createEntityManager ()) { List < User > users = entityManager . createQuery ( \"SELECT u FROM User u\" , User . class ). getResultList (); users . forEach ( System . out :: println ); } catch ( Exception e ) { throw new RuntimeException ( e ); } } User ( id = 1, name = Fulano, email = fulano@email.com, createdAt = 2026-09-19T14:15:58.822469, updatedAt = 2026-09-19T14:15:58.822552 ) User ( id = 2, name = ciclano, email = ciclano@email.com, createdAt = 2026-09-19T22:22:39.055243, updatedAt = 2026-09-19T22:22:39.055243 ) User ( id = 3, name = beltrano, email = beltrano@email.com, createdAt = 2026-09-19T22:22:39.055243, updatedAt = 2026-09-19T22:22:39.055243 ) Update A operação de UPDATE iremos buscar uma entidade com o método find() para termos uma entidade no estado Managed. Com isso, iremos atualizar os atributos da entidade e ao fazer o commit da transação, ou usando o método merge , o Hibernate irá atualizar o registro no banco. static void update ( EntityManagerFactory factory ) { EntityManager entityManager = factory . createEntityManager (); EntityTransaction transaction = entityManager . getTransaction (); try { transaction . begin (); User user = entityManager . find ( User . class , 1L ); if ( user == null ) { throw new RuntimeException ( \"User not found\" ); } System . out . println ( \"User antes: \" + user ); user . setName ( \"Fulano Atualizado\" ); System . out . println ( \"User depois: \" + user ); // No commit a query UPDATE é rodada no banco transaction . commit (); } catch ( Exception e ) { if ( transaction . isActive ()) { transaction . rollback (); } throw new RuntimeException ( e ); } finally { entityManager . close (); } } User antes: User ( id = 1, name = Fulano, email = fulano@email.com, createdAt = 2026-09-19T14:15:58.822469, updatedAt = 2026-09-19T14:15:58.822552 ) User depois: User ( id = 1, name = Fulano Atualizado, email = fulano@email.com, createdAt = 2026-09-19T14:15:58.822469, updatedAt = 2026-09-19T14:15:58.822552 ) DELETE A operação de DELETE é parecido com o UPDATE , iremos buscar uma entidade com o método find() para termos uma entidade no estado Managed. Com isso, iremos chamar o método remove() com a entidade e ao fazer o commit da transação o Hibernate irá atualizar o registro no banco. static void delete ( EntityManagerFactory factory ) { EntityManager entityManager = factory . createEntityManager (); EntityTransaction transaction = entityManager . getTransaction (); try { transaction . begin (); User user = entityManager . find ( User . class , 1L ); if ( user == null ) { throw new RuntimeException ( \"User not found\" ); } entityManager . remove ( user ); //No commit a query DELETE é rodada no banco transaction . commit (); } catch ( Exception e ) { if ( transaction . isActive ()) { transaction . rollback (); } throw new RuntimeException ( e ); } finally { entityManager . close (); } }",
@@ -160,6 +791,21 @@
             ],
             "published_at": "2026-09-20T02:12:32+00:00",
             "collected_at": "2026-09-20T02:42:13.694505+00:00"
+        },
+        {
+            "id": "0db354f57a6a1f62bb49c948ea9515b26e2944c2c70eb255d04899fbe81ed2a4",
+            "title": "Grit your teeth and ship it",
+            "description": "Comments",
+            "url": "https://www.seangoedecke.com/grit-your-teeth-and-ship-it/",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-09-20T02:12:23+00:00",
+            "collected_at": "2026-09-20T10:22:48.788550+00:00"
         },
         {
             "id": "99831e5379369009dbc3a572708a3d89892c112843b82a3551d43b76936aeeee",
@@ -324,6 +970,21 @@
             ],
             "published_at": "2026-09-19T23:46:42+00:00",
             "collected_at": "2026-09-20T02:42:13.241662+00:00"
+        },
+        {
+            "id": "b70e13327426c5e64e788569df4baf756972994ef4374f47984b934bbf9ce86e",
+            "title": "Union vs sum types",
+            "description": "Comments",
+            "url": "https://viralinstruction.com/posts/uniontypes/",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-09-19T23:45:37+00:00",
+            "collected_at": "2026-09-20T10:22:48.788317+00:00"
         },
         {
             "id": "580ef81999aab2754a64e4ea986276e09cabfe82f97bd7f257da2e8a293b9bb4",
@@ -519,6 +1180,21 @@
             ],
             "published_at": "2026-09-19T21:20:11+00:00",
             "collected_at": "2026-09-20T02:42:27.554700+00:00"
+        },
+        {
+            "id": "3ca0b3917f4da7d7094eb7f8dec9c38d673a68e8e09db6fc7d60bd6911ed8767",
+            "title": "English: A vs. An",
+            "description": "Comments",
+            "url": "https://www.redblobgames.com/blog/2026-09-16-english-a-vs-an/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-19T20:41:26+00:00",
+            "collected_at": "2026-09-20T10:22:48.527801+00:00"
         },
         {
             "id": "10a42b245f5f0c3d02f257b6e600dac8a49f3250263e0449d50d7dd5038d2d08",
@@ -2427,6 +3103,21 @@
             "collected_at": "2026-09-19T10:03:23.259941+00:00"
         },
         {
+            "id": "9c3b362f52a06cc9e683270d193b093980d8d6caad4f583e86c47f01d94db491",
+            "title": "Chess Atlas",
+            "description": "Comments",
+            "url": "https://chess-timeline.vercel.app/gallery.html",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-19T08:48:38+00:00",
+            "collected_at": "2026-09-20T10:22:48.528279+00:00"
+        },
+        {
             "id": "5c599bf3e90de4deef147ebd0a08b84af7603eb7ef07ae0fb3a630b5cce34d8c",
             "title": "Vietnam and Austria Partner on Crypto Oversight",
             "description": "Vietnam has built a pilot legal framework and plans to license its first crypto-asset service providers in 2026. Building Guardrails Vietnam reportedly plans to license its first crypto-asset service providers in 2026 under a pilot legal framework as the Southeast Asian country seeks to modernize its financial market oversight. Vietnamese Deputy Minister of Finance Nguyen […]",
@@ -3451,6 +4142,21 @@
             "collected_at": "2026-09-19T02:30:16.140541+00:00"
         },
         {
+            "id": "23f004084cc0cae5efb8a69803566073afa4915898053b4c0eba35a9fd00f88f",
+            "title": "When the FM Band Goes Transatlantic",
+            "description": "Comments",
+            "url": "https://www.radioworld.com/tech-and-gear/nicks-signal-spot/when-the-fm-band-goes-transatlantic",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-18T20:30:28+00:00",
+            "collected_at": "2026-09-20T10:22:48.527715+00:00"
+        },
+        {
             "id": "ea36c1448b7e80d4ec35659253a09e07b8ed63dfa0b833eb84e5b06a4e209064",
             "title": "AI hallucination of Chinese nuclear components almost led to US military attack",
             "description": "But the military's overall use of AI seems to be accelerating.",
@@ -4146,6 +4852,21 @@
             "collected_at": "2026-09-18T20:13:30.524122+00:00"
         },
         {
+            "id": "03750cddd28e2a82a3d7fd491bff0890d91c9cb27513105a0472a5e2e6b786aa",
+            "title": "Seeing Circles, Sines, and Signals",
+            "description": "Comments",
+            "url": "https://jackschaedler.github.io/circles-sines-signals/index.html",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-18T17:59:41+00:00",
+            "collected_at": "2026-09-20T10:22:48.528032+00:00"
+        },
+        {
             "id": "2c9eff63b3dc03c7f993cf2fdda163f0b155a912322d33ed3e852ecfd50867be",
             "title": "FCC lets Paramount sell 49.5% equity stake to Saudi Arabia, UAE, and Qatar",
             "description": "FCC rejects concerns about repressive governments buying influence over CBS owner.",
@@ -4629,6 +5350,21 @@
             ],
             "published_at": "2026-09-18T16:00:00+00:00",
             "collected_at": "2026-09-18T20:13:43.085758+00:00"
+        },
+        {
+            "id": "2ea4664f2caf2bba07a98326e84304a3331756269c3ae9877f1f46d4eeab148b",
+            "title": "Arrow heads at Obi-Rakhmat (Uzbekistan) 80K years ago?",
+            "description": "Comments",
+            "url": "https://journals.plos.org/plosone/article?id=10.1371/journal.pone.0328390",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-18T15:59:50+00:00",
+            "collected_at": "2026-09-20T10:22:48.528155+00:00"
         },
         {
             "id": "5937d4f7e77d07da7315dddc72c6071d6fda745a4cd1a5e894aa40824784b521",
@@ -5835,6 +6571,21 @@
             ],
             "published_at": "2026-09-18T13:24:35+00:00",
             "collected_at": "2026-09-18T15:33:27.307669+00:00"
+        },
+        {
+            "id": "39bc50d124a49f3b51505fd44f59bcadac5b2fcccf79e8baaeeebb7b5862c1f6",
+            "title": "Regeneration of used batteries via electrode–electrolyte interphase dissolution",
+            "description": "Comments",
+            "url": "https://pubs.rsc.org/ee/article/19/13/4199/1260994/Direct-electrode-to-electrode-regeneration-of-end",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-18T13:23:10+00:00",
+            "collected_at": "2026-09-20T10:22:48.527988+00:00"
         },
         {
             "id": "8a8d830312ee47aed8b0227fe706c191ab188729b6cf2cb0e7150de765aea37f",
@@ -14003,6 +14754,21 @@
             ],
             "published_at": "2026-09-17T01:15:00+00:00",
             "collected_at": "2026-09-17T02:44:06.660970+00:00"
+        },
+        {
+            "id": "08294d7b065b753be78e5b6a560537822ea04f5d8f24deac1bf0abbae02cecc4",
+            "title": "Weeping whales: Stillborn humpback whale grieving documented",
+            "description": "Comments",
+            "url": "https://phys.org/news/2026-09-whales-stillborn-humpback-whale-grieving.html",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-17T01:00:14+00:00",
+            "collected_at": "2026-09-20T10:22:48.527668+00:00"
         },
         {
             "id": "517b9f7844ff896de6f0481158b80000006be0e246333947d40c6c8e5ad3c8c4",
