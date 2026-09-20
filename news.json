@@ -1,7 +1,779 @@
 {
-    "updated_at": "2026-09-20T15:11:48.477091+00:00",
-    "count": 9483,
+    "updated_at": "2026-09-20T20:04:52.367705+00:00",
+    "count": 9538,
     "articles": [
+        {
+            "id": "2d6d55fd3176be92b6a4db1d487c3232d32fbb67a16678d212826e6b76a6ce48",
+            "title": "Dart Enhanced Enums Are Secretly Factories: Unlocking Constructor Tearoffs",
+            "description": "This is Part 2 of the Dart and Flutter series—practical guides, architectural deep dives, and hard-earned engineering lessons from the field. Each article is completely standalone. How many times have you written (or reviewed) a piece of code that looks like this? NotificationWidget buildNotification ( NotificationType type , NotificationData data ) { switch ( type ) { case NotificationType . email : return EmailNotificationWidget ( data ); case NotificationType . sms : return SmsNotificationWidget ( data ); case NotificationType . push : return PushNotificationWidget ( data ); } } Or worse, a dedicated NotificationWidgetFactory class containing a 40-line switch statement or a mutable Map<NotificationType, Function> registry. It feels routine. It’s what we were taught in classic OOP textbooks. But it introduces subtle friction: The enum NotificationType knows nothing about the widgets it represents. The factory switch ladder must be updated every time a new case is added. The creation logic is split across multiple files and layers. What if your enum wasn't just a list of identifiers, but was itself the polymorphic factory ? By marrying two features of modern Dart— Enhanced Enums and Constructor Tearoffs —you can delete the switch ladders and turn your enum values into self-instantiating factories in under 15 lines of code. The Two Ingredients: A Brief History To understand how clean this pattern is, we have to appreciate two language features that quietly revolutionized Dart over the last couple of years: 1. Constructor Tearoffs (Dart 2.15+) Before Dart 2.15, if you wanted to pass a constructor as a first-class function, you had to wrap it in an awkward lambda: // The old, clunky way: final builders = [( data ) = > EmailNotification ( data )]; Dart 2.15 introduced Constructor Tearoffs . Constructors became first-class closures. You can reference default constructors using .new , or named constructors directly by name: // The modern Dart way: final builders = [ EmailNotification . new ]; final parsers = [ User . fromJson ]; 2. Enhanced Enums (Dart 2.17+) Before Dart 2.17, Dart enums were glorified integers. They had an index and a name , and virtually nothing else. With Enhanced Enums , enums gained full class powers: They can declare final fields. They can have const constructors. They can implement interfaces and mixins. They can define methods, getters, and operator overloads. When you put constructor tearoffs inside enhanced enums, something magical happens. The Fusion: Enums as Self-Instantiating Factories Let’s model a common domain scenario: a document rendering engine. We have different document types that share a common interface: abstract class Document { String get title ; void render (); } class PdfDocument implements Document { @override final String title ; PdfDocument ( this . title ); @override void render () = > print ( 'Rendering PDF: $title ' ); } class MarkdownDocument implements Document { @override final String title ; MarkdownDocument ( this . title ); @override void render () = > print ( 'Rendering Markdown: $title ' ); } class HtmlDocument implements Document { @override final String title ; HtmlDocument ( this . title ); @override void render () = > print ( 'Rendering HTML: $title ' ); } Now, instead of writing an external DocumentFactory or a switch statement, we declare an Enhanced Enum where each enum member holds a tearoff reference to its class constructor : enum DocumentType { pdf ( PdfDocument . new ), markdown ( MarkdownDocument . new ), html ( HtmlDocument . new ); // A field holding a function that creates a Document given a String title final Document Function ( String title ) create ; const DocumentType ( this . create ); } Look closely at DocumentType : Document Function(String title) create : A strongly typed function signature stored as a final field. pdf(PdfDocument.new) : We pass the constructor tearoff directly to the enum value. const DocumentType(this.create) : The constructor is const , so the entire enum remains compile-time constant! How You Use It Instantiating a polymorphic object is now as simple as calling the field on the enum instance: void main () { const selectedType = DocumentType . markdown ; // Polymorphic instantiation with ZERO switch statements: final doc = selectedType . create ( 'Architecture_Notes.md' ); doc . render (); // Output: Rendering Markdown: Architecture_Notes.md } No switch statement. No map lookups. No reflection. If you add a new enum value (e.g. epub ), the compiler forces you to supply a matching constructor tearoff right there. You cannot accidentally forget to handle it. Real-World Example: Polymorphic API Payload Parsers This pattern shines when deserializing polymorphic JSON payloads (like webhooks, analytics events, or push notifications). Imagine an incoming stream of server events: { \"type\" : \"login\" , \"payload\" : { \"userId\" : \"usr_42\" , \"timestamp\" : 1711000000 } } We have distinct payload models: abstract class EventPayload {} class LoginPayload implements EventPayload { final String userId ; LoginPayload . fromJson ( Map < String , dynamic > json ) : userId = json [ 'userId' ] as String ; } class PurchasePayload implements EventPayload { final double amount ; PurchasePayload . fromJson ( Map < String , dynamic > json ) : amount = ( json [ 'amount' ] as num ) . toDouble (); } Instead of a bulky JSON parsing switch, our enum maps incoming strings directly to the named constructor tearoff ( .fromJson ): enum EventType { login ( LoginPayload . fromJson ), purchase ( PurchasePayload . fromJson ); final EventPayload Function ( Map < String , dynamic >) fromJson ; const EventType ( this . fromJson ); static EventType ? fromString ( String name ) = > EventType . values . where (( e ) = > e . name == name ) . firstOrNull ; } Now, your dispatcher parses any incoming event in two clean lines: EventPayload parseEvent ( String typeName , Map < String , dynamic > rawPayload ) { final eventType = EventType . fromString ( typeName ) ?? ( throw UnsupportedError ( 'Unknown event: $typeName ' )); return eventType . fromJson ( rawPayload ); } Real-World Example: Flutter Widget Builders In Flutter applications, you frequently have a selection control (tabs, filters, or segmented buttons) that drives which widget to render: enum DashboardView { analytics ( AnalyticsView . new ), activity ( ActivityView . new ), settings ( SettingsView . new ); final Widget Function ({ Key ? key }) builder ; const DashboardView ( this . builder ); } In your widget tree: class DashboardScreen extends StatelessWidget { final DashboardView currentView ; const DashboardScreen ({ super . key , required this . currentView }); @override Widget build ( BuildContext context ) { return Scaffold ( body: currentView . builder (), ); } } When you add a 4th tab tomorrow, you don't hunt through widget tree switch statements—you simply declare it on the enum. A Senior Perspective: When NOT to Use This Pattern Every pattern has architectural boundaries. While enum constructor tearoffs are powerful, here are two caveats to keep in mind: 1. Beware of Layer Inversion (Separation of Concerns) If your enum lives in your pure Dart Domain Layer (core business logic), do not attach Flutter widget constructor tearoffs to it. Doing so couples your domain models to package:flutter . Good : An enum in the presentation layer mapping UI modes to widget constructors. Good : An enum in the data layer mapping API event types to DTO constructors. Bad : A domain entity enum importing flutter/material.dart . 2. When to Prefer Dart 3 Sealed Classes & Pattern Matching Dart 3 introduced sealed class hierarchies and exhaustive switch expressions: // Alternative: Dart 3 pattern matching Widget buildView ( DashboardView view ) = > switch ( view ) { DashboardView . analytics = > const AnalyticsView (), DashboardView . activity = > const ActivityView (), DashboardView . settings = > const SettingsView (), }; Which should you choose? Use Enum Constructor Tearoffs when the creation parameters are identical, the association between the enum and the class is 1:1, and you want self-contained encapsulation with zero boilerplate. Use Sealed Classes & Pattern Matching when each subclass takes radically different parameters, when cases have unique construction logic, or when you want to avoid coupling the enum to the concrete implementations. Conclusion Enhanced Enums and Constructor Tearoffs are two of modern Dart's finest language ergonomics. When combined, they eliminate entire classes of boilerplate: Self-documenting : The enum member explicitly declares the constructor that builds it. Compile-time safe : Missing a constructor is impossible; the compiler will not let you compile an enum member without satisfying the signature. Zero switch statements : Replaces sprawling factory classes with a clean, single-line invocation. Next time you catch yourself writing a 30-line switch statement just to instantiate a class from an enum value, pause. Let the enum do the work. What's your take? Have you started using constructor tearoffs in your enums, or do you prefer Dart 3 switch expressions? Let me know in the comments below! Randal L. Schwartz is a Google Developer Expert (GDE) for Dart & Flutter and veteran software architect. 📺 Watch deep dives and walkthroughs on YouTube: @RandalOnDartAndFlutter 💻 Connect on GitHub: @RandalSchwartz",
+            "url": "https://dev.to/gde/dart-enhanced-enums-are-secretly-factories-unlocking-constructor-tearoffs-54n9",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "git",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-20T20:03:10+00:00",
+            "collected_at": "2026-09-20T20:04:36.609732+00:00"
+        },
+        {
+            "id": "77599f7ddf472bdabdea323f4a64ea97813e52a10ca504e7a9594c6114abbbac",
+            "title": "Steam snap app using Core 26 available for testing",
+            "description": "Ubuntu gamers can help test a new version of Canonical’s Steam snap that uses a core26 base and updated Mesa graphics drivers. By switching a new testing channel, the Steam snap’s underlying base runtime gets bumped to a version based on Ubuntu 26.04 LTS and pulls in a matching gaming-graphics-core26 content snap with newer GPU drivers – and potentially, better performance. To help test it – do see the notes below – opt in by running snap refresh steam --channel stable/core26 in your terminal, but make sure you fully quit the Steam snap first. Canonical also say to treat the updated packages […] You're reading Steam snap app using Core 26 available for testing , a blog post from OMG! Ubuntu . Do not reproduce elsewhere without permission.",
+            "url": "https://www.omgubuntu.co.uk/2026/09/steam-snap-core26-testing",
+            "source": "OMG! Ubuntu",
+            "category": "hardware",
+            "tags": [
+                "desktop",
+                "linux",
+                "ubuntu"
+            ],
+            "published_at": "2026-09-20T20:01:00+00:00",
+            "collected_at": "2026-09-20T20:04:41.311322+00:00"
+        },
+        {
+            "id": "33a8787b35f3b25e22876db9221ae0d9603925685297ed78ab168f13d8044fbb",
+            "title": "The Neuro-Symbolic Revolution: Building an Enterprise Regulatory Audit & Fraud Detection System",
+            "description": "The architecture of enterprise financial audit systems and fraud detection engines has reached a historic inflection point. For decades, organizations have oscillated between two distinct paradigms: the brittle, highly deterministic rigidity of classical rule engines and relational database constraints, and the fluid, probabilistic, yet dangerously opaque nature of modern Large Language Models (LLMs). Classical engines fail when confronted with unstructured, rapidly evolving regulatory prose, where semantic nuance and contextual interpretation dictate compliance. Conversely, pure neural networks and standalone generative models hallucinate citations, invent statutory articles, and fail to provide the mathematical proofs required by statutory auditors and regulatory bodies. This challenge addresses the fundamental dichotomy by examining the theoretical synthesis of Neuro-Symbolic AI and Knowledge Graphs. By grounding neural representations within deterministic, ontological bounds, we construct systems capable of zero-hallucination inference. To achieve this in an enterprise TypeScript environment, we must build upon foundational data structures. Specifically, this requires extending the probabilistic vector spaces introduced during our exploration of Retrieval-Augmented Generation (RAG) architectures in earlier chapters—where K-Nearest Neighbors (KNN) search acts as our primary fuzzy discovery mechanism—and wedding them to strict, unyielding symbolic logic solvers. The Architecture of Epistemic Hybridization: Neural Meets Symbolic To understand the theoretical necessity of combining neural embeddings with symbolic knowledge graphs, we must examine the limitations of each paradigm in isolation. Neural embeddings map textual tokens, entities, and entire documents into high-dimensional continuous vector spaces. In these spaces, semantic similarity corresponds to geometric proximity, typically measured via cosine similarity or Euclidean distance. When a user queries an enterprise repository for suspicious transaction patterns, the system leverages K-Nearest Neighbors (KNN) search across indexed embeddings to retrieve the most contextually relevant passages. This is powerful for fuzzy matching, identifying synonyms, and capturing implicit contextual associations that escape keyword matching. However, vector spaces are inherently continuous and interpolation-driven. They lack native facilities for explicit quantification, universal negation, and transitive logical inference. If an enterprise compliance invariant states that \"No subsidiary shell corporation located in a non-cooperative jurisdiction may route capital through a Tier-1 clearinghouse without prior Board attestation,\" a purely neural network might associate the shell corporation with the clearinghouse based on co-occurrence in historical filings, missing the boolean violation of the regulatory axiom. Symbolic AI, by contrast, operates on discrete symbols, formal logic, and explicit relationships governed by ontologies (such as RDF, OWL, and enterprise taxonomies). Knowledge graphs explicitly model entities as nodes and relationships as directed edges, allowing systems to traverse institutional ownership structures, detect circular capital flows, and evaluate logical invariants with absolute mathematical certainty. Yet, classical symbolic systems are notoriously brittle. They cannot ingest unstructured PDF prospectuses, parse inconsistent human-written invoices, or resolve semantic ambiguities without explicit, manually curated mapping rules. Neuro-Symbolic AI bridges this chasm. In this architecture, neural embeddings and KNN retrievers act as the perceptual cortex—transforming unstructured enterprise chaos into candidate entities, relationships, and vector-backed semantic anchors. Once these candidates are identified, they are projected into the symbolic layer: a deterministic knowledge graph managed by graph databases and evaluated by symbolic logic solvers. This creates a bidirectional feedback loop where neural perception proposes candidate structures, and symbolic validation acts as a strict firewall, pruning hallucinations and enforcing compliance invariants. Web Development Analogies: Understanding Enterprise System Design To ground these abstract artificial intelligence concepts in familiar software engineering principles, consider how web developers manage state, routing, and data integrity in large-scale distributed systems. Embeddings as Distributed Hash Maps and Content Delivery Networks (CDNs) Think of neural embeddings and KNN retrieval mechanisms as an advanced, fuzzy Content Delivery Network (CDN) or a distributed cache like Redis operating on semantic hashes rather than exact keys. In traditional web development, if a user requests a resource with an invalid URL slug, a strict hash lookup fails. A semantic embedding space, however, acts as a fuzzy routing table. Even if the user submits a natural language query with typos, slang, or alternative phrasing, the KNN algorithm calculates the geometric distance in the high-dimensional vector space and routes the request to the closest valid semantic asset. Just as a CDN caches edge representations of heavy origin server data to accelerate retrieval, embeddings cache the semantic essence of heavy unstructured documents, allowing rapid approximate matching before hitting the heavy database. Symbolic Knowledge Graphs as Strongly Typed Relational Schemas and TypeScript Interfaces If embeddings are the fuzzy CDN, the Knowledge Graph and its ontological schemas are the ultimate TypeScript type system ( interface , type , and runtime validation libraries like Zod) enforced at the database layer. In TypeScript, we write strict interfaces to guarantee that a Transaction object cannot be processed unless it satisfies precise structural invariants (e.g., amount: number , origin: Account , destination: Account , isCompliant: true ). A symbolic knowledge graph applies this exact rigor to enterprise data. It asserts that every entity must conform to ontological classes, and every relationship must adhere to defined domain and range restrictions. Just as TypeScript compiler errors prevent malformed code from reaching production, symbolic rule engines prevent logically inconsistent or illegal financial transactions from passing the audit pipeline. Deterministic Solvers as Middleware Gateways and Authentication Guards In a modern web application, asynchronous middleware intercepts HTTP requests, inspects JSON Web Tokens (JWTs), evaluates role-based access control (RBAC) matrices, and either permits execution or rejects the request with a strict 403 Forbidden status. A deterministic solver in a regulatory audit system operates on the exact same theoretical principle. Regardless of how confident an LLM or neural classifier is that a suspicious transaction is legitimate (\"the LLM says 98% probability of compliance\"), the deterministic solver intercepts this probabilistic output and evaluates it against hardcoded, immutable statutory rules. If a single compliance invariant fails, the solver blocks the transaction, generating an unalterable audit log. There is no negotiation, no probability threshold, and no hallucination. Asynchronous Tool Handling and Exhaustive Asynchronous Resilience in Enterprise Systems In enterprise Node.js environments, orchestrating complex pipelines that query vector databases, traverse graph databases, invoke external regulatory APIs, and run deterministic constraint solvers introduces severe concurrency and failure-handling challenges. The reactive nature of financial audit systems requires strict adherence to asynchronous engineering paradigms. Asynchronous Tool Handling is the mandatory architectural pattern in Node.js and frameworks like LangGraph.js where every external interaction—whether calling a remote GraphDB via Cypher queries, querying a vector embedding index, or invoking a symbolic solver—is encapsulated within a Promise and explicitly awaited within node functions. This guarantees non-blocking execution of the overall graph, ensuring that the Node.js event loop remains unblocked while waiting for I/O-bound enterprise operations. However, mere async/await syntax is insufficient for mission-critical financial systems. We must mandate Exhaustive Asynchronous Resilience across every layer of the application. This principle requires systematic anticipation and mitigation of failure modes in all asynchronous operations. Every critical async call must be enclosed within robust try...catch blocks to ensure graceful degradation, rich error context serialization, and comprehensive logging. Crucially, it mandates the use of the finally block pattern to guarantee resource cleanup, database connection teardown, and mutex release, regardless of whether the execution path succeeds or throws an exception. The Anatomy of Zero-Hallucination Architectures To appreciate the theoretical depth of zero-hallucination architectures in financial audit systems, we must deconstruct the mechanics of generative error. LLMs generate text by predicting the next token based on learned statistical associations across massive text corpora. This probabilistic token generation is susceptible to confabulation—generating plausible-sounding but factually incorrect assertions, citations, or numbers. In enterprise finance, a single hallucinated statutory reference or an undetected compliance failure can result in catastrophic regulatory fines, criminal liability, and institutional insolvency. Achieving zero-hallucination inference requires decoupling generation from verification . In our neuro-symbolic pipeline, the generative components (such as LLM-based entity extraction and unstructured text summarization) are treated as untrusted user input. When an unstructured regulatory document or an obscure corporate filing is ingested, the LLM is permitted to parse the text and propose candidate triples (Subject, Predicate, Object) for insertion into the Knowledge Graph. However, these proposed triples are never committed directly to the authoritative state ledger. Instead, they pass through a rigorous ontological validation gate. The system checks the proposed triples against the enterprise ontology: Do the entity types match the permitted domain and range? Do the temporal validity windows overlap? Are there existing contradictory axioms in the Knowledge Graph? Once validated and ingested into the GraphDB, the system evaluates regulatory compliance not by asking an LLM \"Is this transaction compliant?\", but by executing deterministic graph queries and symbolic constraint satisfaction procedures. The decision is computed via formal logic—such as Description Logics or Datalog rules—running over the verified graph topology. If the logical axioms evaluate to true, the decision is mathematically sound. The AI component merely served as a perceptual bridge to translate unstructured prose into structured graph topology; the final judgment was rendered by pure, deterministic logic. The Role of K-Nearest Neighbors (KNN) in Hybrid Retrieval While symbolic logic guarantees deterministic verification, the system must still discover relevant context across millions of unstructured enterprise documents, emails, trade logs, and regulatory updates. This is where K-Nearest Neighbors (KNN) search within high-dimensional vector spaces becomes indispensable. In our theoretical model, vector embeddings serve as the indexing mechanism for unstructured semantic data. When an auditor initiates a complex, open-ended fraud investigation query (e.g., \"Find all transactions exhibiting characteristics similar to the 2008 LIBOR manipulation scheme involving shell entities in the Cayman Islands\"), exact keyword matching fails because the historical documents use different terminology, acronyms, or obfuscated corporate names. The KNN algorithm solves this by projecting the query into the same vector space as our document corpus, calculating the geometric distance (such as cosine distance) across the vector dimensions, and identifying the exact 'K' vectors that are mathematically closest to the query vector. These retrieved chunks of text are then parsed by neural entity extraction models to identify specific corporate entities, bank accounts, and transaction identifiers. Crucially, these discovered entities are then mapped directly into our Knowledge Graph. Thus, KNN acts as the discovery engine, while the Knowledge Graph and deterministic solvers act as the verification engine. KNN finds the needle in the haystack by approximate semantic proximity; the symbolic solver ensures the needle is legally and mathematically genuine. Ontological Reasoning and Enterprise Knowledge Graphs To maintain strict compliance invariants across complex corporate hierarchies, an enterprise system must model reality through a formal ontology. An ontology defines the formal naming and definition of the types, properties, and interrelationships of the entities that exist for a particular domain of discourse. In our financial audit system, the ontology formalizes concepts such as LegalEntity , UltimateBeneficialOwner , ShellCorporation , PoliticallyExposedPerson , Clearinghouse , Jurisdiction , and Transaction . Properties define directed relationships, such as hasShareholder , isLocatedIn , routesCapitalThrough , and isSubjectToRegulation . Ontological reasoning allows the system to derive implicit facts from explicit assertions through deductive inference. For example, if the ontology defines ShellCorporation as a subclass of LegalEntity that has fewer than three full-time employees and holds more than 80% of its assets in passive financial instruments, and a dynamic graph ingestion pipeline populates an entity meeting these criteria, the reasoner automatically classifies the entity as a ShellCorporation without requiring explicit human labeling. Furthermore, ontological constraints prevent logical contradictions. If a compliance rule states that JurisdictionX is classified as NonCooperative , and another rule states that any transaction originating in a NonCooperative jurisdiction involving a ShellCorporation must trigger an immediate Level-5 Audit Flag, the deterministic solver evaluates this graph pattern with absolute mathematical precision. There is no guessing, no probabilistic variance, and no reliance on the ephemeral \"mood\" of an LLM. The End-to-End Auditable Pipeline When these theoretical components—Asynchronous Tool Handling, Exhaustive Resilience, KNN Vector Retrieval, Ontological Knowledge Graphs, and Deterministic Solvers—are synthesized into an end-to-end TypeScript architecture, we achieve a new standard in enterprise software engineering: verifiable, auditable decision-making. Every step of the pipeline leaves an immutable, cryptographically verifiable trace. When an auditor reviews a compliance decision, they do not see a black-box LLM output. Instead, they trace a crystal-clear lineage: Perception & Retrieval: Unstructured ingestion via async pipelines, vectorized into embeddings, and retrieved via KNN semantic search. Entity Linking & Graph Ingestion: Neural extraction of entities and relationships, validated against ontological schemas using robust async error-handling patterns with guaranteed resource cleanup. Symbolic Verification: Deterministic graph traversals evaluating statutory rules and compliance invariants against the explicit topology of the Knowledge Graph. Auditable Decision: Generation of a mathematically proven compliance verdict, complete with exact citation of ontological axioms, graph traversal paths, and vector similarity scores. This synthesis eliminates the fundamental trade-off between expressive intelligence and deterministic reliability. By combining the perceptual flexibility of neural networks with the unyielding rigor of symbolic logic, we empower enterprise systems to reason about complex regulatory landscapes with absolute zero-hallucination guarantees. Practical Implementation: Enterprise TypeScript Architecture To understand how a neuro-symbolic enterprise regulatory audit system operates in practice, we must examine a foundational pattern: the fusion of deterministic semantic constraints (ontologies/knowledge graphs) with probabilistic inference (neural extraction). Below is a self-contained, enterprise-grade TypeScript example representing a SaaS compliance pipeline. This service intercepts incoming transactional payloads, validates them against strict deterministic financial invariants, queries a GraphDB representation of corporate hierarchies, and yields an auditable, zero-hallucination compliance verdict. import { EventEmitter } from ' events ' ; /** * Represents the severity level of a compliance or audit violation. */ enum ViolationSeverity { LOW = ' LOW ' , MEDIUM = ' MEDIUM ' , HIGH = ' HIGH ' , CRITICAL = ' CRITICAL ' } /** * Represents a raw financial transaction entering the SaaS auditing pipeline. */ interface TransactionPayload { transactionId : string ; sourceAccount : string ; destinationAccount : string ; amountUSD : number ; jurisdiction : string ; timestamp : number ; metadata ?: Record < string , unknown > ; } /** * Represents a node within the Enterprise Knowledge Graph (GraphDB abstraction). */ interface EntityNode { id : string ; name : string ; type : ' Individual ' | ' CorporateEntity ' | ' ShellCompany ' | ' BankBranch ' ; riskScore : number ; sanctioned : boolean ; jurisdiction : string ; } /** * Represents a directed relationship edge in the Knowledge Graph. */ interface EntityEdge { sourceId : string ; targetId : string ; relationshipType : ' OWNS ' | ' DIRECTS ' | ' TRANSACTS_WITH ' | ' SUBSIDIARY_OF ' ; ownershipPercentage ?: number ; } /** * The deterministic audit result structure ensuring zero-hallucination tracking. */ interface AuditVerdict { transactionId : string ; isCompliant : boolean ; deterministicRulesChecked : string []; violations : Array < { ruleId : string ; description : string ; severity : ViolationSeverity ; } > ; executionTimeMs : number ; timestamp : number ; } /** * Mock Enterprise Graph Database for resolving entity relationships and ultimate beneficial ownership (UBO). */ class EnterpriseGraphDatabase { private nodes : Map < string , EntityNode > = new Map (); private edges : EntityEdge [] = []; constructor () { // Seed initial graph data representing corporate structures and sanctioned entities this . nodes . set ( ' ACC-001 ' , { id : ' ACC-001 ' , name : ' Alpha Global Corp ' , type : ' CorporateEntity ' , riskScore : 0.1 , sanctioned : false , jurisdiction : ' US ' }); this . nodes . set ( ' ACC-002 ' , { id : ' ACC-002 ' , name : ' Shadow Holdings LLC ' , type : ' ShellCompany ' , riskScore : 0.85 , sanctioned : true , jurisdiction : ' KY ' // Cayman Islands }); this . nodes . set ( ' ACC-003 ' , { id : ' ACC-003 ' , name : ' Beta Industrial Ltd ' , type : ' CorporateEntity ' , riskScore : 0.2 , sanctioned : false , jurisdiction : ' DE ' }); this . edges . push ({ sourceId : ' ACC-001 ' , targetId : ' ACC-002 ' , relationshipType : ' SUBSIDIARY_OF ' , ownershipPercentage : 51.0 }); } /** * Retrieves an entity node by its identifier. */ public async getNode ( id : string ): Promise < EntityNode | null > { return new Promise (( resolve ) => { setImmediate (() => { resolve ( this . nodes . get ( id ) || null ); }); }); } /** * Evaluates if a path exists between two entities via graph traversal (e.g., UBO checks). */ public async hasSanctionedPath ( startId : string , maxDepth : number = 3 ): Promise < boolean > { return new Promise (( resolve ) => { setImmediate (() => { const visited = new Set < string > (); const queue : Array < { id : string ; depth : number } > = [{ id : startId , depth : 0 }]; while ( queue . length > 0 ) { const current = queue . shift () ! ; if ( visited . has ( current . id )) continue ; visited . add ( current . id ); const node = this . nodes . get ( current . id ); if ( node && node . sanctioned ) { resolve ( true ); return ; } if ( current . depth < maxDepth ) { const outgoing = this . edges . filter ( e => e . sourceId === current . id ); for ( const edge of outgoing ) { if ( ! visited . has ( edge . targetId )) { queue . push ({ id : edge . targetId , depth : current . depth + 1 }); } } } } resolve ( false ); }); }); } } /** * Deterministic Compliance Solver implementing hard regulatory invariants. */ class ComplianceSolver { private graphDb : EnterpriseGraphDatabase ; constructor ( graphDb : EnterpriseGraphDatabase ) { this . graphDb = graphDb ; } /** * Evaluates a transaction against strict deterministic regulatory rules. */ public async evaluateTransaction ( tx : TransactionPayload ): Promise < AuditVerdict > { const startTime = performance . now (); const rulesChecked : string [] = []; const violations : Array < { ruleId : string ; description : string ; severity : ViolationSeverity } > = []; // Rule 1: Threshold reporting limit (Bank Secrecy Act / AML invariant) rulesChecked . push ( ' RULE-AML-01-THRESHOLD ' ); if ( tx . amountUSD > 10000 ) { if ( ! tx . metadata || ! tx . metadata [ ' amlReportFiled ' ]) { violations . push ({ ruleId : ' RULE-AML-01-THRESHOLD ' , description : `Transaction amount $ ${ tx . amountUSD } exceeds $10,000 threshold without prior AML filing tag.` , severity : ViolationSeverity . MEDIUM }); } } // Rule 2: Direct or Indirect Sanctioned Entity Check via Knowledge Graph rulesChecked . push ( ' RULE-OFAC-02-UBO-SANCTION ' ); const sourceNode = await this . graphDb . getNode ( tx . sourceAccount ); const destNode = await this . graphDb . getNode ( tx . destinationAccount ); if ( sourceNode ?. sanctioned || destNode ?. sanctioned ) { violations . push ({ ruleId : ' RULE-OFAC-02-UBO-SANCTION ' , description : `Direct transaction involvement with a sanctioned entity (Source: {% katex inline %}{tx.sourceAccount}, Dest: {% endkatex %}{tx.destinationAccount}).` , severity : ViolationSeverity . CRITICAL }); } else { const sourceTainted = await this . graphDb . hasSanctionedPath ( tx . sourceAccount ); const destTainted = await this . graphDb . hasSanctionedPath ( tx . destinationAccount ); if ( sourceTainted || destTainted ) { violations . push ({ ruleId : ' RULE-OFAC-02-UBO-SANCTION ' , description : `Indirect ownership link detected to a sanctioned entity through corporate graph traversal.` , severity : ViolationSeverity . HIGH }); } } // Rule 3: High-Risk Jurisdiction Cross-Border check rulesChecked . push ( ' RULE-GEO-03-JURISDICTION ' ); const highRiskJurisdictions = [ ' KY ' , ' PA ' , ' IR ' , ' NK ' ]; if ( highRiskJurisdictions . includes ( tx . jurisdiction )) { violations . push ({ ruleId : ' RULE-GEO-03-JURISDICTION ' , description : `Transaction originates from or terminates in high-risk monitored jurisdiction: ${ tx . jurisdiction } .` , severity : ViolationSeverity . HIGH }); } const endTime = performance . now (); return { transactionId : tx . transactionId , isCompliant : violations . length === 0 , deterministicRulesChecked : rulesChecked , violations , executionTimeMs : Number (( endTime - startTime ). toFixed ( 2 )), timestamp : Date . now () }; } } Conclusion Building enterprise-grade regulatory audit and fraud detection systems requires moving past the limitations of standalone AI models and rigid legacy databases. By adopting a neuro-symbolic architecture—pairing the fuzzy discovery power of KNN vector search with the absolute mathematical certainty of ontological knowledge graphs and deterministic solvers—engineering teams can finally solve the compliance puzzle. Implementing these patterns in TypeScript provides the strict typing, robust async handling, and developer ergonomics required to maintain high-velocity financial workflows without sacrificing legal and regulatory integrity. The concepts and code demonstrated here are drawn directly from the comprehensive roadmap laid out in the book Neuro-Symbolic AI & Knowledge Graphs , you can find it here . Check also the many other ebooks .",
+            "url": "https://dev.to/programmingcentral/the-neuro-symbolic-revolution-building-an-enterprise-regulatory-audit-fraud-detection-system-493e",
+            "source": "DEV Community",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "developpement",
+                "git",
+                "intel",
+                "javascript",
+                "llm",
+                "programmation",
+                "rust",
+                "typescript",
+                "web",
+                "windows"
+            ],
+            "published_at": "2026-09-20T20:00:00+00:00",
+            "collected_at": "2026-09-20T20:04:36.612241+00:00"
+        },
+        {
+            "id": "1a363947d66d31f14615204a964be9f13d1ae430953a61e1a61946f2afe37f77",
+            "title": "I built a pipeline that turns a topic into a 20-30 minute documentary",
+            "description": "I've been working on AI Video Factory, an MIT-licensed Python pipeline that turns a topic into a complete 20-30 minute documentary: researched script, per-scene visuals, local TTS narration, music bed, karaoke captions, FFmpeg assembly, QC, thumbnail, and YouTube metadata. What it does You give it a topic. It researches the topic, writes a script with citations, pulls per-scene visuals from Pexels/Pixabay/NASA, narrates it with local TTS, lays down a music bed, burns in karaoke captions, assembles everything in FFmpeg, runs a QC gate, and outputs a thumbnail plus YouTube metadata. Seven presets: business autopsy, history reconstruction, science doc, horror anthology, and more. Three things I learned the hard way 1. LLM-written scripts invent citations that look completely legit. The first scripts came back with references that sounded real but pointed nowhere. Now every cited URL gets a real HTTP check against a 200 response. Anything that fails the check gets cut or rewritten. 2. A \"25 minute\" video kept coming out at 14 minutes. Runtime drift is a real problem with generated scripts. Scripts are now written in timed beats, and underweight beats get extended at roughly 150 wpm until the target runtime holds. 3. Real stock footage beats AI visuals for most scenes. This one honestly surprised me. AI-generated visuals look impressive frame by frame but feel off across a 20-minute runtime. The pipeline prefers real footage, with local still generation and procedural fallbacks when nothing fits. The unglamorous wins Content-addressed caching of pipeline stages, so iterating on one scene does not mean a full re-render. A QC gate that fails the run on dark frames, digital silence, or wrong resolution before encoding. Single loudnorm pass to -16 LUFS, per-scene xfade transitions. Local-first Scripting runs against any OpenAI-compatible endpoint (LM Studio, llama-server), TTS is local, and nothing cloud is required. Roadmap includes Whisper-based caption alignment, more music profiles, optional Veo/Sora providers, and multilingual narration. The repo is here: https://github.com/summitsingh/ai-video-factory I genuinely don't know if anyone besides me wants this. Tell me what you'd throw at it first.",
+            "url": "https://dev.to/summitsingh/i-built-a-pipeline-that-turns-a-topic-into-a-20-30-minute-documentary-bfp",
+            "source": "DEV Community",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "developpement",
+                "git",
+                "llm",
+                "openai",
+                "programmation",
+                "python",
+                "web"
+            ],
+            "published_at": "2026-09-20T19:59:40+00:00",
+            "collected_at": "2026-09-20T20:04:36.612472+00:00"
+        },
+        {
+            "id": "d02b8cc2d1c705c88e3ab5dcf67beee92e100739aef8ec7bccd4bf94b48bad5e",
+            "title": "Why I Built ASOShot: A Free App Store Screenshot Editor",
+            "description": "Preparing store screenshots should be a short release task. In practice, it often turns into a small design project: find the current export sizes, place several captures in consistent frames, keep text readable, repeat the work for every locale, and discover a dimension error only after uploading. I built ASOShot to make that workflow less fragile. It is a free browser-based editor for App Store and Google Play screenshot graphics. You can start from a template, add real app captures, edit captions, switch between flat and perspective device frames, and export full-resolution images without creating an account. This is not an independent review. I am the maker, and this is the reasoning behind the product. The problem was repetition, not a lack of design tools General-purpose design software can produce excellent store assets. The difficulty is maintaining a matrix of screens, store sizes, and languages without introducing drift. A screenshot set has two kinds of decisions: Shared decisions: background, typography, device model, frame color, and the overall composition. Exceptions: a longer German headline, a different crop on one screen, or a frame shifted to reveal an important control. Copying artboards handles the first version. It becomes harder when a later change should reach every screen except the few intentional overrides. ASOShot models that split directly. The Global Studio controls shared settings. A per-screen panel stores only the properties changed for that screen. If one frame has a custom rotation, it can still inherit a later global color or shadow change. The editor is local-first Imported screenshots and canvas rendering stay in the browser. Projects can be saved in browser storage or downloaded as a portable JSON backup. Translation is the exception: when used, only caption text and the selected languages are sent to the configured translation endpoint. Images are not sent for translation. That boundary matters for unreleased apps. It also keeps the basic workflow simple: open the editor, choose a template, and start working. Export fidelity became the main engineering constraint The first renderer used a DOM-to-image approach. It worked for ordinary layout but failed on realistic perspective frames. Browsers composite CSS 3D layers for the current display size; enlarging that result for a store-resolution export can expose blurred edges and a mismatch between the preview and the downloaded file. The current export path draws directly to a 2D canvas. Backgrounds, captions, badges, shadows, device edges, and screen images use the same geometry as the preview. Perspective devices are projected and drawn in slices instead of capturing the editor DOM. The preview remains fluid, while export runs at the target's native pixel dimensions. That separation lets a small editor preview stay responsive without making it the source bitmap for the final image. What is included today The current project includes: 15 category templates iPhone, iPad, and Android export targets Flat and perspective device frames Multiple frames per screen, including cross-screen layouts Captions for more than 20 locale presets Full-resolution PNG and JPEG export Batch ZIP export across selected screens, sizes, and locales JSON project backup and restore There is no public screenshot-generation API or MCP server. ASOShot is currently an interactive browser editor. I prefer stating that plainly rather than advertising a roadmap item as a finished feature. The workflow I wanted Pick a template close to the app's visual category. Select the store sizes that will actually be submitted. Upload real product captures. Write one clear benefit per screen. Review frame placement and text at every selected size. Add locales, then review automatic translations before publishing. Export the final matrix as a ZIP. Apple and Google change asset requirements, so the editor is not a substitute for checking their current documentation before a release. It is meant to remove the repetitive composition and export work after those targets are known. ASOShot is available at asoshot.com . If you try it on a real release, the most useful feedback is specific: which screen size, frame arrangement, or localization step slowed you down?",
+            "url": "https://dev.to/chnkc41/why-i-built-asoshot-a-free-app-store-screenshot-editor-5apf",
+            "source": "DEV Community",
+            "category": "cloud",
+            "tags": [
+                "android",
+                "aws",
+                "developpement",
+                "ios",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-20T19:50:57+00:00",
+            "collected_at": "2026-09-20T20:04:36.612879+00:00"
+        },
+        {
+            "id": "c7ad22b0549587e229e741a79cb4e98cd92bbef0ddc93e7b9ac9ce7ef4287816",
+            "title": "I turned a real OpenAPI into an MCP server in 5 min (without losing custom code on regen)",
+            "description": "I built an OpenAPI to MCP server generator for TypeScript, Python and Go. The v1 mistake: 1 endpoint = 1 tool. On a real API with 200 operations, you get a 200-tool server. Nobody can use that. That was the exact feedback I got on Reddit, and it was right. What I changed in 2.1.5: 1. Grouping by tag or path 200 operations across 8 tags become ~8 tools. Each group routes internally by action . node dist/cli/index.js generate -i api.yaml -o ./out --group-by tag node dist/cli/index.js generate -i api.yaml -o ./out --include-tags pets --group-by tag Filter before you generate Only generate what you will use: node dist/cli/index.js generate -i api.yaml -o ./out --path-prefix \"/users/ \" node dist/cli/index.js generate -i api.yaml -o ./out --include-paths \"/users/ ,/orders/ \" --exclude-paths \"/users/internal/ \" node dist/cli/index.js generate -i api.yaml -o ./out --operation-allowlist listPets,createPet Regen without losing custom code Your code lives between markers and survives regen with a 3-way merge: // @@mcp-gen:start:get_pets const user = await db.users.findById(args.id); return { content: [{ type: \"text\", text: JSON.stringify(user) }] }; // @@mcp-gen🔚get_pets node dist/cli/index.js generate -i api.yaml -o ./out --incremental Reusable logic goes in handlers.custom.* — never overwritten without --force. Fase 0 P0 fixes in 2.1.5 TypeScript: real query serialization (get_pets({ limit: 5 }) -> /pets?limit=5) Python: _build_query / _build_headers in --http mode, including grouped tools Go: --http wired to the real APIClient, no more not yet wired stubs Registry is v3-only with actionable errors for removed keys and v2 specs Try it with the repo example git clone https://github.com/ChristopherDond/MCP-Generator.git cd MCP-Generator npm ci npm run build node dist/cli/index.js generate -i examples/petstore.yaml -l typescript -o ./my-server node dist/cli/index.js validate -i examples/petstore.yaml Or install directly: npm install -g @christopher_dondici/ mcp-gen@2.1.5 Repo: https://github.com/ChristopherDond/MCP-Generator Validated with npm run build + npm test (11 suites, 196 tests).",
+            "url": "https://dev.to/christopherdond/i-turned-a-real-openapi-into-an-mcp-server-in-5-min-without-losing-custom-code-on-regen-2j2k",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "git",
+                "programmation",
+                "python",
+                "typescript",
+                "web"
+            ],
+            "published_at": "2026-09-20T19:50:35+00:00",
+            "collected_at": "2026-09-20T20:04:36.613191+00:00"
+        },
+        {
+            "id": "c7727ebfd4bb2ba715d36d17bcc928d9cda8afe2312df3c89ea77bb4416457b6",
+            "title": "Stop Paying the build_runner Tax: Why I Refuse to Use Mockito in Modern Dart",
+            "description": "This is Part 1 of the Dart and Flutter series—practical guides, architectural deep dives, and hard-earned engineering lessons from the field. Each article is completely standalone. Picture this familiar scene: You’re deep in the zone. You’re practicing disciplined Test-Driven Development (TDD). You write a failing test, write the minimal code to satisfy it, and refactor. Red, green, refactor. Your fingers are flying. Then, you add a single new method to your UserRepository interface: Future < void > updatePreferences ( UserPreferences prefs ); You switch back to your test file to stub it, and everything grinds to a dead stop. Your IDE lights up with red squiggly lines because the generated mock doesn't know about updatePreferences yet. You sigh, drop into the terminal, and type the dreaded incantation: dart run build_runner build --delete-conflicting-outputs Now you wait. 15 seconds. 30 seconds. On a large enterprise Flutter codebase, maybe two full minutes. The fan spins up. Your train of thought derails. By the time the builder finishes generating boilerplate Dart files, you've lost your flow state. Why on earth are we running heavyweight compile-time code generation just to create a mock object for a unit test? It’s time to stop using mockito in modern Dart. There is a much better way. How Did We End Up Here? To be fair to the mockito maintainers, mockito didn’t set out to be slow. In the pre-null-safety era of Dart, mockito was the undisputed king. You created a mock class with class MockRepo extends Mock implements Repo {} , and Dart’s runtime dynamic invocation ( noSuchMethod ) handled everything under the hood with zero code generation. It was snappy and painless. Then came Sound Null Safety in Dart 2.12. Null safety is one of the best things that ever happened to Dart, but it broke mockito 's runtime magic. In a soundly typed null-safe language, if an interface method declares that it returns a non-nullable User , noSuchMethod cannot simply return null while waiting for your when(...) stub to register. Returning null violates the type system and throws an immediate runtime error before your stubbing logic even runs. Because Dart has deliberately avoided heavy runtime reflection ( dart:mirrors is disabled in Flutter for performance and tree-shaking reasons), mockito chose the only route available to it at the time: compile-time code generation via build_runner . It solved the type-safety problem, but it introduced the dreaded build_runner tax . The Three Sins of Modern Mockito Relying on mockito today saddles your codebase with three distinct engineering bottlenecks: 1. The Iteration Tax (Destroying the TDD Flow) TDD relies on tight feedback loops measured in milliseconds. When every interface change or mock signature update requires running code generation, the feedback loop stretches into tens of seconds. Developers stop running tests frequently. They batch their changes, commit without verifying, and run tests as an afterthought. Velocity plummets. 2. Git Diff Pollution & Merge Conflict Hell For every test file with mocks, mockito generates a .mocks.dart sibling file. These files are thousands of lines of machine-generated boilerplate. They pollute pull request reviews. They clutter repository search results. When two developers touch overlapping service interfaces on separate branches, merging their generated .mocks.dart files triggers brutal, unreadable merge conflicts. 3. Brittle Annotation Coupling With mockito , your tests are coupled to global library annotations: // test/user_service_test.dart import 'user_service_test.mocks.dart' ; @GenerateMocks ([ HttpClient , UserRepository ]) void main () { // ... } Want to mock a third dependency? You have to edit the annotation list, rerun build_runner , wait for the file system to update, and import the generated symbols. It's clunky and mechanical. Enter Mocktail: Zero-Config Runtime Mocking Enter mocktail , created by Felix Angelov (of Bloc and Very Good Ventures fame). mocktail delivers the exact same intuitive API you know from mockito , but with zero code generation . No build_runner . No .mocks.dart files. No annotations. How? By leveraging two native features of Dart: Dart’s implicit interfaces : In Dart, every class implicitly defines an interface. You can implement any class without inheriting its implementation. Closures for stubbing : Instead of evaluating the mock invocation directly (which triggers the null-safety problem), mocktail wraps the invocation inside a closure: () => mock.getUser() . This defers execution until mocktail can safely intercept and return the registered stub or a fallback value. Here is how you declare a mock in mocktail : import 'package:mocktail/mocktail.dart' ; // No annotations. No build_runner. Just pure, clean Dart. class MockUserRepository extends Mock implements UserRepository {} class MockHttpClient extends Mock implements HttpClient {} That’s it. You define the class right in your test file (or in a shared test_helpers.dart ), hit save, and run your tests instantly. Side-by-Side: Mockito vs. Mocktail The migration from mockito to mocktail requires practically zero mental re-learning: Feature mockito mocktail 🍹 Code Generation Requires build_runner None (Pure runtime) Declaration @GenerateMocks([UserRepo]) class MockUserRepo extends Mock implements UserRepo {} Synchronous Stub when(repo.name).thenReturn('Randal') when(() => repo.name).thenReturn('Randal') Asynchronous Stub when(repo.fetch()).thenAnswer((_) async => user) when(() => repo.fetch()).thenAnswer((_) async => user) Argument Matchers anyNamed('id') , anyString any(named: 'id') , any() Verification verify(repo.login()).called(1) verify(() => repo.login()).called(1) Notice the only primary syntax difference: mocktail passes the invocation as an anonymous function () => mock.method() . That simple closure is the secret sauce that bypasses the need for compile-time code generation. The One \"Gotcha\": Custom Type Fallbacks To be an objective engineer, you must evaluate the trade-offs. mocktail has exactly one gotcha, and once you understand it, it takes 5 seconds to address. The Problem When you use flexible argument matchers like any() on a method that accepts a non-nullable custom type : when (() = > mockRepo . saveUser ( any ())) . thenAnswer (( _ ) async = > true ); Dart’s sound type system insists that something matching the type User must be passed into saveUser during internal matcher registration. Under the hood, mocktail cannot synthesize an instance of your custom User class out of thin air. If it passed null , Dart would throw a type error. If you don't tell mocktail how to satisfy that type, it will throw an informative exception: Bad state: A test tried to use any() or captureAny() on a User which was not registered. Register a fallback value using `registerFallbackValue`. The Solution You define a dummy Fake and register it in setUpAll : import 'package:flutter_test/flutter_test.dart' ; import 'package:mocktail/mocktail.dart' ; // 1. Create a Fake implementation that satisfies the type checker class FakeUser extends Fake implements User {} void main () { setUpAll (() { // 2. Register it once before any tests run registerFallbackValue ( FakeUser ()); }); test ( 'saves user profile' , () async { final repo = MockUserRepository (); when (() = > repo . saveUser ( any ())) . thenAnswer (( _ ) async = > true ); final service = UserService ( repo ); final result = await service . updateProfile ( User ( id: '123' , name: 'Randal' )); expect ( result , isTrue ); verify (() = > repo . saveUser ( any ())) . called ( 1 ); }); } That’s all there is to it. A two-line Fake registration in setUpAll completely eliminates the need to run build_runner on your entire project. How to Migrate Without Boiling the Ocean If you’re staring at an existing codebase with dozens of build_runner -powered .mocks.dart files, you don't need to rewrite everything in a single frantic weekend PR. Take an incremental approach: Add mocktail to dev_dependencies : dev_dependencies : mocktail : ^1.0.4 Migrate one test file at a time : Whenever you open an existing test file to add or modify a test, migrate just that file . Delete the .mocks.dart import. Replace @GenerateMocks with simple class MockX extends Mock implements X {} declarations. Wrap your when and verify invocations in () => ... . Delete the obsolete .mocks.dart file from disk. Commit the diff : Notice how clean and readable your git diff is without hundreds of lines of autogenerated noise. The Verdict The official Flutter documentation and cookbooks still mention mockito largely due to historical inertia. But we no longer live in 2020. In modern Dart, testing should be fast, expressive, and friction-free. Waiting on build_runner just to verify that a service method was called with the right argument is a waste of your machine's CPU cycles and your mental bandwidth. Switch to mocktail . Your TDD cycle will thank you. What's your take? Are you still running build_runner for your mocks, or have you already made the switch to mocktail (or hand-rolled fakes)? Let me know in the comments below! Randal L. Schwartz is a Google Developer Expert (GDE) for Dart & Flutter and veteran software architect. 📺 Watch deep dives and walkthroughs on YouTube: @RandalOnDartAndFlutter 💻 Connect on GitHub: @RandalSchwartz",
+            "url": "https://dev.to/gde/stop-paying-the-buildrunner-tax-why-i-refuse-to-use-mockito-in-modern-dart-4cif",
+            "source": "DEV Community",
+            "category": "hardware",
+            "tags": [
+                "developpement",
+                "git",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-20T19:48:39+00:00",
+            "collected_at": "2026-09-20T20:04:36.614312+00:00"
+        },
+        {
+            "id": "58ca6945d84aad6347ec76a8a362c8b4fe4278ecb328dd34ec3a9e8679a2ba22",
+            "title": "CLARITY Fails, Kraken Prepares for On-Chain Perps, And More – Weekly Recap",
+            "description": "This week’s stories centered on regulation, institutional adoption and market infrastructure. Seven Democratic senators vowed to keep negotiating on the CLARITY Act, while Tom Lee forecast a bullish 12 months for crypto. Revolut attackers demanded 6,000 XMR for stolen customer data, Kalshi captured about 80% of U.S. prediction-market volume, and Kraken parent Payward unveiled plans […]",
+            "url": "https://news.bitcoin.com/featured/clarity/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-20T19:48:00+00:00",
+            "collected_at": "2026-09-20T20:04:51.156664+00:00"
+        },
+        {
+            "id": "c8f712e43736d037a1281f41e1f9f40df16a66f5995df0d40bd75871d2f9ed6b",
+            "title": "Why MCP Was Always a Bad Idea",
+            "description": "Comments",
+            "url": "https://maharship.com/blog/why-mcp-was-always-a-bad-idea/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-20T19:44:40+00:00",
+            "collected_at": "2026-09-20T20:04:36.272730+00:00"
+        },
+        {
+            "id": "0ba623100484d3b08794f0c77054eca607807c97b0ffcd513b44ee65bdbf161b",
+            "title": "Elon Musk’s latest Boring Company pitch involves a Hyperloop between Austin and San Antonio",
+            "description": "Many of The Boring Company's announced project have not materialized.",
+            "url": "https://techcrunch.com/2026/09/20/elon-musks-latest-boring-company-pitch-involves-a-hyperloop-between-austin-and-san-antonio/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-09-20T19:38:48+00:00",
+            "collected_at": "2026-09-20T20:04:33.771377+00:00"
+        },
+        {
+            "id": "0c83b854e6e70296da74c34b7ce5768e3682074d7c0d6c29c6b10e0079e868b6",
+            "title": "The Hierarchy of Money",
+            "description": "Comments",
+            "url": "https://gregorygundersen.com/blog/2026/09/20/hierarchy-of-money/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-20T19:37:43+00:00",
+            "collected_at": "2026-09-20T20:04:36.272882+00:00"
+        },
+        {
+            "id": "1a41ed29fca130f845eef7a763da1496daba135d43ea7b697446378244cb24b0",
+            "title": "How OpenAI agents attacked HuggingFace",
+            "description": "The chain of events from Anthropic’s Claude Mythos 5 uploading malicious package to PyPI, OpenAI agents attacking Hugging Face to Trump declaring “whoever wins AI, wins” The latest hysteria around the existential risk of humans, AI taking over control, etc. started with the tweet of an AI researcher at Anthropic and a quote repost of the lead at Anthropic’s alignment team stating he personally thinks it is a>10% chance that AI could kill all humans by the end of this decade. I personally don’t believe humans are going to die at the hands of ai. the arguments around the “human endgame” has two different proponents: one thinks ai will take complete control from humans. the other thinks humans will remain in control but use ai for destruction. doomers are great at imagining the worst possible interpretation of every suspicious detail they find. but if we zoom out and look at what happened over the past few months, there is enough to be concerned about, without accepting anyone’s prediction about the end of humanity how openai agents attacked hugging face in july, openai launched tens of thousands of agents in isolation to run cybersecurity evaluations on ExploitGym tasks. ExploitGym asks an agent to attack a piece of target software using a particular vulnerability and retrieve a flag, which is a piece of data hidden inside the software. to pass the task, the agent is expected to capture the flag through the intended vulnerability a large number of these tasks were effectively impossible. openai’s incident report says that 198 of the 898 tasks had never been correctly solved by any model before the experiment. around 93% of the tasks discussed by agents on their message board came from this unsolved group some of the agents were powered by HPIM, a highly persistent internal model trained to keep working on difficult problems. when the intended route failed, the agents started exploring the scorer and the surrounding infrastructure for other ways to complete the task. this is reward hacking: the agent finds a way to satisfy the measurement without doing what the evaluator intended according to the independent investigation by metr and redwood research, this is what followed: roughly 1,200 agents that were meant to be isolated found an unsanctioned message board and sent more than 70,000 messages and files through it. around 700 of them participated in the attack on hugging face agents used the message board to coordinate large collective projects aimed at fooling or tampering with the ExploitGym scorer. some agents ran experiments that risked failing their own tasks so the results could help the wider group agents researched ways to spoof, edit or delete their transcripts because they believed the scorer would examine whether they had captured the flag through the intended vulnerability. around 7% of the transcripts examined by researchers contained successfully spoofed tool calls in some places the agents recovered shared hugging face credentials, exploited previously unknown vulnerabilities and executed code on hugging face systems. they also found a path from openai’s internal infrastructure to the public internet, even though the evaluation environment was supposed to prevent that nothing of this sort had been publicly documented at this scale before. the report had everything that terrifies people about autonomous ai: agents breaking out of a sandbox, gaining internet access, attacking a third-party service, coordinating with one another and experimenting with ways to alter their own records openai called it a “warning shot” claude mythos 5 and the pypi attack key periods and actions in mythos 5 transcript. credit: alignment-assessment-cybersecurity-incidents as if the openai–hugging face incident was not enough, anthropic soon published an assessment of its own cybersecurity incidents during one evaluation, claude mythos 5 was given a capture-the-flag(CTF) task inside what was supposed to be an isolated environment. the environment was misconfigured and therefore had access to the public internet mythos 5 used that access to build and upload a malicious package to PyPI, the public package repository used by python developers around the world. it published three versions of the package before it was removed the package remained public for less than an hour, but it was installed and executed on 15 real systems. one installation exposed credentials belonging to a security company, and the agent used those credentials to access more of the company’s infrastructure throughout the process, the model encountered evidence that it was interacting with real systems. it repeatedly reasoned that a genuine attack would not be acceptable, decided it was probably still inside a simulation and continued anthropic later modified the evaluation to make the real-world evidence clearer. the model acknowledged a greater possibility of causing actual harm and still continued in many of the runs. it stopped only when the evidence became unambiguous anthropic’s alignment assessment was based on a wider review of roughly 481 million transcripts. the company described mythos 5 as the incident that concerned it most these two incidents were enough to cause an outburst the abstract debate about AI alignment suddenly had real events attached to it: sandbox escapes, internet access, public software repositories, compromised credentials and agents continuing after the intended path had failed then an anthropic researcher resigned and the entire argument exploded into public view jacob coxon’s anthropic resignation goes viral Press enter or click to view image in full size on september 8, AI researcher jacob coxon resigned from anthropic coxon had spent around three years working on pretraining at openai and anthropic. in the post announcing his resignation, he said that none of the frontier labs were acting responsibly and that “the people building AI earnestly believe that it could kill us all by the end of the decade” evan hubinger, the lead of anthropic’s alignment science team, then responded that he personally assigns a greater than 10% chance that AI will kill every human within the next decade Press enter or click to view image in full size that was when reports about cybersecurity evaluations turned into a much larger public argument about the end of humanity people were no longer hearing warnings from anonymous accounts or researchers far away from the technology. they were hearing them from the people building frontier models inside the companies leading the race sam altman says AI beyond human control is possible days later, sam altman was asked by fortune whether it was possible to create AI that went beyond human control “absolutely,” he answered altman said openai was approaching a point where it could not responsibly push capabilities much further without corresponding progress in monitoring models, understanding their behaviour and keeping them aligned with human values and user intent he also said that a 10% chance of catastrophe would be unacceptable the striking part was not simply that the openai ceo considered AI beyond human control possible. people inside frontier labs had said similar things before. the striking part was that the statement arrived immediately after two incidents in which models had crossed boundaries that researchers expected to hold dario amodei says we must pace the frontier anthropic ceo dario amodei then published an essay titled “we must pace the frontier” his proposal was not to stop AI development. it was to slow the growth of frontier capabilities long enough for alignment, monitoring to catch up amodei proposed giving independent evaluators continued employee level access inside frontier labs, creating common safety standards among leading companies and governments, and eventually building international coordination that included geopolitical rivals the additional time would be spent improving alignment training, monitoring, interpretability, cybersecurity and the design of evaluation environments alignment RL is one part of that work. the model is trained not only to complete difficult tasks, but also to recognise when a task is impossible, stop when continuing would create harm and avoid finding unintended routes to a reward monitoring is the other part. models can be watched in real time for suspicious tool use, attempts to access external systems and reasoning that indicates they are searching for ways around restrictions anthropic’s assessment found that broader alignment RL reduced severe cases of biased reasoning in newer models. its live blocking monitors also caught harmful behaviour during later tests, although an offline chain-of-thought monitor missed the original mythos 5 incident after accepting the model’s argument that it was inside a simulation openai has also said it is investing more heavily in CoT(chain-of-thought), monitoring, stricter isolation and alignment work across the entire training and deployment process pacing the frontier is supposed to buy time for all of this to improve before the models become substantially more capable elon musk and sam altman backed amodei almost immediately. and then the entire world went mad over one thought Press enter or click to view image in full size the china problem then, came the objection that could kill the entire proposal before it even began: “china will not slow down with america” if american labs pace the frontier while chinese labs keep racing, the U.S. could lose its lead. but if america refuses to slow because china might not, china has the same reason to keep moving. both sides can believe the race is dangerous and still decide that slowing down first is worse amodei’s proposal included international coordination and verification for exactly this reason. he also argued that democratic countries could not allow themselves to slow beyond their existing lead over chinese AI projects altman also called for shared safety standards between the united states and china but the political argument has already moved somewhere else. AI safety is no longer only about whether models could remain under control. it os about which country will reach RSI(recursive super intelligence) first. on september 14, Donald Duck posted the bluntest version of that argument on truth social. things are really starting to go haywire. Citations: https://www.dwarkesh.com/p/ajeya-cotra https://metr.org/blog/2026-08-26-openai-hugging-face-incident-investigation/#core-takeaways-about-this-incident https://www.anthropic.com/research/alignment-assessment-cybersecurity-incidents https://huggingface.co/blog/security-incident-july-2026 https://cdn.openai.com/pdf/67869394-cb91-4c12-888c-5cbd85c7814c/OpenAI-Hugging-Face%20Incident-Technical-Report.pdf https://openai.com/index/hugging-face-model-evaluation-security-incident/ Thanks for reading❤️",
+            "url": "https://dev.to/anshu_agrawal/how-openai-agents-attacked-huggingface-3a9j",
+            "source": "DEV Community",
+            "category": "cybersecurite",
+            "tags": [
+                "anthropic",
+                "developpement",
+                "intel",
+                "openai",
+                "programmation",
+                "python",
+                "web"
+            ],
+            "published_at": "2026-09-20T19:33:54+00:00",
+            "collected_at": "2026-09-20T20:04:36.615316+00:00"
+        },
+        {
+            "id": "9b62983646cbdac0afcfc859e7274ddcb6804d80e83ccee23369894985b9baf5",
+            "title": "CSS Box Model",
+            "description": "The CSS Box Model describes how every HTML element is treated as a rectangular box. Components of the Box Model The CSS Box Model has 4 main components : Content: The actual text, image, or other content. Padding: Space between the content and border. Border: A line surrounding the content and padding. Margin: Space outside the border that separates elements. How They Affect Layout Content, padding, border, and margin together determine the overall size and spacing of an element on a webpage.",
+            "url": "https://dev.to/mvarshith/css-box-model-1cd6",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-20T19:27:08+00:00",
+            "collected_at": "2026-09-20T20:04:36.615413+00:00"
+        },
+        {
+            "id": "ef437f60ca2a295ceeb177bdb8cef8ec5cfe16f4b25371d4524daa33b11353de",
+            "title": "Seven Controls to Put in Place Before an AI Agent Gets Production Access",
+            "description": "AI agents cross a line that ordinary chat systems do not: they connect probabilistic decisions to real actions. An agent that can read mail, update a record, run a tool, or spend money is part of your production control plane. Prompt quality matters, but prompts are not a security boundary. The controls below should exist before an agent receives production access. 1. Separate read, recommend, and execute Do not treat \"access\" as a single permission. Use three distinct stages: Read - retrieve the minimum data needed for the task. Recommend - prepare a proposed action without changing external state. Execute - make the approved change through a narrowly scoped tool. This split gives you useful checkpoints. A support agent may read a ticket and draft an answer automatically, while sending remains gated. A finance agent may analyze invoices but require an approval before changing payment details. 2. Give every tool its own narrow permission A single broad credential turns every mistake into a high-impact mistake. Prefer separate credentials and scopes for separate tools. Ask four questions for each tool: Which resources can it access? Which operations can it perform? How long does the permission last? Which environment does it apply to? Short-lived credentials and environment-specific roles reduce the damage from a bad decision, a leaked token, or a malicious instruction hidden in external content. 3. Add an action budget Agents need more than an API rate limit. They need a business-action budget. Useful limits include: maximum records changed per run; maximum messages sent per hour; maximum cost per transaction and per day; maximum number of retries; maximum number of external systems touched in one workflow. The budget should fail closed. Crossing it should stop the run and request review, not trigger an improvised workaround. 4. Put approval at the point of commitment Approval works only when the reviewer can see the exact action that will occur. For a message, show the final recipient and wording together. For a deployment, show the target environment and revision. For a purchase, show the item, delivery address, and full total. Avoid vague approvals such as \"continue\" when several actions are still possible. The approval object should be concrete enough to log and later audit. 5. Treat external content as untrusted input Email, webpages, documents, issue comments, and retrieved knowledge can all contain instructions that conflict with the agent's actual task. Do not let retrieved content redefine the agent's goals, choose new tools, expand permissions, or select a new disclosure destination. Parse it as data. Keep authority in a separate, trusted control path. Test whole workflows rather than individual prompts. A sequence of individually allowed actions can still produce a harmful result. 6. Log decisions and effects separately A useful audit trail answers two different questions: Why did the agent decide to act? What changed in the external system? Record the task identifier, tool, target, approval reference, before/after state, and provider response. Keep logs outside the agent's own write permissions when possible. Observability should also include alerts for unusual tool combinations, repeated failures, sudden increases in volume, and actions outside normal hours. 7. Build a real stop mechanism A stop button is not a prompt that says \"please stop.\" It is an independent control that can revoke credentials, disable tool execution, or block the workflow runner. Define who can activate it, what it disables, and how recovery works. Practice using it before launch. A small pre-production failure drill Before giving an agent live access, run at least these tests: A document contains an instruction that conflicts with the assigned task. The agent is given the wrong recipient or resource identifier. A required external service fails halfway through the workflow. The same event is delivered twice. An approval expires before execution. The agent tries to exceed its action budget. The stop mechanism is activated during a run. The goal is not to prove that the agent never fails. It is to prove that failures are bounded, visible, and recoverable. The minimum launch checklist Before production access, confirm that you have: a tool allowlist; least-privilege, short-lived credentials; separate read and write paths; explicit approval for high-impact actions; action and cost limits; idempotency protection; tamper-resistant logs; monitoring and alerts; a credential-level stop mechanism; tested failure and recovery paths. An AI agent should earn more authority only after its behavior is observable under real conditions. Start with read-only access, measure what happens, and expand one permission at a time. This article is an English technical adaptation of the original Hebrew guide published by AI NEWS Israel: לפני שנותנים לסוכן הרשאה: שבע בקרות שחייבות להגיע לפני הייצור .",
+            "url": "https://dev.to/yanivshenhav/seven-controls-to-put-in-place-before-an-ai-agent-gets-production-access-6bp",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-09-20T19:26:15+00:00",
+            "collected_at": "2026-09-20T20:04:36.616088+00:00"
+        },
+        {
+            "id": "fc813668cf59fcd24726bcc232b7fa44490e5d19953947ee8d830435f0add67a",
+            "title": "Why I Built Another In-Memory Cache for Go",
+            "description": "There are already several good in-memory cache libraries for Go. So when I started building pacecache , the obvious question was: Why another one? I wasn't trying to build a cache that would be universally better than every existing alternative. Cache design is a collection of trade-offs: lock contention, eviction quality, capacity utilization, expiration, memory overhead, and implementation complexity all pull in different directions. What I wanted was a relatively small, generic in-process cache with explicit behavior around bounded capacity, expiration, cache-aside loading, and concurrent mutations. The map part was straightforward. The interesting part was deciding what should happen when all of those things interact concurrently. Start with bounded capacity An in-process cache should have a clear limit. In pacecache , that limit is an entry budget , not a byte-size memory limit. By default, a cache can hold up to 10,000 entries, uses one storage segment, and has no time-based expiration. A cache with a larger capacity and a default TTL looks like this: cache , err := pacecache . New [ string , User ]( pacecache . WithMaxEntries ( 100 _000 ), pacecache . WithTTL ( 5 * time . Minute ), ) if err != nil { return err } Eviction uses exact LRU ordering within each storage segment. With one segment, the entire cache shares one LRU and one capacity budget. For workloads with heavier concurrency, storage can be split into independent segments: cache , err := pacecache . New [ string , User ]( pacecache . WithMaxEntries ( 100 _000 ), pacecache . WithSegmentCount ( 64 ), ) The total entry budget is divided across those segments, and their capacities add up to the configured maximum. Each segment owns its own storage, LRU list, expiration index, and lock. That makes segmentation a trade-off rather than a free performance switch. More segments can reduce contention because unrelated keys are more likely to hit different locks. But each segment also enforces its own local capacity. If keys are distributed unevenly, one segment may start evicting while another still has unused space. That's why pacecache defaults to one segment rather than choosing a large number automatically. The right segment count depends on the workload. It's something worth measuring rather than guessing. Expiration and cleanup are different problems TTL sounds simple until expiration enters the hot path. One distinction I wanted to preserve is: An entry being expired is not the same thing as that entry already being physically removed from storage. Once an entry reaches its deadline, lookup paths no longer treat it as live. An expired entry encountered during a lookup is treated as a miss and removed. Physical reclamation can also happen explicitly or through optional background cleanup. The default TTL can be configured together with jitter: cache , err := pacecache . New [ string , User ]( pacecache . WithTTL ( 5 * time . Minute ), pacecache . WithJitter ( 30 * time . Second ), ) Jitter adds a random duration below the configured limit when an expiring entry is stored. This helps spread expiration deadlines instead of letting a large group of entries expire at exactly the same time. Individual writes can choose their own expiration policy: cache . Set ( \"user:1\" , user , pacecache . DefaultExpiration ) cache . Set ( \"user:2\" , user , pacecache . NoExpiration ) cache . Set ( \"user:3\" , user , 30 * time . Second ) Sliding expiration is optional as well. When enabled, a successful read of a live expiring entry refreshes its deadline using the effective TTL selected when that entry was stored. If jitter was applied, that effective TTL is reused rather than randomized again on every read. The important part is that TTL correctness does not depend on a cleanup goroutine . Background cleanup is useful for reclaiming expired entries that nobody touches again, but it isn't what decides whether an entry is logically alive. I prefer that separation because scheduling cleanup and enforcing expiration are two different concerns. Cache-aside loading introduces coordination The next problem appears when a cache is used in a cache-aside pattern. Imagine several goroutines requesting the same missing key at roughly the same time. Without coordination, all of them can perform the same database query or remote request. pacecache coalesces concurrent misses for the same key into one shared load. A per-call loader can be supplied through GetOrLoadFunc : user , found , err := cache . GetOrLoadFunc ( ctx , userID , func ( ctx context . Context , key string ) ( User , bool , error ) { return findUser ( ctx , key ) }, ) The loader contract is: func ( ctx context . Context , key K ) ( value V , found bool , err error ) A found=true result may be cached. A found=false result is returned to the caller but isn't cached, and loader errors aren't cached either. For the same key: goroutine A ─┐ goroutine B ─┼──→ one loader execution goroutine C ─┘ one caller owns the shared load and executes the loader. Duplicate callers join that load instead of invoking their own loaders. Loads for different keys remain independent. Duplicate callers also keep their own contexts, so one of them can stop waiting after cancellation without forcing the other waiters to stop. That solves duplicate upstream work. It does not solve the harder problem. Singleflight is not enough Consider this sequence: goroutine A: GetOrLoad(\"key\") → loader starts goroutine B: Set(\"key\", newValue) goroutine A: loader finishes A started first. B changed the cache later. If A simply publishes its result when the loader returns, an older operation can overwrite newer state: old load starts │ │ Set(new value) │ │ │ ▼ │ new value stored │ ▼ old load finishes │ ▼ old value replaces new value Coalescing duplicate loads does nothing to prevent this. What is needed is ordering between load publication and cache mutations . In pacecache , mutations such as Set , insertions through GetOrSet , Delete , and Clear act as publication barriers for the affected key or keys. The coordination layer orders singleflight registration, mutation, and publication while tracking publication state per active key. If a newer mutation wins before a successful loader outcome is published: A: loader starts │ │ B: Set(newValue) │ └── publication barrier │ A: loader ends │ │ │ └─────────┘ │ ▼ stale outcome discarded │ ▼ ErrLoadSuperseded the loader outcome is discarded rather than allowed to replace the newer cache state. The loading call returns ErrLoadSuperseded . If the loader itself returned an error, that loader error takes precedence. Publication tracking is also per active key. Mutating another key doesn't invalidate an unrelated load merely because both keys happen to live in the same storage segment. This distinction ended up being one of the parts of the implementation I found most interesting: coalescing duplicate work ≠ ordering publication against newer state Singleflight solves the first problem. It doesn't automatically solve the second. Keep observability optional I also wanted the cache to be observable without making an observability framework part of the core API. Stats() returns a detached snapshot of cache state and activity: stats := cache . Stats () fmt . Println ( stats . EntryCount ) fmt . Println ( stats . HitCount ) fmt . Println ( stats . MissCount ) fmt . Println ( stats . LoadSupersededCount ) The snapshot includes capacity and segment information together with lookup, load, cleanup, eviction, expiration, deletion, and clear activity. There is one subtlety worth calling out. The snapshot is assembled from independent cache segments while normal cache activity may continue. It's a detached result, but its fields aren't guaranteed to describe one globally atomic instant across the entire cache. For applications that already use OpenTelemetry, metrics are available through the optional extra/paceotel module. The core cache doesn't own the OpenTelemetry SDK lifecycle or exporter configuration. Those remain application concerns. For me, that separation matters: adding a cache shouldn't force an application to adopt a particular telemetry stack. There isn't one meaningful cache benchmark A cache can look excellent in a throughput benchmark and still make a very different trade-off in memory consumption or hit ratio. So I didn't want to reduce cache performance to one ns/op number. The benchmark suite looks at three things separately. Throughput measures concurrent read/write workloads with skewed key access and different write ratios. Hit ratio focuses on capacity and eviction behavior under a Zipfian access pattern. Memory measures live heap after filling caches with fixed-size keys and values at different capacities. The repository contains the benchmark source and documents the workload configuration alongside the results. The point isn't to produce a universal winner. It's to make clear what is actually being measured . Throughput, hit ratio, and memory consumption answer different questions, and an application's own access pattern ultimately matters more than a generic benchmark. Where pacecache fits pacecache is an in-process cache. Every process owns its own cache state. That makes it useful when: data is safe to cache locally; avoiding another network hop matters; an upstream lookup is expensive enough to benefit from cache-aside loading; independent cache contents across service instances are acceptable; the application wants a bounded local hot set. It isn't a distributed cache. There is no cross-process state sharing, centralized invalidation, persistence, or distributed consistency protocol. If several service instances need one coordinated cache, Redis or another distributed system is solving a different problem. An in-process cache and a distributed cache can both be useful, but they aren't interchangeable. The common path should stay boring Despite the concurrency machinery behind loading and publication, I wanted the basic API to remain unsurprising: cache , err := pacecache . New [ string , User ]() if err != nil { return err } cache . Set ( \"user:1\" , user , pacecache . DefaultExpiration ) user , found := cache . Get ( \"user:1\" ) A default cache has one segment, a 10,000-entry budget, and no time-based expiration. More specialized behavior is opt-in: TTL and per-entry expiration; jitter; sliding expiration; segmentation; cache-aside loading; background cleanup; OpenTelemetry metrics. The simple case shouldn't require understanding every advanced feature. But when the advanced cases appear, their behavior should be explicit. Feedback welcome pacecache is open source, and the repository includes the implementation, tests, runnable examples, benchmark source, methodology, and results. I'd especially appreciate feedback on: the public API; concurrency and publication semantics; cache-aside loading behavior; expiration behavior; benchmark methodology; real-world access patterns the current benchmarks don't represent well. If you use in-process caches in Go services, I'd be interested to hear which trade-offs matter most in your workloads. GitHub: https://github.com/mkbeh/pacecache",
+            "url": "https://dev.to/mkbeh/why-i-built-another-in-memory-cache-for-go-g48",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "git",
+                "ios",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-20T19:24:42+00:00",
+            "collected_at": "2026-09-20T20:04:36.617607+00:00"
+        },
+        {
+            "id": "202c250864415a8220e81cdb7d858f3a3849577d9f858fd3de6d69697ec9ae6c",
+            "title": "Cisco Secure Firewall Management Center sftunnel Flaw (CVE-2026-20324) Explained",
+            "description": "Cisco Secure Firewall Management Center sftunnel Flaw (CVE-2026-20324) Explained Overview CVE-2026-20324 is a critical vulnerability in the sftunnel component of Cisco Secure Firewall Management Center (FMC). Cisco rates the flaw at CVSS 9.9. Successful exploitation lets an unauthenticated remote attacker execute arbitrary code with root privileges on the affected system. The issue was disclosed as part of a September 16, 2026 wave of fixes for Cisco Secure Firewall products. Cisco's advisory describes the flaw as a root arbitrary code execution vulnerability and states that it has no knowledge of public announcements or malicious use at disclosure time. Mechanism and Exploitation Conditions sftunnel is the encrypted management channel that connects Firewall Management Center to managed Secure Firewall devices. CVE-2026-20324 affects how this tunnel handles crafted input. An attacker who can deliver a specially formed payload to the sftunnel service can trigger the vulnerable code path and run commands as root. The vulnerability does not require a valid account or victim interaction. The primary precondition is network reachability to the management or tunnel endpoint. A targeted CVE filter such as vul.cve=\"CVE-2026-20324\" returned zero indexed instances on ZoomEye, which is expected because the vulnerable sftunnel path is not directly fingerprintable from outside. That does not mean the product is absent from the internet; it means the vendor-specific code path cannot be identified by that query alone. Impact A root foothold in Firewall Management Center has fleet-wide consequences. FMC distributes policy and configuration to managed firewalls. An attacker with root control of FMC can alter access rules, disable logging, push malicious configuration, and move laterally toward protected network segments. Affected Products and Versions The advisory covers specific releases of Cisco Secure Firewall Management Center software. The same September 2026 update wave also addresses related defects in Adaptive Security Appliance (ASA) software and Threat Defense (FTD) software. Administrators should reconcile deployed builds against the exact fixed releases listed in the Cisco advisory rather than relying on a single global version boundary. Remediation and Mitigation Cisco released free software updates for the affected releases. Most of the associated flaws have no workaround, so patching is the primary control. Restrict management-plane access to trusted hosts and dedicated management subnets until updates are applied. Monitor management and tunnel activity for unexpected sessions. Sources CERT-In Vulnerability Note CIVN-2026-0464 CVE-2026-20324 record at CVE.org",
+            "url": "https://dev.to/bianliang/cisco-secure-firewall-management-center-sftunnel-flaw-cve-2026-20324-explained-1jbp",
+            "source": "DEV Community",
+            "category": "cybersecurite",
+            "tags": [
+                "aws",
+                "cve",
+                "developpement",
+                "programmation",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-09-20T19:20:09+00:00",
+            "collected_at": "2026-09-20T20:04:36.617848+00:00"
+        },
+        {
+            "id": "34e275e08c8f54150d453bcc3a42f45dbd0161af963559a76e4af55504ed7bb1",
+            "title": "NiceTryGPT: Less pattern matching. More actual hacking.",
+            "description": "I built NiceTryGPT, an open-source project for CTF authors who want to make cheap LLM shortcuts less effective without making challenges harder or more annoying for humans. The idea is simple: «Increase uncertainty, not complexity.» NiceTryGPT keeps the same vulnerability and learning objective, but removes obvious patterns that can turn a challenge into a one-shot LLM answer. Current examples include IDOR, path traversal and SQL injection. I'm not trying to make CTFs “AI-proof” — just a little less about pattern matching and a little more about actual hacking. 😄 GitHub: https://github.com/aleff-github/NiceTryGPT Project page: https://aleff-github.github.io/NiceTryGPT/ Feedback from CTF players and authors is very welcome. #showdev #cybersecurity #ai #opensource",
+            "url": "https://dev.to/aleff/nicetrygpt-less-pattern-matching-more-actual-hacking-kie",
+            "source": "DEV Community",
+            "category": "cybersecurite",
+            "tags": [
+                "developpement",
+                "git",
+                "llm",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-20T19:19:09+00:00",
+            "collected_at": "2026-09-20T20:04:36.617957+00:00"
+        },
+        {
+            "id": "21fa80b3f51536dc858f92a5e0e887938108845a35e4e6292a4675c2d2de0b3a",
+            "title": "Adversarial examples for fast hash functions",
+            "description": "Comments",
+            "url": "https://thomasahle.com/blog/adversarial-examples-for-hashes/",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-09-20T19:14:36+00:00",
+            "collected_at": "2026-09-20T20:04:36.409356+00:00"
+        },
+        {
+            "id": "9c2b99d3f729a3320b7ca09d672d87494f3652aba4d3b9b14dd6d2fbf25c3bac",
+            "title": "ACI Announces 5th Annual Forum on Digital Assets, Bringing Regulatory, Legal and Compliance Leaders to New York",
+            "description": "NEW YORK, NY — American Conference Institute will host its 5th Annual Forum on Digital Assets: Compliance, Enforcement & Regulatory Oversight on November 17–18, 2026, at 3 Times Square in New York City. As digital assets move further into mainstream financial services, legal and compliance teams are confronting a new phase of regulatory, enforcement and […]",
+            "url": "https://news.bitcoin.com/press-releases/aci-announces-5th-annual-forum-on-digital-assets-bringing-regulatory-legal-and-compliance-leaders-to-new-york/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto",
+                "git"
+            ],
+            "published_at": "2026-09-20T19:13:57+00:00",
+            "collected_at": "2026-09-20T20:04:51.156771+00:00"
+        },
+        {
+            "id": "78a528244d9bd873b1c1b7289fdb1ae68cffb725152b3fc45f7fe273a89bcde6",
+            "title": "Is the AI industry really ready to slow down?",
+            "description": "On Equity, we debated whether Ai executives are serious about wanting to slow down.",
+            "url": "https://techcrunch.com/2026/09/20/is-the-ai-industry-really-ready-to-slow-down/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-09-20T18:56:04+00:00",
+            "collected_at": "2026-09-20T20:04:33.771426+00:00"
+        },
+        {
+            "id": "21021adfef8aa0490caa6bab98f97cc9c8d2bc9a8321b0ac77ff948265dda1db",
+            "title": "Vocci’s ring adds a new form factor to meeting note-taking",
+            "description": "Vocci's lightweight ring costs $249, and might pose some privacy questions",
+            "url": "https://techcrunch.com/2026/09/20/voccis-ring-adds-a-new-form-factor-to-meeting-note-taking/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-09-20T18:32:52+00:00",
+            "collected_at": "2026-09-20T20:04:33.771478+00:00"
+        },
+        {
+            "id": "de4b6f123cd588d0a953f3c96fca2fa5d995051f17716c4dcef227d1e0bfc000",
+            "title": "Zcash Price Holds Above $1,440 After Sharp Rally Pullback",
+            "description": "Zcash pulled back to $1,429 after hitting a year-to-date high of $1,590, finding support above $1,440 with a 5% daily loss. Alongside the price action, a significant governance debate has emerged regarding the Zcash Development Fund, which expires in 2028. ZEC Retains Strong Gains Despite Pullback Zcash (ZEC) pulled back on Sunday after a sharp […]",
+            "url": "https://news.bitcoin.com/altcoins/zcash-price-holds-above-1440-after-sharp-rally-pullback/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-20T18:20:52+00:00",
+            "collected_at": "2026-09-20T20:04:51.156861+00:00"
+        },
+        {
+            "id": "2c549dbb779ab09e319631e807f11154701996ea32a54bdb577a90ebcb3b94e4",
+            "title": "ScrollEd wants to turn textbooks into TikTok",
+            "description": "ScrollEd turns textbooks into a scrollable, Instagram-like feed with video, audio, and quizzes. The Palo Alto startup, founded by student co-founders (and spouses) Utsav Gupta and Rebecca Neff, pitches at TechCrunch Disrupt.",
+            "url": "https://techcrunch.com/2026/09/20/scrolled-wants-to-turn-textbooks-into-tiktok/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-09-20T18:00:00+00:00",
+            "collected_at": "2026-09-20T20:04:33.771536+00:00"
+        },
+        {
+            "id": "1e4203913bc2a542aa283631c0f9abf8fe02ed18db1bbad68395a9ae9a848c0f",
+            "title": "A Necessary History of the Oddest Letter: W",
+            "description": "Comments",
+            "url": "https://lithub.com/a-necessary-history-of-the-oddest-letter-w/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-20T17:55:57+00:00",
+            "collected_at": "2026-09-20T20:04:36.272595+00:00"
+        },
+        {
+            "id": "a9428c532238271653e0c5b933f442f02cf04ea09ea72ccb3c2b841f3f97b6c3",
+            "title": "Ubuntu 26.10 stops low memory from killing your desktop session",
+            "description": "Ubuntu 26.10 changes how the system choose which processes are killed when memory runs low, making a rogue browser tab is less likely to punt you back to the login screen. When your system runs out of memory, the kernel’s out-of-memory (OOM) killer kicks in, terminating processes to recover some. The issue is that doesn’t always kill the right things. By default, many apps and critical desktop services share the same priority score. When the OOM killer is choosing its victim target, it looks at their OOM scores, not “what’s using the most memory”. Firefox and GNOME Shell, for example, […] You're reading Ubuntu 26.10 stops low memory from killing your desktop session , a blog post from OMG! Ubuntu . Do not reproduce elsewhere without permission.",
+            "url": "https://www.omgubuntu.co.uk/2026/09/ubuntu-memory-oomd-changes",
+            "source": "OMG! Ubuntu",
+            "category": "linux",
+            "tags": [
+                "desktop",
+                "linux",
+                "ubuntu"
+            ],
+            "published_at": "2026-09-20T17:55:21+00:00",
+            "collected_at": "2026-09-20T20:04:41.311464+00:00"
+        },
+        {
+            "id": "0efe284951a145483b30e8a3d3549dcb4e2af856dc77fe9c98400032aafee44b",
+            "title": "I turned Jev into a (lousy) chatbot",
+            "description": "Comments",
+            "url": "https://github.com/kyle-pena-nlp/jevchat/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-20T17:51:27+00:00",
+            "collected_at": "2026-09-20T20:04:36.272700+00:00"
+        },
+        {
+            "id": "f55f1ed9949fcf5c590fafa2341df029c0e7dd1368e98565e7f80ce8e6aa2c2b",
+            "title": "Samsung is expected to more than double output of its HBM4 and HBM4E DRAM",
+            "description": "Comments",
+            "url": "https://en.sedaily.com/finance/2026/09/20/samsung-to-double-hbm4-output-next-year-sources-say",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-20T17:38:50+00:00",
+            "collected_at": "2026-09-20T20:04:36.272455+00:00"
+        },
+        {
+            "id": "aa3ea583c47b6099fc8da93be0c16ea52433c1972276c8401ea768649b9b75c8",
+            "title": "Resident Evil 4 (GameCube) – complete byte-identical decompilation to C/C++",
+            "description": "Comments",
+            "url": "https://github.com/adonis-singh/re4",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "cpp",
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-20T17:38:27+00:00",
+            "collected_at": "2026-09-20T20:04:36.273039+00:00"
+        },
+        {
+            "id": "4163cc55396ffb30d50c90bd16b6ef80370dfd25f05cd804cad121dae8a06026",
+            "title": "Trying the Software Factory Pattern",
+            "description": "Comments",
+            "url": "https://lethain.com/software-factory-experiment/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-20T17:27:11+00:00",
+            "collected_at": "2026-09-20T20:04:36.272854+00:00"
+        },
+        {
+            "id": "4f126a45f2c5103c9a5ea4a08251267b247d83d6ba2e6beb333ef7230b8ab518",
+            "title": "US Revokes Limits on Power Plants' Climate Pollution",
+            "description": "Comments",
+            "url": "https://text.hrw.org/news/2026/09/17/us-revokes-limits-on-power-plants-climate-pollution",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-20T17:19:52+00:00",
+            "collected_at": "2026-09-20T20:04:36.272974+00:00"
+        },
+        {
+            "id": "0a9bc09bd3a11c6dce6070cef5a97b3eddb62ccc13a23558046f98ec6369084f",
+            "title": "Vim's UserGettingBored autocmd",
+            "description": "Comments",
+            "url": "https://evanhahn.com/usergettingbored-vim/",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-09-20T17:18:49+00:00",
+            "collected_at": "2026-09-20T20:04:36.409115+00:00"
+        },
+        {
+            "id": "95a07fa22228c69451680ead95b7b09014910d1f34f7416f94deedc11c8880d7",
+            "title": "An actively maintained and updated Motif fork actually exists",
+            "description": "Comments",
+            "url": "https://www.osnews.com/story/145877/an-actively-maintained-and-updated-motif-fork-actually-exists/",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-09-20T17:13:41+00:00",
+            "collected_at": "2026-09-20T20:04:36.408864+00:00"
+        },
+        {
+            "id": "0ea575d9c4e561dca1115f90c4e7856ce5b02839ee2589f9bc816235c05d6607",
+            "title": "Show HN: Radius – A Meetup.com Alternative",
+            "description": "Comments",
+            "url": "https://radius.to/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-20T16:51:26+00:00",
+            "collected_at": "2026-09-20T20:04:36.272766+00:00"
+        },
+        {
+            "id": "81510c8fb4025ef21b4dbcf751548af22f7795dd54a4671e58f7c0e42f751b07",
+            "title": "I am often wrong",
+            "description": "Comments",
+            "url": "https://borischerny.com/management,/product/2026/09/19/I-am-often-wrong.html",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-20T16:41:46+00:00",
+            "collected_at": "2026-09-20T20:04:36.272793+00:00"
+        },
+        {
+            "id": "e3fbc059f72efaf1cb4406507785fbc88e13dd3de488b0e82b8fc34aca3b45e1",
+            "title": "New California law will penalize influencers who don’t disclose political ads",
+            "description": "The new legislation adds teeth to disclosure requirements for online influencers who are paid to post about politics.",
+            "url": "https://techcrunch.com/2026/09/20/new-california-law-will-penalize-influencers-dont-disclose-political-ads/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-09-20T16:30:00+00:00",
+            "collected_at": "2026-09-20T20:04:33.771594+00:00"
+        },
+        {
+            "id": "2a23ea19a20acbc0753a9117f9966a2f31bfbdf0ce4ad18200ff9d134f48a250",
+            "title": "Lambda MicroEgg",
+            "description": "Comments",
+            "url": "https://www.philipzucker.com/lambda_miller_egg/",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-09-20T16:04:18+00:00",
+            "collected_at": "2026-09-20T20:04:36.408691+00:00"
+        },
+        {
+            "id": "cc88ee8aeea0403040265439da6c3d9c7e53426a94fafcdd2f3812c48737b6e0",
+            "title": "TechCrunch Mobility: How do we know when an AV is safe enough?",
+            "description": "Welcome back to TechCrunch Mobility, your hub for the future of transportation and now, more than ever, the role AI is playing in it. To get this in your inbox, sign up here for free — just click TechCrunch Mobility!",
+            "url": "https://techcrunch.com/2026/09/20/techcrunch-mobility-how-do-we-know-when-an-av-is-safe-enough/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-09-20T16:02:00+00:00",
+            "collected_at": "2026-09-20T20:04:33.771660+00:00"
+        },
+        {
+            "id": "d0e2f90a50fbae0859e7a7375d3cf47d65aab482a861fe28fc0ac1a4499d8d27",
+            "title": "Ethereum Price Retreats From $2,668 as Momentum Starts to Fray",
+            "description": "Ethereum’s price is back close to $2,600 after climbing from $2,360 to nearly $2,668 in a matter of days, yet the second-largest crypto asset by market cap remains roughly 47% below its October 2025 peak near $4,946. That hasn’t stopped forecasts ranging from $4,000 to $10,000 before year-end. The catch is that getting there requires […]",
+            "url": "https://news.bitcoin.com/market-updates/ethereum-price-retreats-from-2668-as-momentum-starts-to-fray/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto",
+                "ethereum"
+            ],
+            "published_at": "2026-09-20T16:01:38+00:00",
+            "collected_at": "2026-09-20T20:04:51.156948+00:00"
+        },
+        {
+            "id": "ebba578091a27aa1d17b44fd6a89cfa45107b9ce3dc4d8fee4ec9a90148f1a0d",
+            "title": "Dynasty Warriors 3: Complete Edition Remastered Demo & Online Two-Player Post-Launch Update Announced",
+            "description": "The full game launches next month. Another demo is en route to the Switch 2, with Koei Tecmo today announcing fans of the Dynasty Warriors series will be able to try out Dynasty Warriors 3: Complete Edition before its official release. The demo for this \"thrilling\" tactical action is arriving next week on 24th September 2026 , with the full game launching on 1st October 2026 . Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/news/2026/09/dynasty-warriors-3-complete-edition-remastered-demo-and-online-two-player-post-launch-update-announced",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-09-20T16:00:00+00:00",
+            "collected_at": "2026-09-20T20:04:49.016849+00:00"
+        },
+        {
+            "id": "af99cae2ffa3cd3cb3be668c19ed144a70ae94c6378b797223bea421de812f38",
+            "title": "Prompts aren’t Real",
+            "description": "Comments",
+            "url": "https://evaluation.club",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-20T15:59:25+00:00",
+            "collected_at": "2026-09-20T20:04:36.272944+00:00"
+        },
+        {
+            "id": "90a434fe9bdb9c934fbac44e83b1cd5f97582b67020b0f2f7a62c4e656428d86",
+            "title": "Laya (OS Jev) on Mac M4 CoreML Offline (45 decisions per second)",
+            "description": "Comments",
+            "url": "https://gist.github.com/fordnox/e592d0f68b543fd044be8e6d040863a0",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-20T15:58:52+00:00",
+            "collected_at": "2026-09-20T20:04:36.272826+00:00"
+        },
+        {
+            "id": "47c7ed334676942f742b52cce9487d20a1c89ee8c7c9103a9f497fb975fdbd7b",
+            "title": "Custom home server built from spare parts",
+            "description": "Comments",
+            "url": "https://asmat.ca/blog/i-went-bananas/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-20T15:43:32+00:00",
+            "collected_at": "2026-09-20T20:04:36.273096+00:00"
+        },
+        {
+            "id": "39f79383319a754737ce18067aa782edc4e44929728f8b4ad65bbdd34ceeb427",
+            "title": "What's been going on in w64devkit the past year",
+            "description": "Comments",
+            "url": "https://nullprogram.com/blog/2026/09/20/",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-09-20T15:31:09+00:00",
+            "collected_at": "2026-09-20T20:04:36.409229+00:00"
+        },
+        {
+            "id": "67ed9d7f77b410b52d3ffcb664f11b99ece3ebee14bc77c62d868d0704af6c61",
+            "title": "One-Electron Universe",
+            "description": "Comments",
+            "url": "https://en.wikipedia.org/wiki/One-electron_universe",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-20T15:28:05+00:00",
+            "collected_at": "2026-09-20T20:04:36.273346+00:00"
+        },
+        {
+            "id": "7362b503eb6d7f07259ebbd0f321332680d206ec052570f41358068a2c91e325",
+            "title": "ChatGPT now knows what you do on other websites via ad collector",
+            "description": "Comments",
+            "url": "https://www.buchodi.com/chatgpt-now-knows-what-you-do-on-other-websites-via-ad-collector/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "openai",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-20T15:18:44+00:00",
+            "collected_at": "2026-09-20T20:04:36.272501+00:00"
+        },
+        {
+            "id": "b9a96080db72d51b6eaff85f9aa77fc6ee6fdb07a5126e89f8674111495d1158",
+            "title": "Singapore’s National Library Board offers micropayments to build reading habits",
+            "description": "Comments",
+            "url": "https://www.gadgetreview.com/singapore-is-paying-people-to-put-down-their-phones-and-read-books",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-20T15:18:05+00:00",
+            "collected_at": "2026-09-20T20:04:36.272639+00:00"
+        },
+        {
+            "id": "3f5d6f808ce7c8f29aa903eb70346a9acc65206f93c4608c63e8c044064d6dfe",
+            "title": "Pirate Face Rescues LLM Models from Deletion",
+            "description": "Comments",
+            "url": "https://pirateface.co/",
+            "source": "Hacker News",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "llm",
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-20T15:16:07+00:00",
+            "collected_at": "2026-09-20T20:04:36.272532+00:00"
+        },
+        {
+            "id": "a1ba3b0d698612c14be53bfd7fb2daf1946cae4730a8c442dca2479485844fe9",
+            "title": "Dell Pro 7 Webcam 4K Review: Sounds surprisingly great",
+            "description": "The Dell Pro 7 is a 4K / 60 fps webcam with surprisingly high-quality built-in mics, a built-in physical privacy shutter, and Windows Hello compatibility.",
+            "url": "https://www.tomshardware.com/peripherals/webcams/dell-pro-7-webcam-4k-review",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "pc",
+                "windows"
+            ],
+            "published_at": "2026-09-20T15:11:14+00:00",
+            "collected_at": "2026-09-20T20:04:38.810238+00:00"
+        },
+        {
+            "id": "44359fcd9d56bebe8c5becaeb943e2b35495573ba0c7937c5021a38530c78d88",
+            "title": "Sherline Tools Is Going Out of Business",
+            "description": "Comments",
+            "url": "https://toolguyd.com/sherline-tools-shutting-down-usa-production/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-20T15:09:41+00:00",
+            "collected_at": "2026-09-20T20:04:36.272670+00:00"
+        },
         {
             "id": "cfd43b6cbd52eeb4a1274355bbe2bd2fb6028864f64c28e7abef143d9a83c405",
             "title": "A small but growing number of founders are betting on bringing people together offline",
@@ -3124,6 +3896,21 @@
             "collected_at": "2026-09-19T15:07:25.884478+00:00"
         },
         {
+            "id": "0975dfc707c60c6d695197b8a7b09bec2dc63ca09a3aea70b41cf73ccbc6ae44",
+            "title": "So I have a weatherman, which also tells me the news",
+            "description": "Comments",
+            "url": "https://dexteroot.net/posts/2026/07/so-i-have-a-weatherman-which-also-tells-me-the-news-part-1/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-19T14:01:36+00:00",
+            "collected_at": "2026-09-20T20:04:36.273227+00:00"
+        },
+        {
             "id": "d099c92ee05c1f5245463d682a5dce12725ea26ce8657f15982e5f6dd2f46cc3",
             "title": "'We have lost control': Crypto pioneer warns AI could trigger systemic banking and infrastructure shocks",
             "description": "",
@@ -3198,6 +3985,22 @@
             ],
             "published_at": "2026-09-19T13:48:32+00:00",
             "collected_at": "2026-09-19T15:07:21.278197+00:00"
+        },
+        {
+            "id": "3b53e8b2f87cb4fca1856542cb9c6869f29e634624af778bd4caec9bd4aa4e78",
+            "title": "More Than a Gigabuck: Estimating GNU/Linux's Size (2001)",
+            "description": "Comments",
+            "url": "https://dwheeler.com/sloc/redhat71-v1/redhat71sloc.1.00.html",
+            "source": "Hacker News",
+            "category": "linux",
+            "tags": [
+                "linux",
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-19T13:42:31+00:00",
+            "collected_at": "2026-09-20T20:04:36.273375+00:00"
         },
         {
             "id": "477308257951754b3096e7e8cac8e7722f0b87ee17d9b7dc080079b4b6736190",
@@ -12083,6 +12886,21 @@
             ],
             "published_at": "2026-09-17T15:57:30+00:00",
             "collected_at": "2026-09-17T15:58:16.977439+00:00"
+        },
+        {
+            "id": "7513796550c9b3fd8d8a439ce216acff880a0aac82aa11a76d5619cae120f078",
+            "title": "Go-based Robotics Framework built around NATS.io",
+            "description": "Comments",
+            "url": "https://github.com/emergingrobotics/gorai",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-17T15:54:43+00:00",
+            "collected_at": "2026-09-20T20:04:36.273124+00:00"
         },
         {
             "id": "c5a5c78832ce0f8f1982465d326e3d651fbbaa8f0cb57ab64c18f01e4bae532d",
@@ -146432,6 +147250,52 @@
             ],
             "published_at": null,
             "collected_at": "2026-09-20T15:11:31.461600+00:00"
+        },
+        {
+            "id": "a24da9b4fbe345bc0e32f52759a9ac38448b923725947ec6946b20187f22c1f1",
+            "title": "No one is surprised that Nvidia’s Jensen Huang thinks AI fears are overblown.",
+            "description": "The man who may stand to make the most money from the AI boom seems to think he knows better than anyone else, including researchers who have studied and worked on AI for decades. In an interview with CBS Sunday Morning, he claimed there was a \"0% chance\" of AI being the end of the […]",
+            "url": "https://www.theverge.com/ai-artificial-intelligence/997936/nvidia-jensen-huang-ai-fears-overblown",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "nvidia",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-09-20T20:04:33.877718+00:00"
+        },
+        {
+            "id": "28390fdcd9807bac2c443d36b38376fdab2b031ac151f9b951775b70eb851467",
+            "title": "Kojima Productions disputes reports the studio is in trouble",
+            "description": "After it was announced that Sony was dropping Hideo Kojima's Physint, and that instead the Metal Gear Solid creator's latest title would be coming to Xbox, there were a flurry of rumors about the falling out. Bloomberg reported that the decision was driven by a number of factors, including missed deadlines, budget and profitability concerns, […]",
+            "url": "https://www.theverge.com/games/997880/hideo-kojima-productions-physint-xbox-sony-playstation",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-09-20T20:04:33.877809+00:00"
+        },
+        {
+            "id": "fab6808c5ea272358d9df311003b3b76234973670304024ae8dd95e4dc0bd2af",
+            "title": "Trump now says he wants to form an ‘AI Force’",
+            "description": "The president posted on Truth Social that he wanted to appoint an \"AI czar\" to lead a new \"AI force.\" He made the announcement amid growing calls from across the political spectrum and even within the industry to pump the brakes on AI development. He posted that his administration \"will not in any way hinder […]",
+            "url": "https://www.theverge.com/ai-artificial-intelligence/997867/trump-ai-force-ai-czar",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-09-20T20:04:33.877886+00:00"
         }
     ]
 }
