@@ -1,7 +1,805 @@
 {
-    "updated_at": "2026-09-20T10:23:03.946601+00:00",
-    "count": 9420,
+    "updated_at": "2026-09-20T15:11:48.477091+00:00",
+    "count": 9483,
     "articles": [
+        {
+            "id": "cfd43b6cbd52eeb4a1274355bbe2bd2fb6028864f64c28e7abef143d9a83c405",
+            "title": "A small but growing number of founders are betting on bringing people together offline",
+            "description": "Brynn Putnam and Tristan Walker have already done something that most founders only dream about: created companies so compelling that bigger outfits bought them. Putnam, a trained ballerina with a small chain of boutique studios, built the connected-fitness company Mirror and sold it to Lululemon for $500 million in cash less than three years later. […]",
+            "url": "https://techcrunch.com/2026/09/20/a-small-but-growing-number-of-founders-are-betting-that-bringing-people-together-is-its-own-industry/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "ios",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-09-20T15:00:00+00:00",
+            "collected_at": "2026-09-20T15:11:31.400210+00:00"
+        },
+        {
+            "id": "bb22dd669e85fa5db7c3a88543575e1f07d7a931ba05133b4aba1254658fb6d0",
+            "title": "I downscaled a 1080p video to 480x270 to protect its quality",
+            "description": "Someone handed my compressor a 1080p clip. It gave back a 480×270 postage stamp. Nothing crashed. Every line did what I wrote it to do. I had written code that looked at that video, decided it was too damaged to deserve its own resolution, and rescued it by throwing away three quarters of its pixels. I build this thing on my own, so there's nobody to hide behind here. Every bug below is mine, and I shipped six of them in about two weeks. Quick context, then I'll get to the interesting part. The tool compresses video entirely client-side — nothing uploads. I run two engines: WebCodecs through Mediabunny as the fast path, using the browser's own hardware encoders where they exist, and single-threaded ffmpeg.wasm (~32 MB, fetched on first use, then parked in the Cache API) for containers WebCodecs can't demux — AVI, WMV, FLV, MPEG program streams, older 3GP. I picked the single-threaded core deliberately: the multi-threaded one needs SharedArrayBuffer , which needs COOP/COEP headers, which would break static hosting for the sake of files that are rare and usually small. None of that matters much for what follows. I barely had a single bug in the encoders. All of them lived in the ~700 lines that decide what to ask an encoder for . Bitrate is the wrong number to look at A compressor has to answer one question: given this source and this goal, what resolution, frame rate and bitrate do I encode at? And the quantity that decides how a video looks isn't bitrate. It's bits per pixel per frame. bpp = videoBitrate / (width * height * frameRate) 2 Mbps is generous at 480p and unwatchable at 4K. Rough H.264 landmarks: bpp looks like 0.15+ visually transparent 0.10 good (YouTube-ish) 0.075 acceptable 0.05 soft, blocky on motion 0.03− falling apart So when a bitrate gets forced on me — \"fit this in 25 MB\" — I don't keep the source resolution and let the encoder smear it into mush. I ladder down: take the largest resolution whose bpp still clears a floor. I set that floor at 0.075, straight off the table above. That floor is the bug. The floor ate the picture Here's the clip that broke it. 1080p, 30 fps, 700 kbps. The level's retention cut takes the budget to ~455 kbps first, then my ladder runs: short edge dimensions bpp at 455 kbps clears 0.075? 1080 1920×1080 0.0073 no 720 1280×720 0.0165 no 540 960×540 0.029 no 480 852×480 0.037 no 360 640×360 0.066 no 270 480×270 0.117 yes Every step is correct. The conclusion is insane. My table lies in two ways it doesn't warn you about. It describes a first-generation encode. It tells you what a fresh capture out of a camera needs. But most files people compress have already been through a pass — a messaging app, a download, an export. That pass already stripped the noise and fine detail, which are the parts that cost bits. A second-generation clip holds up fine at a bpp that would look dreadful straight off a sensor. I read a re-shared clip's low bpp as damage , and that's the whole bug. I double-charged. I cut the source bitrate to a fraction first, and then ran the resolution ladder against the already-cut number. My cut caused my downscale, and both landed on the same clip. Target-size mode produced the stupidest version of this. A 77.5 MB source carrying 0.022 bpp, asked to fit in 25 MB, went from 1858×1660 down to 806×720 — a downscale whose entire purpose was to reach 0.032 bpp. Half again the density the source itself had. I threw away three quarters of someone's pixels in order to beat the quality of their original. Here's the one thing in this post I'd actually put on a wall: Any absolute quality floor that can sit above the source's own value will destroy the source in order to meet it. So I made the floor purely relative. Now it can never get up there: const bppFloor = srcBpp === null ? TARGET_BPP_FLOOR : Math . min ( TARGET_BPP_FLOOR , srcBpp * 0.2 ); A fifth of whatever the source itself carried. I landed on 0.2 because bpp is really standing in for how hard the content is to encode, and a source's own bpp is the best measure of that I have: footage that already survives at a low bpp is cheap footage, and it stays cheap at a fifth of that. That downscale was also worse than it looked, for a reason I didn't see coming. In target-size mode it defeats itself — a smaller frame is cheaper to encode, so the encoder stops spending the budget I gave it and lands far under target. The user pays in resolution and gets a file half the size they asked for. One 91 MB file asked to fit in 60 MB — a budget covering two thirds of its own bitrate — came back at 720p for exactly this reason. I was dividing a number I never measured Underneath all of that sat something worse. The number I kept dividing wasn't a video bitrate at all. When my packet-index read failed or looked unrepresentative, I fell back to this: videoBitrate = ( file . size * 8 ) / durationSec ; That's the wrong quantity , not a rougher version of the right one. It folds in the audio track and every byte of container overhead, so it reports a video bitrate the video track never had. Then my planner divides it by the pixel count and decides, from a number nobody measured, whether the source keeps its resolution. I had a real reason for that fallback. I used to sample only the first 120 packets (~4 s) to get the frame rate, and a prefix that short genuinely misleads whenever the opening seconds are simpler than the rest — so I threw away the bitrate that came with it. Then I stopped being scared of the full pass: const stats = await videoTrack . computePacketStats (); // metadataOnly if ( stats . averagePacketRate > 0 ) frameRate = stats . averagePacketRate ; if ( stats . averageBitrate > 0 ) videoBitrate = stats . averageBitrate ; Scanning every packet costs almost nothing, despite how it sounds. With metadataOnly it reads each sample's size and timestamp straight out of the container index — stbl / stsz for MP4, Cues for MKV/WebM — and never touches a frame of pixel data, let alone decodes one. The file is already a local Blob , so nothing goes over the network. You get both numbers exactly: averagePacketRate is the real frame rate, and averageBitrate is the video track's own bitrate, measured from actual packet sizes. I punished files for being efficient I always write H.264. But sources show up as HEVC, VP9 and AV1 — every iPhone since iOS 11 records HEVC by default, and the messaging apps most videos arrive through re-encode to HEVC or VP9 too. 700 kbps of HEVC carries roughly what 1 Mbps of H.264 carries. Compare a source bitrate against an H.264 table without converting it first and you'll conclude that a lean phone clip is a bad one, then compress it accordingly. I was penalising files for being efficient. const CODEC_EFFICIENCY = { avc : 1 , vp8 : 0.95 , vp9 : 1.4 , hevc : 1.45 , av1 : 1.6 , prores : 0.25 }; ProRes sits below 1 because it's intra-only: it spends enormous bitrates on a picture H.264 holds for a fraction. An unknown codec assumes 1.0 — if I assumed anything more efficient I'd inflate my estimate of the source's quality and over-compress it. But that conversion can ask for a bigger file than the source. Holding an HEVC or AV1 picture in H.264 really does cost 45–60% more bits, so the conversion times a high retention can land above what the source actually spent. A button labelled \"compress\" handing back a larger file is indefensible no matter how good my image-quality argument is, so I cap it hard at 0.95 × source . When those two goals collide, compressing wins. Audio had the identical bug, and this is the one I'm least proud of: a 684 kbps clip with a 48 kbps audio track came back 10% larger on my lightest setting, because I re-encoded the audio at 128 kbps. I re-encode audio rather than copy it, so asking for more bits than the original carried invents nothing — it just makes the track bigger than the one it replaces. On a thin video track, that alone flips the whole file. Now I treat the source's audio bitrate as a ceiling, not a target. Browsers lie to you as well Three of these, quickly. Codec support answers are optimistic. I asked Chrome whether AAC could handle 16–24 kbps mono. It said yes — an isConfigSupported -style answer, not a real encode attempt. Then it threw OperationError: Encoding error on the very first sample. I reproduced it at 16000, 24000 and 25969 bps alike, on a freshly created worker's first encode, so it isn't a warm-up artifact either. I stopped asking and hardcoded the split: Opus below 64 kbps, AAC at or above. Opus is the better codec down there anyway. Firefox ships an AVC encoder and no AAC encoder. The tempting read is that Firefox needs my ffmpeg path. It doesn't — MP4 carries Opus perfectly well, and pulling 32 MB of wasm over someone's connection because of an audio track would be ridiculous. So my engine decision checks exactly one thing, on purpose: canEncodeVideo('avc') . Hardware encoder sessions are a shared, limited resource , and closing one doesn't always free it right away. Compress twice back to back in the same tab and the second can fail with that same generic OperationError — and so can every attempt after it, until you reload the page. I now treat that specific DOMException as recoverable and drop to ffmpeg.wasm for the rest of the run, because software encoding never touches the session I couldn't get. A constant bitrate request is a ceiling, not a promise In target-size mode I check the output and re-encode when I miss. Correcting an overshoot is mandatory — \"at most 25 MB\" is a promise I made. Undershoot is the interesting direction. It's almost never because I asked for too few bytes; I asked for the target. It's because the encoder declined to spend them. Most WebCodecs implementations treat a constant-bitrate request as a ceiling, and easy content simply costs less than the budget allows. Which means the right answer to an undershoot is to ask for more than the target. I used to clamp the corrected ask to desiredBytes * 0.97 , so correcting a 28 MB result against a 60 MB target handed back an ask of 58.2 MB — smaller than the ask that had just undershot. My next pass faithfully reproduced 28 MB and gave up. I raise it once, though, not repeatedly. An encoder undershooting because the content is cheap will undershoot at any budget, and every extra pass is a full re-encode someone sits and waits through. The line that looked like a no-op Passing frameRate into the conversion when it already equals the source's rate is not a no-op. Mediabunny quantises every sample onto a rigid 1/frameRate grid and drops or duplicates whichever sample lands in a bucket that's already full. Real footage is rarely perfectly constant-frame-rate — auto-exposure and capture jitter alone push samples off any fixed grid, and a VFR source has no single rate to quantise to at all. I forced that grid when I didn't need to, and it produced real judder. Now I pass it only when I deliberately changed the rate, and the same goes for ffmpeg's -r . One more, free: round output dimensions down to even, never to nearest. H.264 wants even dimensions for 4:2:0 chroma, and real captures and crops do produce odd heights. Rounding 1081 up to 1082 means encoding a frame larger than the source — interpolating pixels that were never there, for a softer picture at more bits. What they all had in common Every one of these came from taking a number at face value: a bitrate I computed from file size and called a video bitrate a quality table describing first-generation encodes, which I applied to footage that had been through Messenger a codec-support API answering about a configuration it had never tried a bitrate request the encoder treated as optional The encoders were fine. WebCodecs and ffmpeg.wasm both did exactly what I asked. Every bug was in my asking. If you're building something in this shape, here's the rule that would have saved me most of it: judge the source against itself, not against a table. An absolute standard, applied to a file that never met it, will always conclude the file has to be destroyed for its own good. The compressor all this came out of is at squishyfile.com — runs in your browser, nothing uploaded. Ask me anything in the comments, I'll go as deep as you want.",
+            "url": "https://dev.to/maxslashwang/we-downscaled-a-1080p-video-to-480x270-to-protect-its-quality-1m46",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "ios",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-20T14:57:42+00:00",
+            "collected_at": "2026-09-20T15:11:33.548016+00:00"
+        },
+        {
+            "id": "8336c669b6fddf5d6bf419b27b60f1b24dcaac3486753afc132af730124808d4",
+            "title": "How to Escape \"Tutorial Hell\" in 2026 (And Actually Build Projects)",
+            "description": "We’ve all been there: buying 5 Udemy courses, saving 30 YouTube videos, and starting 10 different roadmaps, only to feel completely stuck. The main reason for \"tutorial hell\" isn't a lack of discipline — it's decision fatigue. You spend more energy deciding WHAT to learn next than actually learning. To solve this for myself, I built a lightweight tool called SkillPilot: 👉 [ https://skillpath-ai-web-app-nwej.bolt.host ] How it works: You select or type your target goal (Full-Stack Dev, AI, Data Science, etc.). Input your current skill level and available weekly hours. It generates a single 5-stage action path telling you what to learn, what to build, and what to skip. It's 100% free with no account required. I'd love to hear your thoughts: How do you usually decide which tools to learn next?",
+            "url": "https://dev.to/tanmay_gupta_f5e6a6c64ad2/how-to-escape-tutorial-hell-in-2026-and-actually-build-projects-4co1",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-20T14:57:31+00:00",
+            "collected_at": "2026-09-20T15:11:33.548184+00:00"
+        },
+        {
+            "id": "afc840cc6d80e44cbb4db84f302d35294c8ebc4ad829461adadb49b6a1339c00",
+            "title": "Crypto platform Gemini’s stock is down 80% from its IPO. That’s reviving takeover speculation",
+            "description": "",
+            "url": "https://www.coindesk.com/business/2026/09/20/gemini-s-stock-is-down-80-from-its-ipo-that-s-reviving-takeover-speculation",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto",
+                "gemini"
+            ],
+            "published_at": "2026-09-20T14:54:48+00:00",
+            "collected_at": "2026-09-20T15:11:46.773812+00:00"
+        },
+        {
+            "id": "93f20138d46cb087296478b2fbc050224259000d036367febf2b361b572e9058",
+            "title": "Iniciando meus estudos em Event Loop",
+            "description": "✨♻️ JavaScript Visualized: Event Loop Lydia Hallie Lydia Hallie Lydia Hallie Follow Nov 20 '19 ✨♻️ JavaScript Visualized: Event Loop # javascript # webdev 4450 reactions 193 comments 4 min read",
+            "url": "https://dev.to/brendonhenrrique/-1c5g",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "java",
+                "javascript",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-20T14:54:36+00:00",
+            "collected_at": "2026-09-20T15:11:33.548281+00:00"
+        },
+        {
+            "id": "fd9501555129fca1e19be48542d12b364203258f9ddc3a6f2e5327309a5075d1",
+            "title": "Anthropic, OpenAI, SpaceXAI, and Google face antitrust lawsuit for agreeing to slow AI development — plaintiffs say plan has been in motion for months before, calls agreement ‘self-serving’",
+            "description": "A proposed class action lawsuit has been lodged against the four big AI tech companies after they agreed to slow AI development for safety reasons. The lead counsel on the lawsuit says that 'AI will quickly spin out of control and could kill us all if we allow AI safety and protocol ... to be controlled by private self-serving agreements between the world's most powerful 'for profit' technology companies.'",
+            "url": "https://www.tomshardware.com/tech-industry/big-tech/anthropic-openai-spacexai-and-google-face-antitrust-lawsuit-for-agreeing-to-slow-ai-development-plaintiffs-say-plan-has-been-in-motion-for-months-before-calls-agreement-self-serving",
+            "source": "Tom's Hardware",
+            "category": "cloud",
+            "tags": [
+                "anthropic",
+                "aws",
+                "cpu",
+                "gpu",
+                "hardware",
+                "openai",
+                "pc",
+                "rust"
+            ],
+            "published_at": "2026-09-20T14:48:57+00:00",
+            "collected_at": "2026-09-20T15:11:35.619208+00:00"
+        },
+        {
+            "id": "5ef2ef93f385e6351ecf134ad40767efd6ec6363459e3aa13dbeeb23b6712eb8",
+            "title": "I built a free Chrome extension for people with 50+ tabs open",
+            "description": "Tabforge closes duplicate tabs, groups by site and searches across windows. Free, local, no account.\" If you write code for a living, your browser probably looks like mine: 50–100 tabs, docs in one window, research in another, a few half-read articles from last week. I kept losing tabs, opening pages I already had open, and feeling a constant low-level clutter that made it harder to focus. So I built Tabforge , a small Chrome extension for taming tab overload. I'm the maker, so take my enthusiasm with some salt. What it does Closes duplicate tabs across all your windows in one click Groups tabs by domain , so all the docs sit together and all the videos sit together Searches your open tabs , with a filter by site, across every window Labels tabs (\"Read later\", \"Work\", or your own) so you can filter by them Suggests cleanups when you have too many tabs or lots of duplicates Undoes an accidental close with a recently closed list Quick actions: pin, mute, close the tabs to the right A floating timer for focus sessions, plus dark mode Privacy Everything stays in your browser. There's no account, and nothing is sent anywhere. Who it's for People who keep a lot of tabs open on purpose: developers, researchers, students. If you're comfortable with 5 tabs, you don't need it. If you're at 60 and can't find anything, it might help. Where it stands It's early and I'm the only developer, with a small number of users. I'm working on better saving and restoring of whole sessions, since that's what heavy-tab users ask for most. The core will stay free. I may add an optional paid tier later for extras like saved workspaces, and I'll say so clearly before I do. Try it and tell me what's missing 👉 Tabforge on the Chrome Web Store I'd like honest feedback: What's the first thing you'd want a tab manager to do that yours doesn't? If you use OneTab, Workona or Tab Wrangler today, what would make you switch, or keep you where you are? How many tabs do you usually have open? I read and reply to every comment.",
+            "url": "https://dev.to/akshay_khajuriya_80c68073/i-built-a-free-chrome-extension-for-people-with-50-tabs-open-2chi",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "programmation",
+                "web",
+                "windows"
+            ],
+            "published_at": "2026-09-20T14:48:49+00:00",
+            "collected_at": "2026-09-20T15:11:33.548593+00:00"
+        },
+        {
+            "id": "4c7a0a0e6982318317ce5589b83c8d3bbdf61301d3e913944a24291b2c17dd4c",
+            "title": "JavaScript Array Methods",
+            "description": "JavaScript has its own set of methods built into the language that allow developers to efficiently interact with arrays. JavaScript allows us to do such operations as adding, removing, updating or getting elements, transforming, or iterating through arrays. Array Basic Methods 1. Array toString() in JavaScript This method fabricates an array in a string format separated by a comma. This approach does not alter the initial array and is significant for representing the content of the array in the form of a string. Example code: const names = [ \" Jaisurya \" , \" Dinesh \" , \" Ramesh \" ]; console . log ( \" Arrays to String is \" , names . toString ()); //Output: Array to String is Jaisurya, Dinesh, Ramesh Explanation: In the above example, we defined a variable named names using the const keyword. We assigned it an array consisting of names. We utilized the toString() method to transform the array into a single string and logged the result in the console. 2.Array at() in JavaScript It returns the element at a specified index in an array. It can be constructed for both positive and negative indices. Indices can be positive, which begin at the start ( 0-based ), and can be negative, which count from the end of the array. Example code: const names = [ \" Jaisurya \" , \" Ramesh \" , \" Dinesh \" ]; console . log ( \" Second Element is \" , names . at ( 1 )); //Access second element console . log ( \" Last Element is \" , names . at ( - 1 )); //Access last element //Output: //Second Element is Ramesh //Last Element is Dinesh Explanation: In the above example, we defined a variable named names using the const keyword and assigned it an array consisting of names. By utilizing the at() method of array, we accessed the second and last element from the array and logged them in the console. 3.Array forEach() in JavaScript The forEach() method is a built-in method that is utilized to call a function for each element present in the array. It neither returns a new array nor modifies the original array, but it is utilized for iteration. Example code: const seasons = [ \" spring \" , \" summer \" , \" winter \" , \" autumn \" ]; seasons . forEach (( season ) => console . log ( season )); //Output: //spring //summer //winter //autumn Explanation: In the above code, we defined a variable named season and assigned it an array consisting of season names. By utilizing the forEach() method, we return every element of the array and log the output in the console.",
+            "url": "https://dev.to/jaisurya/javascript-array-methods-2i5b",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "java",
+                "javascript",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-20T14:46:25+00:00",
+            "collected_at": "2026-09-20T15:11:33.548926+00:00"
+        },
+        {
+            "id": "31b7144deccca72e7160c11b403e09b2ce82af61402ecae04a8e06e7d175c10f",
+            "title": "# I Built My Developer Portfolio as a Pixel-Art World",
+            "description": "I wanted to build a portfolio that felt like something you'd actually explore, rather than another page with a photo, skills section, and a list of projects. So I turned my career into a small pixel-art world. Different islands represent different parts of my journey, with buildings and locations representing my education, work experience, projects, and other things I've built along the way. The idea The first version didn't work. I originally built a side-scrolling coastal town, but after spending time with it, I realized it wasn't communicating my experience clearly enough. So I scrapped it and started again. The second version became an island-based map where exploration is part of the experience, while still keeping the actual information accessible. What I used Next.js TypeScript Tailwind CSS PixiJS Framer Motion Howler Zustand The interesting part wasn't just putting these technologies together. I had to think about how animations, interactions, navigation, audio, and actual portfolio content could coexist without making the site frustrating to use. What I was trying to solve A developer portfolio has two competing goals: Show personality while still making your experience easy to understand. I wanted someone to be able to explore the world if they wanted to, but also quickly find my experience, projects, skills, and background. I'm still improving the mobile experience and performance, so feedback is very welcome. Take a look Portfolio: https://fatimazehrashakeel.netlify.app/ Story behind it: https://www.linkedin.com/feed/update/urn:li:activity:7507031808652455936 If you build portfolios or interactive web experiences, I'd especially love to hear what you think about the balance between creativity and usability .",
+            "url": "https://dev.to/fatimazehrashakeel/-i-built-my-developer-portfolio-as-a-pixel-art-world-1911",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "csharp",
+                "developpement",
+                "ios",
+                "programmation",
+                "rust",
+                "typescript",
+                "web"
+            ],
+            "published_at": "2026-09-20T14:41:18+00:00",
+            "collected_at": "2026-09-20T15:11:33.549148+00:00"
+        },
+        {
+            "id": "ac09ccf9dfb5a617e6e48cd3f906dd3614ab4d82bed73a5f812a132c5613663d",
+            "title": "6 Ways to Protect Your Personal Information Online in 2026 (Master Guide)",
+            "description": "For a decade, war didn’t disappear; it evolved. From Ukraine’s blackouts triggered by code to Gaza’s battles shaped by surveillance and data, conflict now moves in silence, where a single breach can hit harder than any missile.… In the last ten years, the world has quietly shifted from one where wars are fought with missiles and hypersonic bombs to zeros and one where your enemy's strength is measured by how much information they have about you. People are becoming more scared of their information being fed to big data machines than dying of cancer (Just kidding), but there has been a rise in cyber attacks, according to Forbes . There were 2,365 cyberattacks in 2023, with 343,338,964 victims. 2023 saw a 72% increase in data breaches since 2021 and bound to double in 2024. Malicious actors have become more sophisticated, and so should you; securing your data is now more important than ever as our lives are increasingly intertwined with the online world. From social media to online banking, we leave digital footprints everywhere we go. But with this convenience comes risk. According to Proofpoint , 1 in every 3 Americans has been hit by identity theft, like Kemi, a 32-year-old Product Manager whose identity was stolen. Her sim was cloned, and her two-factor authentication was bypassed. They wiped out her savings and maxed out her credit cards in minutes. Kemi’s nightmare is far from unique. The U.S. Federal Trade Commission ( FTC) logged more than 1 million identity theft reports in 2023 . These reports included more than 2.6 million related fraud cases, with total losses of more than $10.3 billion. It gets even scarier as personal information stolen is sold to malicious actors who can use this information to blackmail their victims. While the tales are glummy, you can protect yourself. Here are ten critical ways to safeguard your personal information online: 1. Fortify Your Passwords Remember when your dog's name and birth year seemed like a clever password? Those days are long gone. Create strong, unique passwords for each account. Use a mix of uppercase and lowercase letters, numbers, and symbols. Better yet, use a password manager to generate and store complex passwords securely. There are so many password generator platforms online, and they are mostly free. Do not use simple and easy-to-guess passwords, as there are tools such as password crackers that can crack these passwords. I wrote an article on Build Your First Password Cracker . You can even create your own password generator if you do not trust the online platforms. Find the steps outlined on GitHub . 2. Embrace Two-Factor Authentication (2FA) Think of 2FA as a bouncer for your digital life. Even if someone cracks your password, they'll need a second form of identification to get in. Enable 2FA wherever possible, especially for email and financial accounts. Use Authenticators for your 2FA, if possible, for more security if your password gets compromised. Ensure your emails have recovery emails if you find out your emails are compromised. You can set up a recovery mail from here if you are using Google Mail . Use obfuscated emails to avoid spam on your emails or compromised mail being sold on the dark web; Duckduckgo email protection conceals your email. 3. Be a Social Media Ninja Oversharing on social media is like leaving your front door wide open. Adjust your privacy settings to control who sees your posts. Be cautious about what you share – that innocent vacation photo could tell burglars you're away from home. Do not log in to your personal information on other people's devices; if you must, use incognito mode and make sure to log out and change all your passwords from your device when you log in. Make sure not to share events in real time, such as vacations, eat-outs, and social events that might easily show where you are. Clear your browsing history, cookies, and cache. Use private browsing modes when possible. It's like cleaning your house – a regular digital declutter keeps things tidy and secure. Take a weekend and clean your online digital footprint. Follow this guide to learn how to delete your social media footprint from the internet. 4. Treat Public Wi-Fi Like a Public Bathroom It's convenient but potentially dirty. Avoid accessing sensitive information on public Wi-Fi networks. If you must, use a VPN to encrypt your data. For more clarity, Public Wi-Fi is a bustling city park where everyone can hear your conversations. This openness means your data travels over a shared network that others can potentially intercept. Without proper encryption, cybercriminals can eavesdrop on your online activities, steal personal information To keep your online life private, treat public Wi-Fi like you would a crowded space - be cautious, keep your valuables close, and consider wearing a digital disguise (VPN) for extra protection. There are lots of VPNs (Virtual Private Networks) you can use to obfuscate your identity on the internet. This article explored some of the best , both paid and free. 5. Update, Update, Update Software updates are like vaccines for your devices. They patch vulnerabilities and protect against the latest threats. Don't ignore those update notifications – they could save you from a digital disease. Before you scream Crowdstrike, I wrote an article about the patch that broke the internet. Who is getting fired? Keep updating your devices whenever and however, as the updates protect your devices and keep them secure. 6. Use Security Software Think of security software as your digital immune system. Use reputable antivirus and anti-malware programs, and keep them updated. They're your first line of defense against many online threats. Stay away from free antivirus as most of them come with back doors or there are payloads for attacks as well. Visit reputable sites to get the best product. Protecting your personal information online isn't just about following a checklist. It's about developing a security-conscious mindset. Every click, every share, every download is an opportunity to safeguard your digital self. Conclusion The internet is a vast, wonderful place full of opportunities. But like any frontier, it has its dangers. By following these tips and staying vigilant, you can explore the digital world with confidence. Your online safety is in your hands – take control of it today.",
+            "url": "https://dev.to/scofieldidehen/6-ways-to-protect-your-personal-information-online-in-2026-master-guide-3a4g",
+            "source": "DEV Community",
+            "category": "cybersecurite",
+            "tags": [
+                "developpement",
+                "git",
+                "malware",
+                "programmation",
+                "rust",
+                "web",
+                "wifi"
+            ],
+            "published_at": "2026-09-20T14:34:30+00:00",
+            "collected_at": "2026-09-20T15:11:33.549824+00:00"
+        },
+        {
+            "id": "032c7ffe9aa1566745e29c7a1838e3c2dfe81815f4df90f00af3ee56870feafa",
+            "title": "Mirra Landing Page: AI Writing Companion Build 🏗️",
+            "description": "I kept rewriting the Mirra landing page for a very annoying reason. The page looked good before it felt right. That is the uncomfortable part of landing page design for an AI product. You can make something visually polished very quickly now. Add a soft background, put a mascot on one side, write a headline about productivity, and the page will look like a startup launch. But Mirra is not trying to be another \"AI writes everything for you\" tool. Mirra is an AI writing companion for solo creators who write on LinkedIn and X. The product idea is simple: help a creator turn rough thoughts into social media posts that still sound like them. That one line shaped almost every decision on the Mirra landing page. The page had to feel warm, personal, and clear. It had to collect beta interest. It also had to show the boundary early: Mirra helps you write, but it does not take your voice or your publish button away. Here is the Mirra landing page recording with that motion in place. <video className=\"my-6 w-full rounded-lg border border-[var(--grey2)] bg-black\" autoPlay controls loop muted playsInline preload=\"metadata\" poster=\"/images/blogs/how-i-created-the-mirra-landing-page/mirra-screen-recording-poster.png\" aria-label=\"Screen recording of the Mirra AI writing companion landing page animation\" src=\"/videos/blogs/how-i-created-the-mirra-landing-page/mirra-screen-recording.mp4\" type=\"video/mp4\" /> The Mirra AI Writing Companion Idea The name Mirra came from the idea of a mirror. Not a mirror in the literal productivity app sense. I did not want a generic task app that reflects your todo list back to you. I wanted the product to help with something more specific: the way creators recognize themselves in their own writing, personal brand, and content creation workflow. That is the hard part of AI writing. AI can generate words. That is no longer impressive by itself. The real product challenge is helping someone write more consistently without making them sound like everyone else using the same model. So the core promise became: Grow your presence without losing your voice. That line gave the landing page its spine. It says what creators want, and it also names what they are afraid of. For Mirra, the shared preview mattered too. I created the Open Graph image so the page would still feel like Mirra when someone saw it outside the website. Small detail. Big surface area. Sometimes the preview image is the first landing page. Building The Mirra App And Next.js Landing Page The Mirra landing page came before the full product experience, but it could not be disconnected from the app. The repo is set up as a product system, not just a marketing page. The web app lives in apps/web . The mobile app lives in apps/mobile . Shared design decisions live in packages/design . Product shaped data and future contracts live in packages/product . That structure matters because Mirra is not only a nice page with a cute character. The product is being built around chat, drafts, persona memory, platform specific writing, and voice match for creator content. But the first public surface still needed restraint. I did not want to show a huge dashboard before the product had earned it. I did not want to promise team workflows, brand automation, or automatic posting. Those features may look good on a landing page, but they would change the trust contract of the product. The boundary became: Mirra helps you shape the post. You stay in control of the idea. You decide what gets published. No automatic posting. That boundary sounds like product positioning, but it also shaped the layout. The page is intentionally compact: wordmark, headline, short copy, waitlist form, animated Mirra scene, and a quiet footer. And Guess what? The page got better when I removed things. AI Mascot Design For Mirra The mascot was not just decoration. If Mirra is a writing companion, the visual identity needed to feel like a companion too. A cold dashboard would make the product feel like an analytics tool. A generic robot would make it feel like every other AI assistant or AI writing app. I wanted Mirra to feel Gen Z, geeky, warm, and a little playful. Someone who belongs in a creator's world, not a corporate control room. The first concept image was the standing Mirra visual. I created it with Gemini Nano Banana 2. That gave me the foundation: the face, the outfit, the colors, and the overall personality. This image solved identity. But it did not solve presence. A standing mascot still felt like a brand asset. Useful, but not intimate enough for the product. Mirra needed to feel like she was already in the writing moment with you. GPT Image Prompts For Mascot Postures The next step was posture. I used GPT-5.4 Imagen to create a sitting version of the Mirra mascot. Same character, same softness, same color palette, but a different emotional signal for the hero section. This time, she was sitting cross legged on a sofa, holding a phone, relaxed enough to feel approachable and focused enough to feel useful. That posture changed the page. Suddenly Mirra did not feel like a mascot placed beside the product. She felt like the product moment itself. A creator has a rough thought. Mirra is there, quietly helping shape it into something publishable. This is where prompt work became design work. I was not asking the model to create random variations. I was narrowing the degrees of freedom. Identity stays fixed. Posture changes. Motion gets quieter. The page gets calmer. Luma.ai Video Generation For The Landing Page The video was the hardest part to get right. I explored multiple AI video generation tools for the Mirra landing page. Some were good at dramatic movement. Some were good at cinematic shots. But for this specific use case, I needed something much quieter. I needed Mirra to feel alive without stealing attention from the waitlist form. Luma.ai gave me the best balance of quality, control, and cost. It was also the cheapest option I found that still gave me output I could actually use on a landing page. This was the Luma workspace while I was tuning the sofa loop. I kept generating small variations, checking the flash cut, and using the review panel as a scratchpad for what still felt off. The tricky part was the loop. For a landing page video, the first frame and the last frame matter a lot. If they do not feel visually connected, the loop breaks the illusion. You see the cut. Once you see it, you cannot unsee it. So I kept trying to make the first frame and last frame as close as possible. Not perfect, but close enough that the page felt calm. In the final implementation, I used two videos: mirra-mascot-animation.mp4 , the intro video. Mirra is sitting on the sofa and waving at you. This plays only once when you land on the page. mirra-sofa-loop.mp4 , the idle loop. After the intro, this video keeps running. Mirra subtly nods her head and moves her legs, just enough to feel present. That split solved a product problem. The first video creates a tiny moment of hello. The second video keeps the page alive without becoming noisy. The component itself lives in apps/web/components/MirraHeroScene.tsx . It starts with a fallback image so the page is never blank while the video loads. Once the intro is close to finishing, the loop video fades in. If playback fails, the fallback image still protects the layout. Flow: The hero starts on a fallback image, plays the intro wave once, then settles into the idle sofa loop. A playback failure leaves the fallback image in place. Done. Cool. That tiny bit of engineering matters because landing pages are fragile. A beautiful hero that fails to load is not a beautiful hero. It is a blank rectangle with ambition. Creator Beta Waitlist UX The Mirra beta waitlist form is not just an email capture. It is the first product interaction. That is why the copy says: Early access for solo creators. No automatic posting. I wanted the boundary to appear at the exact moment someone decides whether to trust the product. Mirra is going to deal with writing, voice, and public presence. That means the waitlist cannot feel like a growth hack. The flow is simple. First, you enter your email. After joining, you can optionally share your LinkedIn or X profile. That second step is useful because Mirra is being built around voice memory, but it is not forced. Email first. Profile later. Skip stays available. Flow: Email is the only required step. Sharing a LinkedIn or X profile is a second, optional step that can be skipped. On the backend, apps/web/app/api/waitlist/route.ts handles both steps. POST saves the email. PATCH adds LinkedIn or X profile URLs after signup. The storage logic in apps/web/lib/waitlist.ts normalizes emails, validates profile URLs, stores signups in Supabase, and handles duplicate submissions gracefully. I also added PostHog for product signals, but emails stay in Supabase. Analytics gets behavior, not the personal identifier someone typed into the form. That is not overthinking. That is the product promise showing up in the plumbing. Mirra Beta Benefits For Solo Creators If you join the beta list right now, the benefit is not just \"early access.\" Early access is table stakes. The more interesting part is getting closer to the product while the product is still shapeable. You get access to the first Mirra AI writing workflows before the public release. The focus is on turning rough thoughts into LinkedIn and X posts without losing your voice. You get a chance to influence how voice memory works. If you share a public creator profile, I can use that signal to understand what a more personal setup should feel like. You get a product that is being built around creator control from day one. No automatic posting. No surprise publishing. No pretending that AI should become you. And if you are an early solo creator, you get to help define the boring but important details: what a good rewrite feels like, when AI becomes too much, what tone matching should preserve, and where the product should stop. That last part is the real beta benefit. You are not only joining a list. You are helping shape the taste of the product. hellomirra.com I'm building an AI writing companion for creators. Join the early beta list. Join beta . The Lesson I Am Taking From This The Mirra landing page taught me the same lesson again: Positioning has to lead design. If the product is about voice, the page cannot sound generic. If the product is about trust, the form cannot feel extractive. If the product is about companionship, the visual system cannot feel like a dashboard pretending to be friendly. The page became clearer every time I removed something that did not match the promise. The copy got shorter. The mascot became warmer. The video became quieter. The beta flow became more respectful. That is the version of Mirra I wanted people to meet first. Not the biggest possible landing page. The most honest one. ✨ Originally published on April 29, 2026 at souravdey.space .",
+            "url": "https://dev.to/souravdey777/mirra-landing-page-ai-writing-companion-build-15j2",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "gemini",
+                "programmation",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-09-20T14:24:53+00:00",
+            "collected_at": "2026-09-20T15:11:33.551224+00:00"
+        },
+        {
+            "id": "762fff254c560add661d389c422d75a2e4ac129ee5c3b00143eaaa19c5750f91",
+            "title": "Window Functions vs Aggregate Functions in SQL: A Beginner-Friendly Guide",
+            "description": "If you have written SQL for more than a week, you have used SUM() , AVG() or COUNT() . They are the bread and butter of reporting. Then one day someone says, \"Just use a window function for that\" , and suddenly you are staring at a query with OVER (PARTITION BY ...) in it and wondering what you missed. This article is for you if you are just starting with window functions , or if you already know them and want a quick refresher . We will start with the one idea that separates the two, build both kinds of query side by side, and then explore what window functions can do that aggregates never could. Every example is small enough to run yourself. The one-sentence difference Aggregate functions collapse many rows into one. Window functions calculate across many rows but keep every row. That is the whole idea. Everything else in this article is a consequence of it. See the difference Here is the same calculation, a total of sales per product, done both ways on four rows of data. On the left , GROUP BY merges the two Caps rows into a single row (total 40) and the two Gloves rows into another (total 25). Four rows go in and two come out. On the right , the window function calculates the very same totals, but every original row survives and simply receives its group's total. Four rows go in and four come out. The vocabulary for this is granularity , which means \"what one row represents\". After GROUP BY , a row no longer means \"one sale\", it means \"one product\", so the granularity has changed . After a window function, a row still means \"one sale\", so the granularity stays the same . Let's build both queries. Part 1: Aggregate functions (collapse the rows) An aggregate function takes a group of rows and returns one value per group . The classics are COUNT , SUM , AVG , MIN and MAX , and they are usually paired with GROUP BY . Here is the data from the diagram: CREATE TABLE product_sales ( id INT PRIMARY KEY , product VARCHAR ( 20 ), sales INT ); INSERT INTO product_sales ( id , product , sales ) VALUES ( 1 , 'Caps' , 10 ), ( 2 , 'Caps' , 30 ), ( 3 , 'Gloves' , 5 ), ( 4 , 'Gloves' , 20 ); And the total sales per product: SELECT product , SUM ( sales ) AS total_sales FROM product_sales GROUP BY product ; product total_sales Caps 40 Gloves 25 Four rows became two. This is exactly what we want for a summary, but it has a limitation: once the rows are collapsed, the individual sales are gone. The id and sales columns cannot appear next to the totals, because there is no single id or sales value for a group of rows. So what if you want to see each sale next to its product's total ? That is where window functions come in. Part 2: Window functions (same calculation, rows preserved) A window function performs a calculation over a set of related rows and then attaches the result to every row instead of collapsing them. Here is the same total, this time as a window function: SELECT id , product , sales , SUM ( sales ) OVER ( PARTITION BY product ) AS total_sales FROM product_sales ORDER BY id ; id product sales total_sales 1 Caps 10 40 2 Caps 30 40 3 Gloves 5 25 4 Gloves 20 25 Same SUM , same idea of grouping by product, but four rows in and four rows out . There is no GROUP BY . The OVER (PARTITION BY product) part is what tells SQL: \"calculate the sum for each product, but don't collapse anything\". Why keeping the rows matters Once the detail is still there, you can compare each row against its group. Let's switch to a table with a bit more to look at: CREATE TABLE employees ( id INT PRIMARY KEY , name VARCHAR ( 50 ), department VARCHAR ( 50 ), salary INT ); INSERT INTO employees ( id , name , department , salary ) VALUES ( 1 , 'Amina' , 'Sales' , 5000 ), ( 2 , 'Brian' , 'Sales' , 4000 ), ( 3 , 'Chloe' , 'Sales' , 4000 ), ( 4 , 'Ivan' , 'Sales' , 3000 ), ( 5 , 'David' , 'Engineering' , 7000 ), ( 6 , 'Esther' , 'Engineering' , 6000 ), ( 7 , 'Farid' , 'Engineering' , 6500 ), ( 8 , 'Grace' , 'HR' , 4500 ), ( 9 , 'Henry' , 'HR' , 3500 ); How far is each person from their department's average salary? SELECT name , department , salary , AVG ( salary ) OVER ( PARTITION BY department ) AS dept_avg_salary , salary - AVG ( salary ) OVER ( PARTITION BY department ) AS diff_from_avg FROM employees ORDER BY department , salary DESC , name ; name department salary dept_avg_salary diff_from_avg David Engineering 7000 6500.00 500.00 Farid Engineering 6500 6500.00 0.00 Esther Engineering 6000 6500.00 -500.00 Grace HR 4500 4000.00 500.00 Henry HR 3500 4000.00 -500.00 Amina Sales 5000 4000.00 1000.00 Brian Sales 4000 4000.00 0.00 Chloe Sales 4000 4000.00 0.00 Ivan Sales 3000 4000.00 -1000.00 Nine rows in, nine rows out, and every employee now carries their department's average alongside their own salary. Without window functions this would take a subquery or a self-join. Here it is one readable line. Anatomy of a window function Every window function follows the same shape: function_name ( expression ) OVER ( PARTITION BY column_a ORDER BY column_b ROWS BETWEEN ... AND ... ) Part What it does Required? function_name(expression) The calculation: SUM , AVG , ROW_NUMBER , LAG , and so on Yes OVER (...) Tells SQL \"this is a window function\" and defines the window Yes PARTITION BY Splits rows into independent groups (like GROUP BY , but without collapsing) No ORDER BY Orders the rows inside each partition Depends on the function Frame clause ( ROWS BETWEEN ... ) Narrows the window to a range of rows around the current row No A helpful mental model: PARTITION BY decides which rows belong together, ORDER BY decides their sequence, and the frame decides how far each row can \"see\". If you leave out PARTITION BY , the entire result set is treated as one big partition: SELECT name , salary , AVG ( salary ) OVER () AS company_avg_salary FROM employees ; Every row will show the company-wide average, which is about 4833.33 for our data. Side-by-side comparison Aggregate functions Window functions Rows returned One per group Same as the input Granularity Changes Stays the same Uses GROUP BY ? Yes No Uses OVER() ? No Yes Can show detail and summary together? No (detail is lost) Yes Typical use Totals, counts, averages per group Rankings, running totals, comparisons with neighbouring rows One detail that trips people up: SUM , AVG , COUNT , MIN and MAX can be used both ways. With GROUP BY they are aggregate functions. With OVER() they become window functions. The presence of OVER is what changes their behaviour. Which functions belong to which world? So far we have only used aggregate functions such as SUM and AVG . But the two worlds do not support the same set of functions. The slide below shows what each one can use. GROUP BY only works with the five aggregate functions . Window functions can use those same five, and they add two more families of their own: rank functions and value (analytics) functions . That is a big part of why window functions feel so much more powerful. Here is the full family tree, including what you are allowed to put inside the parentheses: Family Functions What goes inside the parentheses Aggregate COUNT , SUM , AVG , MIN , MAX An expression. COUNT accepts any data type, while SUM and AVG need numbers Rank ROW_NUMBER , RANK , DENSE_RANK , CUME_DIST , PERCENT_RANK , NTILE Nothing (empty parentheses). The exception is NTILE(n) , which takes a number Value (analytics) LEAD , LAG , FIRST_VALUE , LAST_VALUE An expression of any data type. LEAD and LAG also accept an optional offset and default value Two small notes on the slide. First, its last value function is labelled FIRST_VALUE a second time, but it is meant to read LAST_VALUE . Second, it shows MIN and MAX as numeric only. That is the simplest way to think about them, but in most databases they also work on text and dates, for example the earliest date or the alphabetically first name. Let's take one tour through each family, in the same top-to-bottom order as the diagram. Part 3: The three families in action We will use one more small table for the time-based examples: CREATE TABLE monthly_sales ( month DATE , revenue INT ); INSERT INTO monthly_sales ( month , revenue ) VALUES ( '2026-01-01' , 100 ), ( '2026-02-01' , 150 ), ( '2026-03-01' , 120 ), ( '2026-04-01' , 200 ); Family 1: Aggregate functions, now with a window You already know SUM and AVG . Adding OVER (ORDER BY ...) turns them into tools that GROUP BY cannot imitate. Running totals. A running (cumulative) total adds up values as you move down the rows: SELECT month , revenue , SUM ( revenue ) OVER ( ORDER BY month ) AS running_total FROM monthly_sales ; month revenue running_total 2026-01-01 100 100 2026-02-01 150 250 2026-03-01 120 370 2026-04-01 200 570 The ORDER BY inside OVER tells SQL to sum from the first row up to the current row . Moving averages. The frame clause lets you limit the window to a few rows around the current one. Here is a 3-month moving average (the current month plus the two before it): SELECT month , revenue , ROUND ( AVG ( revenue ) OVER ( ORDER BY month ROWS BETWEEN 2 PRECEDING AND CURRENT ROW ), 2 ) AS moving_avg_3m FROM monthly_sales ; month revenue moving_avg_3m 2026-01-01 100 100.00 2026-02-01 150 125.00 2026-03-01 120 123.33 2026-04-01 200 156.67 In the first two months there are fewer than three rows available, so SQL averages whatever exists. Family 2: Rank functions Rank functions put rows in order. Three of them are easy to mix up, so let's rank employees by salary within each department : SELECT name , department , salary , ROW_NUMBER () OVER ( PARTITION BY department ORDER BY salary DESC , name ) AS row_num , RANK () OVER ( PARTITION BY department ORDER BY salary DESC ) AS rnk , DENSE_RANK () OVER ( PARTITION BY department ORDER BY salary DESC ) AS dense_rnk FROM employees ORDER BY department , salary DESC , name ; name department salary row_num rnk dense_rnk David Engineering 7000 1 1 1 Farid Engineering 6500 2 2 2 Esther Engineering 6000 3 3 3 Grace HR 4500 1 1 1 Henry HR 3500 2 2 2 Amina Sales 5000 1 1 1 Brian Sales 4000 2 2 2 Chloe Sales 4000 3 2 2 Ivan Sales 3000 4 4 3 Look at the Sales team, where Brian and Chloe are tied at 4000: ROW_NUMBER() never repeats. It hands out 1, 2, 3, 4 and breaks ties arbitrarily (which is why we added name to make it deterministic). RANK() gives tied rows the same rank, then skips numbers. Brian and Chloe are both 2, and Ivan jumps to 4. DENSE_RANK() gives tied rows the same rank and does not skip . Brian and Chloe are both 2, and Ivan is 3. Notice that the parentheses are empty, exactly as the diagram promised. Rank functions do not take an argument, so the ORDER BY inside OVER is what tells them what to rank by. The rest of the rank family works the same way: NTILE(n) splits the rows into n roughly equal buckets ( NTILE(4) gives you quartiles), while PERCENT_RANK() and CUME_DIST() describe a row's relative position as a fraction. Family 3: Value functions Value functions fetch a value from another row and bring it onto the current one. LAG and LEAD . Want to know how this month compares with last month? Before window functions you would self-join the table to itself. Now: SELECT month , revenue , LAG ( revenue ) OVER ( ORDER BY month ) AS prev_month , revenue - LAG ( revenue ) OVER ( ORDER BY month ) AS change_vs_prev FROM monthly_sales ; month revenue prev_month change_vs_prev 2026-01-01 100 NULL NULL 2026-02-01 150 100 50 2026-03-01 120 150 -30 2026-04-01 200 120 80 LAG looks backward and LEAD looks forward. The first row has no previous month, so it returns NULL . (Remember the optional offset and default from the diagram: LAG(revenue, 1, 0) would return 0 instead of NULL .) FIRST_VALUE and LAST_VALUE . These return the first or last value in the window. For example, who is the top earner and the lowest earner in each department, shown next to every employee? SELECT name , department , salary , FIRST_VALUE ( name ) OVER ( PARTITION BY department ORDER BY salary DESC ) AS top_earner , LAST_VALUE ( name ) OVER ( PARTITION BY department ORDER BY salary DESC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING ) AS lowest_earner FROM employees ORDER BY department , salary DESC , name ; name department salary top_earner lowest_earner David Engineering 7000 David Esther Farid Engineering 6500 David Esther Esther Engineering 6000 David Esther Grace HR 4500 Grace Henry Henry HR 3500 Grace Henry Amina Sales 5000 Amina Ivan Brian Sales 4000 Amina Ivan Chloe Sales 4000 Amina Ivan Ivan Sales 3000 Amina Ivan Why the long frame on LAST_VALUE ? When a window has an ORDER BY and no explicit frame, the default frame stops at the current row . So without ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING , LAST_VALUE would simply return the current row's own value, which surprises almost everyone the first time. A common gotcha: you cannot filter on a window function directly Say you want the highest-paid employee in each department . It is tempting to write: -- This will NOT work SELECT name , department , salary FROM employees WHERE ROW_NUMBER () OVER ( PARTITION BY department ORDER BY salary DESC ) = 1 ; SQL evaluates WHERE before window functions are calculated, so the database does not know the row number yet. The fix is to compute the window function first, in a CTE or subquery, and then filter: WITH ranked AS ( SELECT name , department , salary , ROW_NUMBER () OVER ( PARTITION BY department ORDER BY salary DESC ) AS rn FROM employees ) SELECT name , department , salary FROM ranked WHERE rn = 1 ; name department salary David Engineering 7000 Grace HR 4500 Amina Sales 5000 The rough order SQL follows is: FROM → WHERE → GROUP BY → aggregates → HAVING → window functions → SELECT → ORDER BY . Window functions can only appear in SELECT and ORDER BY . So, which one should I use? Ask yourself one question: \"Do I still need the individual rows in my result?\" No, I only want the summary (total sales per region, number of customers per country): use an aggregate function with GROUP BY . You are happy for the granularity to change. Yes, I want the detail plus a calculation across related rows (each employee vs their department average, a rank within a group, a running total, the change from the previous row): use a window function . The granularity stays the same. They are not rivals. Aggregates summarize, and window functions add context to rows you want to keep. Most real-world analytical queries use both. Quick recap Aggregate functions collapse rows into one row per group and need GROUP BY . The granularity changes. Window functions calculate over a \"window\" of rows and return a value for every row. The granularity stays the same. OVER() is what turns a function into a window function. GROUP BY only works with aggregate functions. Window functions add two more families: rank functions ( ROW_NUMBER , RANK , DENSE_RANK , NTILE , ...) and value functions ( LAG , LEAD , FIRST_VALUE , LAST_VALUE ). PARTITION BY splits the data into groups, ORDER BY sets the sequence, and the frame clause narrows how many rows each row can see. ROW_NUMBER , RANK and DENSE_RANK differ only in how they treat ties. You cannot filter on a window function in WHERE . Wrap it in a CTE or subquery first. Keep learning If you prefer to learn by watching, this video is a full recap of window functions: Window functions recap on YouTube . The diagrams in this article are screenshots from that video. Try modifying the examples above: change the partition, flip the sort order, or add a frame clause. Window functions click fastest when you break a query and see what changes. Happy querying!",
+            "url": "https://dev.to/joseph_mwangi_3ae1f57a132/window-functions-vs-aggregate-functions-in-sql-a-beginner-friendly-guide-i72",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-20T14:23:19+00:00",
+            "collected_at": "2026-09-20T15:11:33.553513+00:00"
+        },
+        {
+            "id": "8489d9a5256c3a325de5ca16f7552b7678e570e38a59114c9b755ee53d3c8a9b",
+            "title": "How to Scope an AI Engineering Project That Can Actually Be Finished",
+            "description": "A lot of AI project ideas sound impressive but are difficult to finish. The problem is usually not the model. It is the scope. A strong student project has a clear input, a measurable output, a realistic dataset, and one main technical question. This tutorial shows a practical way to turn a broad idea into a project that can be implemented, tested, and explained. 1. Start with a decision, not a technology \"Build an AI system with deep learning\" is not a project objective. It names a technology but does not say what the system should decide. Use this format: Given input X , predict or classify output Y so that user Z can take action A . Example: Given vibration and temperature readings from a small motor, predict whether the motor is operating normally or showing an early fault so a lab technician can schedule an inspection. This statement immediately defines the input, output, user, and practical value. 2. Choose one primary task Most unfinished projects try to solve several tasks at once. Pick one: Classification: normal vs. faulty equipment Regression: remaining useful life in hours Anomaly detection: unusual sensor behaviour Forecasting: next-day energy demand Computer vision: identify a surface defect NLP: classify maintenance notes by issue type Extra features can become stretch goals. They should not be required for the first working version. 3. Audit the data before choosing the model Before writing training code, answer these questions: Where will the data come from? Does each record have the fields needed for the target? Are labels available and trustworthy? How many examples exist for every class? Can the data be used legally and ethically? Is the dataset small enough to process with available hardware? Could records from the same machine, person, or time period leak into both training and testing sets? Data leakage is especially common in engineering datasets. A random row split may give the model nearly identical readings from the same machine in both sets. A group-based or time-based split is often more realistic. 4. Build a baseline first Do not begin with the most complex neural network. For a sensor classification project, useful baselines may include: A rule based on an engineering threshold Logistic regression A decision tree Random forest The baseline gives you something to compare against. If a complex model improves accuracy by only 0.5% but needs ten times more computation, the simpler model may be the better engineering solution. A minimal baseline in Python could look like this: from sklearn.ensemble import RandomForestClassifier from sklearn.metrics import classification_report from sklearn.model_selection import GroupShuffleSplit X = data [[ \" temperature \" , \" rms_vibration \" , \" current \" ]] y = data [ \" fault_label \" ] groups = data [ \" machine_id \" ] splitter = GroupShuffleSplit ( test_size = 0.2 , n_splits = 1 , random_state = 42 ) train_idx , test_idx = next ( splitter . split ( X , y , groups = groups )) model = RandomForestClassifier ( n_estimators = 200 , class_weight = \" balanced \" , random_state = 42 , ) model . fit ( X . iloc [ train_idx ], y . iloc [ train_idx ]) predictions = model . predict ( X . iloc [ test_idx ]) print ( classification_report ( y . iloc [ test_idx ], predictions )) The important choice is not the number of trees. It is the group-aware split, because it tests the model on machines it did not see during training. 5. Select a metric that matches the failure cost Accuracy is not always enough. Imagine that only 5% of motor readings represent a fault. A model that predicts \"normal\" every time reaches 95% accuracy but detects no faults. Choose metrics based on the project risk: Precision matters when false alarms are costly. Recall matters when missing a real fault is dangerous. F1 score is useful when both error types matter. Mean absolute error works well for understandable regression error. A confusion matrix shows which classes the model mixes up. Write the success condition before training. For example: The first version should achieve at least 80% recall for the fault class while keeping precision above 70% on machines excluded from training. Now the evaluation has a clear meaning. 6. Define the minimum viable demonstration A finished AI engineering project needs more than a notebook. The minimum demonstration should include: A documented dataset and data dictionary Reproducible preprocessing A baseline model A final model An evaluation report One working input-to-output demo Limitations and failure cases A README with setup and run steps The demo can be a small Streamlit interface, a FastAPI endpoint, or a script that accepts a CSV file. Choose the lightest interface that proves the system works. 7. Plan milestones around evidence A realistic eight-week plan might be: Week 1: Problem and data feasibility Write the decision statement, identify users, confirm data access, and define the target variable. Week 2: Data audit Check missing values, label balance, sampling frequency, leakage risks, and ethical constraints. Week 3: Baseline Create the split strategy, train a simple model, and save initial metrics. Weeks 4–5: Improvement Engineer features, test one or two model families, and track experiments. Week 6: Evaluation Run the final test, inspect errors, and document limitations. Week 7: Demonstration Connect preprocessing and inference to a minimal interface. Week 8: Documentation Finish the README, architecture diagram, results table, setup guide, and presentation. Each milestone should produce evidence. \"Worked on model\" is vague. \"Compared random forest and gradient boosting on a held-out machine group\" is verifiable. 8. Control the scope with a cut list Before development, create three lists: Must have The smallest system that proves the main objective. Should have Useful improvements that can be added after the baseline works. Could have Dashboard polish, mobile deployment, real-time streaming, multiple models, cloud infrastructure, or extra sensors. When time becomes limited, remove items from \"Could have\" first. Do not weaken the core evaluation. 9. Document limitations honestly A credible project explains where it may fail. Examples include: The dataset contains only laboratory conditions. Some fault classes have few examples. Sensor calibration differs between machines. The model has not been tested in real-time operation. The output supports inspection and does not replace a qualified engineer. Limitations do not make a project weak. They show that the developer understands the boundary between a prototype and a production system. A practical project-scoping checklist Before committing to an idea, verify that you can answer \"yes\" to most of these: Is the user and decision clear? Can the main task be described in one sentence? Is a legitimate dataset available? Is there a suitable baseline? Is the evaluation split realistic? Does the chosen metric reflect the cost of errors? Can a working demo be built with available time and hardware? Can another person reproduce the result? Are limitations documented? For a wider set of starting points across computer science and engineering, explore these AI and machine learning project ideas and then apply the scoping method above to reduce one idea to a testable first version. A smaller project with trustworthy evaluation is more valuable than a large project that never reaches a reproducible result.",
+            "url": "https://dev.to/friedengineers/how-to-scope-an-ai-engineering-project-that-can-actually-be-finished-5cbl",
+            "source": "DEV Community",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "deep_learning",
+                "developpement",
+                "git",
+                "machine_learning",
+                "programmation",
+                "python",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-09-20T14:23:11+00:00",
+            "collected_at": "2026-09-20T15:11:33.554342+00:00"
+        },
+        {
+            "id": "5f97e5fa155e05b2944768c7743bca9d983995720d9fa0cc5b0b0a3fe964130f",
+            "title": "(d+027) Shader",
+            "description": "업그레이드 삼각형 한줄한줄 그래픽스 API에 익숙해지고 있다. 코드를 이해하는데 한줄한줄 의미가 너무 커서 코딩을 처음 배우는 듯한 기분이 들곤한다. 새로운 단어와 그 개념에 대한 이해가 필요한 부분이라서 작동원리와 함께 약간의 암기가 필요하다. 시험을 대비하는 것은 아니기 때문에 외우는 것에 거부감은 없지만 새롭게 제시하는 단어들은 아직 입에 잘 붙지 않는다. 그냥 넘어가기에는 다음 챕터를 이해하기 위해서는 아무래도 머릿속에 잘 담아두는 것이 좋기는 한데 에이징 이슈 덕분인지 꾸준한 반복학습이 필요하다. 삼각형 돌리기에 필요한 지식 몇 개 안되는 좌표값과 색상값을 화면에서 회전시키기 위해서 필요한 코드의 줄 수는 럭키 넘버 777 이다. 777줄이 모두 엄청난 의미를 가지진 않겠지만 그 동안 겪어왔던 개발적 지식보다는 훨씬 더 많은 것들을 포함하고 있다고 생각한다. 외우는 것이 자신없어서 원리와 흐름을 익히는 편인데 그래픽스 프로그래밍은 상당히 추상화가 많이 되어 있어 코드 한줄의 의미를 파악하기 위해서 많은 배경지식이 필요했다. 기세좋게 OpenGL 정도는 쉽게 익힐수 있을줄 알았는데 그 야말로 벽같은 기분이 들곤한다. 처음 apple 의 swift 를 접할때 느꼈던 제 3의 벽을 오랜만에 느끼게 되었다. swift 를 접하기 전에는 java로만 개발을 해왔던 덕분인지 모든 것을 class 화 하여 생각했는데, 함수를 변수로 생각할수 있다는 개념이 그 당시의 나로서는 받아들이기 어려운 이상한 나라의 원리처럼 느껴졌다. 그 당시에는 OOP로 세상의 모든 것을 객체화하여 사유할수 있다는 자신감이 흘러넘쳤다. 그런 마음가짐으로 접한 swift 였는데 기반지식이 무너지며 새로운 개념을 익히는데 거부감이 들어 도통 제대로 배우기가 쉽지 않았었다. 마음을 열고 모르는게 당연하다고 생각하면 쉬운 일이었는데 그 동안 배워왔던 룰로 해석할수 없는 부분을 도저히 용납할 수 없었던 것 같다. 어쩌면 자신감이 조금 상했었다. 아무튼... 지금 배우는 생소한 개념들을 이제는 그냥 그렇구나 하면서 기존의 지식을 고집하지 않는 조금은 여유로운 사람이 된 것 같은 기분이 든다. 해내고야 말 거야라는 과거의 나보다는 조바심이 줄어든 기분이 들어 오히려 배움에 있어 더 유연해진것 같다. 과도한 승부욕으로 오히려 나 스스로를 피곤하게 만들었는데 지금은 어려운것이 있다면 어려운대로 재밌게 느껴진다. 그리고 예전보다 새로운 지식을 찾아 배우는 것에 어려움이 덜해졌다. 구글링을 넘이 이제는 원하는 질문에 비교적 정확하게 답해주는 AI 가 있기 때문인것 같다. 혼자서 그래픽스를 배우라고 했으면 아마 지금보다 훨씬 더 오랜 시간 공부에 매진을 했어야 할 것 같다. 지금은 모르는 지점을 정확하게 배울수 있어 나만의 템포로 나만의 스케줄대로 최적화된 교육을 받는 기분이 든다.",
+            "url": "https://dev.to/ciaolee00/d027-shader-1mi1",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "java",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-20T14:21:56+00:00",
+            "collected_at": "2026-09-20T15:11:33.554511+00:00"
+        },
+        {
+            "id": "9a6b369a87dbe33258f7bdb7ec8f9ff55124a1c7f392a208fd0bace7ff7b36b6",
+            "title": "A Little More Orange: Saylor Signals Fresh Strategy Bitcoin Buy",
+            "description": "Michael Saylor has revived speculation about another Strategy bitcoin purchase with a new “orange” signal and holdings chart. The post follows a two-week buying pause while the company retained 845,050 BTC and billions in cash. Saylor Drops Another Bitcoin Purchase Signal Another large corporate bitcoin purchase could be approaching after Strategy Inc. (Nasdaq: MSTR) Executive […]",
+            "url": "https://news.bitcoin.com/featured/a-little-more-orange-saylor-signals-fresh-strategy-bitcoin-buy/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-20T14:20:40+00:00",
+            "collected_at": "2026-09-20T15:11:46.998102+00:00"
+        },
+        {
+            "id": "1cbc79eb6037c5f885e1775a45f409e2b367453bc636483a65de65e3f4ca257e",
+            "title": "Traditional Coding vs Agentic Coding: The Flow State Problem",
+            "description": "One of the things I've always enjoyed about coding is getting completely locked into a problem. You know what you're building, each small obstacle leads to the next decision, and you stop noticing how much time has passed. With agentic coding, I don't always get that feeling. I can produce more code and still feel less connected to the project. I don't think that means AI ruined coding. I use it every day. But the way many of us start using it replaces the tight feedback loop that made coding satisfying with a prompt, a wait, a notification, and a context switch. The workflow deserves a closer look. Prefer to watch? I walk through these workflows in my video on traditional coding, agentic coding, and flow state . Why manual coding makes it easier to stay involved When you write code manually, you move through a fairly tight loop: think, write, run, observe, adjust. You start with a feature and work through the details. Which files need to change? How does the data move through the application? What should happen when someone submits the form? Then you write enough code to try it. Maybe it works. Maybe it throws an error. Maybe it technically works but doesn't behave the way you imagined. Whatever happens, you have something to respond to. Each result gives you something to respond to, keeping the next decision close to the last one. That loop can repeat dozens of times while you build a feature. As you get into it, you stop consciously moving between planning, coding, and testing. You're just solving the problem in front of you. Manual coding has plenty of interruptions too. Builds take time, documentation sends you down rabbit holes, and sometimes you're simply stuck. But the work itself keeps asking you to make the next decision. For me, that involvement has always been part of the reward. Getting a difficult feature working feels good because I experienced the little decisions and breakthroughs that got it there. What changes when an agent takes over With an agent, the planning may look similar. You have an idea, a project plan, and a feature to build. Then you describe the feature and hand it off. Now you wait. You're probably not going to sit there watching the agent work. You check your email, open another tab, or move to another project. Desktop tools make that especially easy. Project A is running, so you prompt project B. While that's running, you start something in project C. Eventually, project A finishes. Now you have to remember what you asked for, what you expected, and which parts of the application might be affected. You review the changes, test the result, and find something that needs adjusting. You send another prompt. While you're doing that, project C finishes. In the beginning, this can feel like having superpowers. You have several agents working at once, and things that once took days appear in minutes. The amount of output is exciting. But I've found that it can also leave me scattered. Instead of spending two hours working through one difficult problem, I spend those hours repeatedly remembering where I left off in several different problems. An illustration of fragmented attention, not measured productivity data. The colored rows represent different projects. The work is moving, but I'm never fully settled into any of it. AI coding gives your brain repeated opportunities to leave. Each project has details you need to keep in your head: the current feature, the relevant files, the unresolved questions, and the decisions that brought you here. Returning to a project means rebuilding enough of that understanding to judge what the agent did. You reread files. You forget why an approach was chosen. You overlook a change that conflicts with an earlier decision. None of those moments seems like a big deal on its own, but together they can make the whole process tiring. Your attention also starts following notifications. You switch because an agent finished, rather than because you reached a sensible stopping point. Bigger handoffs can weaken your understanding The other thing I notice is a loss of ownership. That doesn't mean you did nothing because an agent wrote the code. You had the idea, planned the work, directed the agent, and decided whether the result was acceptable. Those are real contributions. But the bigger the task you hand off, the more decisions arrive without your involvement. An authentication feature might include choices about the user model, validation, error handling, session management, and how the interface responds. If all of that appears in one large diff, you have a lot to understand before you can confidently accept it. You can review the result, but you didn't follow how those decisions developed. That difference becomes noticeable when something needs to change. You may know the feature works without knowing where its assumptions live. One-shotting an entire application takes this further. You can end up with something that looks convincing while leaving you with a codebase you barely understand. For me, that distance affects both the quality of the work and how satisfying it feels to build. A workflow that keeps me involved I don't have a perfect system that will put everyone into a flow state. I'm still figuring this out myself. But a few changes have helped me stay closer to the code without giving up the useful parts of AI. Keep each task small enough to understand and review Instead of asking an agent to build an entire authentication system, I might start with the user model. I review it and check that the fields match what the application needs. Then I ask for the registration endpoint, test it, and review that change before moving on. Smaller requests create opportunities to understand and redirect the implementation before moving on. The exact size of a task depends on the project. An experienced developer working in a familiar codebase may be comfortable handing off a complete feature. Someone learning the stack may need smaller steps. The point is to choose a checkpoint you can meaningfully review. If the result is too large for you to understand the important decisions, the handoff was probably too large. Notice the difference between \"build authentication\" and \"create the registration endpoint using this user model.\" The second request connects you to the structure of the software. You're thinking about what the application needs and how the pieces fit together. That's one reason fundamentals still matter. You need to understand models, routes, endpoints, components, and data flow well enough to ask useful questions and recognize when the implementation is wrong. Some people will say this defeats the purpose. If the agent can build the entire feature, why break it into smaller requests? Because generating the most code in the shortest time isn't always my goal. I also want to understand what I'm building and be able to change it myself. This is the thinking behind AI Blueprint , the open-source AI coding workflow framework I built. It gives the agent a structure for planning and building one feature at a time, with specs, project context, and completed history kept in readable files alongside the code. You can inspect the workflow and adapt it to your own projects. The AI Blueprint website shows how the workflow fits together. The GitHub repo has the source and setup instructions. You don't have to use my exact setup. It's one example of putting these ideas into practice; the part that matters is choosing checkpoints that keep you involved. Stay with the project while the agent works When the agent starts processing, I try not to automatically jump into something unrelated. There's usually something useful I can do within the same project. I can read the surrounding code, think through an edge case, prepare a test, or check the current task against the plan. I don't need to watch every line appear. I just want to keep the problem fresh enough that I can make sense of the result when it arrives. If I'm waiting on project A, immediately loading project B into my head makes it harder to return. Staying with project A gives me a better chance of keeping some continuity. Review while the context is fresh When the agent finishes, I look at the diff and test the behavior before moving on. Did it solve the problem I asked it to solve? Did it change unrelated files? Does the implementation fit the existing code? Do I understand the decisions well enough to work on it manually? If something needs adjusting, I'd rather catch it now, while I still remember what I wanted and why. Letting complicated agent tasks pile up creates another kind of backlog. The code may be written, but I still have to understand and verify it. Leaving that until later doesn't remove the work; it gives me more to reconstruct when I return. Use parallel agents without following every notification I'm not against parallel agents. They can be useful when they're investigating related parts of a project or handling work I can review at a planned checkpoint. The problem is having several unrelated projects compete for my attention throughout the day. The number of agents matters less than what their work demands from me. Several agents contributing to one clear goal may be manageable. Three agents working on three different applications can leave me constantly switching between unrelated decisions. I want to choose when I review background work, rather than let every completion notification choose for me. What I'm trying to preserve The workflow I'm aiming for feels closer to working with a fast pair programmer. The agent handles a lot of implementation, while I stay involved in the decisions and feedback. Will that produce as much raw code as opening ten tabs and handing off ten features? Probably not. But the amount of code generated tells me very little about whether I'm building something good. I care about whether the result works, whether I understand it, and whether I can maintain it without asking an agent to explain my own application every time I return. I'd also be lying if I said this gives me exactly the same satisfaction as writing code manually. It doesn't. But it feels much better than handing off huge tasks and coming back to a pile of changes. I know the product better. I can jump in and work on a feature myself because I understand where things are and why they were built that way. If you've been getting more output from AI while enjoying the work less, try changing the size of the handoff. Pick a checkpoint you can understand, stay with the project while the agent works, and review the result before moving on. That's the experiment I'm still running: finding how much I can delegate while keeping the involvement that made me enjoy coding in the first place. Adapted from my video, Traditional Coding vs Agentic Coding: The Flow State Problem . Workflow illustrations are frames from the video. The AI Blueprint screenshot is from its website.",
+            "url": "https://dev.to/bradtraversy/traditional-coding-vs-agentic-coding-the-flow-state-problem-57p5",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "git",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-20T14:19:20+00:00",
+            "collected_at": "2026-09-20T15:11:33.555737+00:00"
+        },
+        {
+            "id": "0285d6725ea34976a9ab431d1872a3c3cdd208d1d09df66dafd29fa419612f01",
+            "title": "Software sandboxing: The basics (2025)",
+            "description": "Comments",
+            "url": "https://blog.emilua.org/2025/01/12/software-sandboxing-basics/",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-09-20T14:13:11+00:00",
+            "collected_at": "2026-09-20T15:11:33.353534+00:00"
+        },
+        {
+            "id": "20c9213dc91fb1b17fe2e4fbabd9e7a9e2f70e5ec2d24ddda9009d42f331d5e9",
+            "title": "Malicious npm packages evade install-script defenses at runtime",
+            "description": "An ongoing npm malware campaign involving the 'indexed-btree' package shows how threat actors bypass supply chain defenses by hiding malicious code in a package's normal runtime behavior rather than in installation scripts. [...]",
+            "url": "https://www.bleepingcomputer.com/news/security/malicious-npm-packages-evade-install-script-defenses-at-runtime/",
+            "source": "BleepingComputer",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "malware",
+                "ransomware"
+            ],
+            "published_at": "2026-09-20T14:11:21+00:00",
+            "collected_at": "2026-09-20T15:11:29.748141+00:00"
+        },
+        {
+            "id": "dbef8050c7bcb14194360b77f9f5af7b6717cdf03d9c095e65c1adbb48ff4e28",
+            "title": "The PC gaming ray tracing obsession began with the first RTX 20 graphics cards released on this day in 2018 — the GeForce RTX 2080 and 2080 Ti led the charge, but games were thin on the ground",
+            "description": "Nvidia’s Turing GPU became available to enthusiasts for the first time on this day eight years ago.",
+            "url": "https://www.tomshardware.com/pc-components/gpus/the-pc-gaming-ray-tracing-obsession-began-with-the-first-rtx-20-graphics-cards-released-on-this-day-in-2018-the-geforce-rtx-2080-and-2080-ti-led-the-charge-but-games-were-thin-on-the-ground",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "nvidia",
+                "pc"
+            ],
+            "published_at": "2026-09-20T14:05:31+00:00",
+            "collected_at": "2026-09-20T15:11:35.619295+00:00"
+        },
+        {
+            "id": "12adea0ef4c21d30ba5ff779b7807ccf769f9f3247af7c0ff6252c1ad378ea3d",
+            "title": "system design in depth – 200 topics, 118 diagrams, interactive demos",
+            "description": "Comments",
+            "url": "https://system-design-in-depth.pages.dev",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-20T14:01:24+00:00",
+            "collected_at": "2026-09-20T15:11:33.142054+00:00"
+        },
+        {
+            "id": "dbb148570dcfc2a042b2addbbf0ec707ac8cba96538afbb488c4ccf3fd15efcc",
+            "title": "6 days left to get ahead at TechCrunch Disrupt 2026",
+            "description": "Current ticket pricing ends in 6 days on Sept. 25 at 11:59 p.m. PT. Join 10,000+ founders, investors and tech leaders at Disrupt and save up to $200 on your ticket until then.",
+            "url": "https://techcrunch.com/2026/09/20/6-days-left-to-get-ahead-at-techcrunch-disrupt-2026/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-09-20T14:00:00+00:00",
+            "collected_at": "2026-09-20T15:11:31.400288+00:00"
+        },
+        {
+            "id": "6e814a5374af3008ae30700e6ce0e2dc7e66eb6185e5f21b9823c92ab15999a5",
+            "title": "Researchers build a drone that navigates with physical whiskers to operate in dark, dusty or smoky places where cameras or GPS can fail — sub-100 gram drones run 34KB software to enable sub-millimeter precision",
+            "description": "Whiskers attached to three pressure sensors at their base could help drones find their way around their environment purely through touch. This lightweight system emulates the vibrissae found on mice and other small mammals that help them navigate in the dark.",
+            "url": "https://www.tomshardware.com/tech-industry/drones/researchers-build-a-drone-that-navigates-with-physical-whiskers-to-operate-in-dark-dusty-or-smoky-places-where-cameras-or-gps-can-fail-sub-100-gram-drones-run-34kb-software-to-enable-sub-millimeter-precision",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "pc"
+            ],
+            "published_at": "2026-09-20T13:48:11+00:00",
+            "collected_at": "2026-09-20T15:11:35.619423+00:00"
+        },
+        {
+            "id": "a547180d0f94253daa370a93360b9942c68f33f43151e11b3fdd3974874ccc9f",
+            "title": "Bitcoin Price Hits an $82K Wall After a Wild $7,000 Comeback",
+            "description": "Bitcoin’s price is sitting in an interesting spot Sunday morning, caught between a daily uptrend that still looks intact and a shorter-term rally that has plainly run out of steam beneath $82,000. Trading around $80,438 to $80,443 and down roughly 1% over 24 hours, BTC remains above nearly every major moving average tracked on the […]",
+            "url": "https://news.bitcoin.com/market-updates/bitcoin-price-hits-an-82k-wall-after-a-wild-7000-comeback/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-20T13:45:07+00:00",
+            "collected_at": "2026-09-20T15:11:46.998206+00:00"
+        },
+        {
+            "id": "8c076ed8dbe8f1c0e4fd801e28e0e8ba389d081903e4b75eb60616fdad7bde9c",
+            "title": "Final Fantasy VII Revelation might use upwards of 200 GB and requires an additional download — latest entry in the series of remakes may set a new record for the size of a base install",
+            "description": "Final Fantasy VII Revelation might use upwards of 200 GB and requires an additional download — latest entry in the series of remakes may set a new record for the size of a base install",
+            "url": "https://www.tomshardware.com/video-games/final-fantasy-vii-revelation-might-use-upwards-of-200-gb-and-requires-an-additional-download-latest-entry-in-the-series-of-remakes-may-set-a-new-record-for-the-size-of-a-base-install",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "pc"
+            ],
+            "published_at": "2026-09-20T13:30:00+00:00",
+            "collected_at": "2026-09-20T15:11:35.619516+00:00"
+        },
+        {
+            "id": "506d100fbe8cbd268a5ac03b69fddd899842da43e03ad28c74f55a4b7cbeb90c",
+            "title": "Do birds have accents? the regional differences in birdsong",
+            "description": "Comments",
+            "url": "https://theconversation.com/do-birds-have-accents-the-fascinating-regional-differences-in-birdsong-278108",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-20T13:19:32+00:00",
+            "collected_at": "2026-09-20T15:11:33.142329+00:00"
+        },
+        {
+            "id": "58292849ad5172bdb3e1feddc96c54db2926eb4203879546274d625a889300c5",
+            "title": "Qwen-Image-2.1: Compact, efficient, and unified image creation",
+            "description": "Comments",
+            "url": "https://qwen.ai/blog?id=qwen-image-2.1",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-20T13:09:25+00:00",
+            "collected_at": "2026-09-20T15:11:33.141964+00:00"
+        },
+        {
+            "id": "f43b45bd64ab0b533669fcc996fb6133164fab51bac5f8e228d81ffcf45d3801",
+            "title": "No CLARITY, Plenty of Activity — Week in Review",
+            "description": "This editorial is from this week’s edition of the newsletter Week in Review, sent to subscribers on Friday. Subscribe to the newsletter to get this weekly editorial the second it’s finished. The newsletter also includes the biggest stories of the week, with a comment on each story. Bitcoin and U.S. equities are relatively flat from […]",
+            "url": "https://news.bitcoin.com/opinion-and-analysis/no-clarity-plenty-of-activity-week-in-review/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-20T13:00:09+00:00",
+            "collected_at": "2026-09-20T15:11:46.998298+00:00"
+        },
+        {
+            "id": "6c9d980f03b2a077a4911c776fac4278d7ca8782e312a4e82764c35e1231c60c",
+            "title": "Microsoft patents system to freeze games and inject ads during downtimes — watching commercials earns ad-free playtime credits",
+            "description": "This patent uses the game engine and machine learning to determine the best time to serve an ad.",
+            "url": "https://www.tomshardware.com/video-games/microsoft-patents-system-to-freeze-games-and-inject-ads-during-downtimes-watching-commercials-earns-ad-free-playtime-credits",
+            "source": "Tom's Hardware",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "machine_learning",
+                "pc"
+            ],
+            "published_at": "2026-09-20T13:00:00+00:00",
+            "collected_at": "2026-09-20T15:11:35.619581+00:00"
+        },
+        {
+            "id": "1a14c05650f7b0324f964f86599addc9eade9669d13f467b16265acd261bb2fc",
+            "title": "Prusa CORE One+ INDX review: Time for a 'Tool' change",
+            "description": "Prusa Research reenters the toolchanger category with a little help from Bondtech.",
+            "url": "https://www.tomshardware.com/3d-printing/prusa-core-one-plus-indx-review",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "pc"
+            ],
+            "published_at": "2026-09-20T13:00:00+00:00",
+            "collected_at": "2026-09-20T15:11:35.619632+00:00"
+        },
+        {
+            "id": "23030c7268b264e44e9222e9d2640809eeaeb1fa069ce88eee8e97077f494b2a",
+            "title": "Splatoon Raiders Dev Team Apparently Has No Plans For DLC",
+            "description": "Or updates related to game balance. If you've been wondering about Splatoon Raiders getting any DLC in the future, there's supposedly nothing on the menu right now. Speaking to Famitsu recently, the game's producer Seita Inoue says there are currently no plans for DLC, or updates related to game balance, as this title is designed to be a complete and self-contained experience. About the most players can apparently expect in the immediate future would be fixes for any bugs discovered. Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/news/2026/09/splatoon-raiders-dev-team-apparently-has-no-plans-for-dlc",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-09-20T13:00:00+00:00",
+            "collected_at": "2026-09-20T15:11:45.087265+00:00"
+        },
+        {
+            "id": "242c208378fcfa00d96273acf327df2db73caf9f4b638cbb646bc9d513f1d69b",
+            "title": "Massive 192GB GTA leak reveals early GTA VI map and canceled DLCs — files show liquid nitrogen death for Trevor and scrapped Liberty City expansion",
+            "description": "The massive leak revealed early efforts in the development of GTA VI, as well as unreleased side missions, alternate endings, and even planned DLCs that never came to fruition.",
+            "url": "https://www.tomshardware.com/video-games/massive-192gb-gta-leak-reveals-early-gta-vi-map-and-canceled-dlcs-files-show-liquid-nitrogen-death-for-trevor-and-scrapped-liberty-city-expansion",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "pc"
+            ],
+            "published_at": "2026-09-20T12:35:00+00:00",
+            "collected_at": "2026-09-20T15:11:35.619717+00:00"
+        },
+        {
+            "id": "2676842842894914fb106139a294d9c0bbbb2088220fc2b7d1f0ba209c35482a",
+            "title": "Noctua fans prevent the CAIM1 ‘Anti-AI’ 4K camera from throttling — unusual camera’s processor gets toasty as it records while performing cryptographic calculations",
+            "description": "A premium PC DIY fan brand has announced that one of its prized spinners is being used in an 'Anti-AI' 4K camera to prevent throttling.",
+            "url": "https://www.tomshardware.com/pc-components/air-cooling/noctua-fans-prevent-the-caim1-anti-ai-4k-camera-from-throttling-unusual-cameras-processor-gets-toasty-as-it-records-while-performing-cryptographic-calculations",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "pc"
+            ],
+            "published_at": "2026-09-20T12:20:57+00:00",
+            "collected_at": "2026-09-20T15:11:35.619788+00:00"
+        },
+        {
+            "id": "b728d4142f80e9423b4a64c619bd9082b8fab8379cc542110163fef36c82bcb9",
+            "title": "Chat-based Large Language Models replicate the mechanisms of a psychic's con",
+            "description": "Comments",
+            "url": "https://softwarecrisis.dev/letters/llmentalist/",
+            "source": "Hacker News",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "llm",
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-20T12:20:13+00:00",
+            "collected_at": "2026-09-20T15:11:33.142088+00:00"
+        },
+        {
+            "id": "fe1dafe802e7c4aa07649b45c5f8f582b8be56fd993041a74d2e9ea8320c8f18",
+            "title": "The Millennium Problems for Biology",
+            "description": "Comments",
+            "url": "https://millenniumproblems.bio/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-20T12:17:54+00:00",
+            "collected_at": "2026-09-20T15:11:33.142664+00:00"
+        },
+        {
+            "id": "ad1ea14230c0f8b1fb866ca3f56acd3350921395efeb9beb7afb9a5da715a78b",
+            "title": "North Korea used job interviews to deploy malware on 30,000 devices during coding tests — WaterPlum group loots $10.7 million in crypto and plants persistent RATs",
+            "description": "Multiple government agencies across the world released a warning that North Korean hackers are posting fake jobs to install malware on unsuspecting applicants' computers. They then steal credentials and cryptocurrency from their victims, with over $10 million reported stolen.",
+            "url": "https://www.tomshardware.com/tech-industry/cyber-security/north-korea-used-job-interviews-to-deploy-malware-on-30-000-devices-during-coding-tests-waterplum-group-loots-usd10-7-million-in-crypto-and-plants-persistent-rats",
+            "source": "Tom's Hardware",
+            "category": "cybersecurite",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "malware",
+                "pc"
+            ],
+            "published_at": "2026-09-20T12:10:00+00:00",
+            "collected_at": "2026-09-20T15:11:35.619866+00:00"
+        },
+        {
+            "id": "90b743f2f33280e8a51fd8fe874c2219e612b4484feb779de1238aaa6b284d3c",
+            "title": "How Notion handles concurrent editing with CRDTs",
+            "description": "Comments",
+            "url": "https://www.notion.com/blog/how-notion-handles-concurrent-editing-with-crdts",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-09-20T12:06:29+00:00",
+            "collected_at": "2026-09-20T15:11:33.353873+00:00"
+        },
+        {
+            "id": "8cf078285ecfd72bc9e804fce92ef085064e83041f81320648612b68121eb5bd",
+            "title": "Researchers escape OpenAI Codex sandbox to run commands on host",
+            "description": "Researchers escaped OpenAI's Codex sandbox two ways, one running commands on a developer's machine from its most locked-down mode. OpenAI has patched both. [...]",
+            "url": "https://www.bleepingcomputer.com/news/security/researchers-escape-openai-codex-sandbox-to-run-commands-on-host/",
+            "source": "BleepingComputer",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "malware",
+                "openai",
+                "ransomware"
+            ],
+            "published_at": "2026-09-20T12:00:00+00:00",
+            "collected_at": "2026-09-20T15:11:29.748230+00:00"
+        },
+        {
+            "id": "139f238b9fd8f53c72346d592b0584db52dfafbfd6490c2e745c41bc8d71715a",
+            "title": "Mailbox: Wordcrafting, Backtracking, One-Handed Titles - Nintendo Life Letters",
+            "description": "Issue #40 - September 2026. Welcome back as once again we delve into the treasures contained within the Nintendo Life Mailbox . September's been a busy one, with more games hitting the eShop than you can shake a Deku Stick at, and a deluge of news across two Nintendo Directs in as many days. Lovely stuff. Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/news/2026/09/mailbox-wordcrafting-backtracking-one-handed-titles-nintendo-life-letters",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-09-20T12:00:00+00:00",
+            "collected_at": "2026-09-20T15:11:45.087364+00:00"
+        },
+        {
+            "id": "9c545f160a6b86e718587f2a6a043f6b60986bde1a6fe0f0c166afe2c395816e",
+            "title": "Coinbase, Robinhood, Circle could be early winners of SEC's tokenized-stock push, analysts say",
+            "description": "",
+            "url": "https://www.coindesk.com/business/2026/09/20/coinbase-robinhood-circle-could-be-early-winners-of-sec-s-tokenized-stock-push-analysts-say",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-20T12:00:00+00:00",
+            "collected_at": "2026-09-20T15:11:46.773864+00:00"
+        },
+        {
+            "id": "7cc8ea5eaff60270838ac85498465614553fe66012a681fed98e89c068b0a142",
+            "title": "Crypto traders braced for a total wipeout this week but Bitcoin had other plans",
+            "description": "",
+            "url": "https://www.coindesk.com/markets/2026/09/18/crypto-traders-braced-for-a-total-wipeout-this-week-but-bitcoin-had-other-plans",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-20T12:00:00+00:00",
+            "collected_at": "2026-09-20T15:11:46.773902+00:00"
+        },
+        {
+            "id": "04c640306409757cf89f3a9fd48a94b032cd16bee5f4a270734a0b940943fbfd",
+            "title": "Kash Patel says that AI use at the FBI has 'increased by 605%' since he became director — claims that every major tech player is 'embedded' in the agency",
+            "description": "FBI Director Kash Patel stated in an interview that he's responsible for a \"605% increase\" in the bureau's usage of AI. The problem is that it's hard to pin down what the figure refers to.",
+            "url": "https://www.tomshardware.com/tech-industry/artificial-intelligence/kash-patel-says-that-ai-use-at-the-fbi-has-increased-by-605-percent-since-he-became-director-claims-that-every-major-tech-player-is-embedded-in-the-agency",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "pc"
+            ],
+            "published_at": "2026-09-20T11:45:00+00:00",
+            "collected_at": "2026-09-20T15:11:35.619948+00:00"
+        },
+        {
+            "id": "34acb0b6c0a7c0f9b6123a023632efdccaffffdee21fc648036f6c91ac463e20",
+            "title": "Schiff Warns Tokenized Stocks Will Siphon Liquidity From Bitcoin",
+            "description": "The gold bug argued that the market reaction to the new official push for tokenized stocks made no sense, as these would constitute another investment source competing with bitcoin for available liquidity, comparing the latter to a Ponzi scheme. Peter Schiff Says Latest Bitcoin Rally Makes ‘No Sense’ The Securities and Exchange Commission’s (SEC) latest […]",
+            "url": "https://news.bitcoin.com/crypto-news/schiff-warns-tokenized-stocks-will-siphon-liquidity-from-bitcoin/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-20T11:30:04+00:00",
+            "collected_at": "2026-09-20T15:11:46.998410+00:00"
+        },
+        {
+            "id": "3960a03b9027a1265599f072fa833240237ea48448bd087ac4f8fca9c1f83e1e",
+            "title": "Autonomous NATO strike drone uses Nvidia Jetson Orin Nano to independently pick and bomb targets — Swedish startup's attack drones run small AI model, require no human input and zero external comms",
+            "description": "Drones built with small, non-frontier computer-vision models autonomously identified and attacked targets in a recent demo.",
+            "url": "https://www.tomshardware.com/tech-industry/drones/autonomous-strike-drone-uses-nvidia-jetson-orin-nano-to-independently-pick-and-bomb-targets-swedish-startups-attack-drones-run-small-ai-model-require-no-human-input-and-zero-external-comms",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "nvidia",
+                "pc"
+            ],
+            "published_at": "2026-09-20T11:20:00+00:00",
+            "collected_at": "2026-09-20T15:11:35.620029+00:00"
+        },
+        {
+            "id": "736f424f3d22ba2220a840631df5c2bd181dbcf8d40f383714dc1e728a11091a",
+            "title": "An undercover Google analyst infiltrated a notorious supply-chain hacking gang",
+            "description": "Google’s threat intelligence group said it had a mole inside TeamPCP's inner circle.",
+            "url": "https://arstechnica.com/security/2026/09/an-undercover-google-analyst-infiltrated-a-notorious-supply-chain-hacking-gang/",
+            "source": "Ars Technica",
+            "category": "technologie",
+            "tags": [
+                "informatique",
+                "innovation",
+                "intel",
+                "technologie"
+            ],
+            "published_at": "2026-09-20T11:07:00+00:00",
+            "collected_at": "2026-09-20T15:11:31.274406+00:00"
+        },
+        {
+            "id": "de8f3bc8e9210ac6c1591c64751872a3f045dbe4e62075dd99ba65bec1a92997",
+            "title": "Don’t buy a $500 dumbphone. These apps will make your Android phone calm",
+            "description": "I almost spent $500 on a phone that does less. Instead, I fixed the one already in my pocket.",
+            "url": "https://www.androidauthority.com/dont-buy-dumbphone-use-these-android-apps-instead-3711208/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-09-20T11:00:45+00:00",
+            "collected_at": "2026-09-20T15:11:40.896663+00:00"
+        },
+        {
+            "id": "570ada6923da9a8ba18e48b76d929c3441428017667923c216e822b9d774729f",
+            "title": "Jensen Huang says there is '0% chance' AI destroys the world by 2030 — 'We should go as fast as we can, irrespective of anyone else,' dismisses Anthropic doom warnings and rejects new regulations",
+            "description": "Chief executive of Nvidia claims that fears that AI will destroy humanity in the coming years are unsubstantiated as safety mechanisms can preserve that.",
+            "url": "https://www.tomshardware.com/tech-industry/artificial-intelligence/jensen-huang-says-there-is-0-percent-chance-ai-destroys-the-world-by-2030-we-should-go-as-fast-as-we-can-irrespective-of-anyone-else-dismisses-anthropic-doom-warnings-and-rejects-new-regulations",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "anthropic",
+                "cpu",
+                "gpu",
+                "hardware",
+                "nvidia",
+                "pc"
+            ],
+            "published_at": "2026-09-20T10:55:00+00:00",
+            "collected_at": "2026-09-20T15:11:35.620115+00:00"
+        },
+        {
+            "id": "4e2919c7b734b60001ab490840a985eae1435ac5b4404624c121ae60c182c348",
+            "title": "Beyond jj: config & tools ecosystem",
+            "description": "Comments",
+            "url": "https://andre.arko.net/2026/09/16/beyond-jj-config-and-tools-ecosystem/",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-09-20T10:51:04+00:00",
+            "collected_at": "2026-09-20T15:11:33.353436+00:00"
+        },
+        {
+            "id": "00eab880916aa100e8ca25bc80a58162964b573bde3f83e50f91e9e5d03ed0cc",
+            "title": "I’ve tested dozens of wireless chargers — this is the first one I actually want to keep using",
+            "description": "The first modular charging system I've used that actually works.",
+            "url": "https://www.androidauthority.com/modular-wireless-charging-system-dailyobjects-node-hands-on-3710655/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-09-20T10:30:42+00:00",
+            "collected_at": "2026-09-20T15:11:40.896724+00:00"
+        },
+        {
+            "id": "1b416247d2a07c47fe5d3265af34fa1ac580199cdfa9aced08309f84b3d5a6ec",
+            "title": "Scammers Use Fake USDT Tokens to Steal From Venezuelan Merchants",
+            "description": "Reports indicate that scammers are taking advantage of the high level of adoption of USDT in Venezuela to send fake USDT tokens as payment. Scammers use fake USDT tokens with zero value to target merchants using self-custody wallets. Fake USDT Tokens Surge for Payments in Venezuela Threat actors are leveraging the high level of adoption […]",
+            "url": "https://news.bitcoin.com/stablecoins/scammers-use-fake-usdt-tokens-to-steal-from-venezuelan-merchants/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-20T10:30:29+00:00",
+            "collected_at": "2026-09-20T15:11:46.998508+00:00"
+        },
+        {
+            "id": "fd6baef22e28aac23eb26c6d1aa60285aa967757fdaf9b10c6f78a8c8fe9da2b",
+            "title": "Putin casts online vote using unlicensed Windows on an American Dell PC — 'Activate Windows' watermark visible in official Kremlin clip, uses foreign Dell PC despite Russian tech mandate",
+            "description": "An official Russian media clip shows Putin voting on a Dell PC with an unlicensed copy of Windows.",
+            "url": "https://www.tomshardware.com/software/windows/putin-casts-online-vote-using-unlicensed-windows-on-an-american-dell-pc-activate-windows-watermark-visible-in-official-kremlin-clip-uses-foreign-dell-pc-despite-russian-tech-mandate",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "pc",
+                "windows"
+            ],
+            "published_at": "2026-09-20T10:30:00+00:00",
+            "collected_at": "2026-09-20T15:11:35.620193+00:00"
+        },
         {
             "id": "a87dd9c26b15586086ed5b41c7a4570b8f03057c44e8c78daf3eeff01596b36d",
             "title": "Building a tested calculator in the Uniface 10 IDE",
@@ -82,6 +880,21 @@
             ],
             "published_at": "2026-09-20T10:00:10+00:00",
             "collected_at": "2026-09-20T10:22:56.438716+00:00"
+        },
+        {
+            "id": "9098b41900784859c19d014f47d900e2a168eb1de6659b34b8c5f48df256cd17",
+            "title": "Don't call it an SUV: The Ferrari Purosangue review",
+            "description": "Unlike previous Ferrari four-seaters, this one is better for humans than cargo.",
+            "url": "https://arstechnica.com/cars/2026/09/dont-call-it-an-suv-the-ferrari-purosangue-review/",
+            "source": "Ars Technica",
+            "category": "technologie",
+            "tags": [
+                "informatique",
+                "innovation",
+                "technologie"
+            ],
+            "published_at": "2026-09-20T10:00:02+00:00",
+            "collected_at": "2026-09-20T15:11:31.274462+00:00"
         },
         {
             "id": "e3b2fdfe9ba28761b88a8f87e6bcd2bed69fdcf66f89fe1c5e7a6b2178a71de1",
@@ -376,6 +1189,22 @@
             ],
             "published_at": "2026-09-20T08:30:41+00:00",
             "collected_at": "2026-09-20T10:23:02.616748+00:00"
+        },
+        {
+            "id": "cc7c96bd5d6ac398b5dba514f1d73c767226d383e64b7de3776e099bcf2aa279",
+            "title": "How Windows turned months of inactivity into a 7-hour update hostage situation",
+            "description": "Windows is getting more efficient. The updates, not so much",
+            "url": "https://www.theregister.com/os-platforms/2026/09/20/how-windows-turned-months-of-inactivity-into-a-7-hour-update-hostage-situation/5297478",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "technologie",
+                "windows"
+            ],
+            "published_at": "2026-09-20T08:14:00+00:00",
+            "collected_at": "2026-09-20T15:11:32.231281+00:00"
         },
         {
             "id": "45ad374c19cc317098aa39e3158ef325fa14142a3f6a57fef48ee30636d76cad",
@@ -940,6 +1769,22 @@
             ],
             "published_at": "2026-09-20T00:10:00+00:00",
             "collected_at": "2026-09-20T02:42:13.242923+00:00"
+        },
+        {
+            "id": "dcee41e47b7577c1ebaa6afa7b9245203667a6ef90c1fecec0f5f4c1afb3095a",
+            "title": "Apple iPhone 18 Pro Camera test",
+            "description": "Comments",
+            "url": "https://www.dxomark.com/apple-iphone-18-pro-camera-test/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "ios",
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-20T00:00:47+00:00",
+            "collected_at": "2026-09-20T15:11:33.142118+00:00"
         },
         {
             "id": "426a17e24ed7ea3e19f4ac9e3ea65d061403c4dd3fb3010bda476c4042c39b28",
@@ -1623,6 +2468,21 @@
             ],
             "published_at": "2026-09-19T17:20:08+00:00",
             "collected_at": "2026-09-19T19:50:56.988717+00:00"
+        },
+        {
+            "id": "6abd29296939efb8f84e1e5ccfc63e392a3215d7988661bd625d61f62bcab59f",
+            "title": "Key symbols we lost to time, pt. 2: The Mac side",
+            "description": "Comments",
+            "url": "https://unsung.aresluna.org/key-symbols-we-lost-to-time-pt-2-the-mac-side/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-19T17:16:10+00:00",
+            "collected_at": "2026-09-20T15:11:33.142007+00:00"
         },
         {
             "id": "691e54da3d63a614ecff79901a417e07a074d2e2cc2e7a3832440e542faf260f",
@@ -2588,6 +3448,21 @@
             "collected_at": "2026-09-19T15:07:43.551536+00:00"
         },
         {
+            "id": "c3261172d7caa6b903b4ff7198c4a57e8bf54a972c1ed7658dfabac144098e12",
+            "title": "FreeBSD on Aoostar WTR Pro NAS",
+            "description": "Comments",
+            "url": "https://www.tumfatig.net/2026/overview-of-aoostar-wtr-pro-on-bsd/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-19T11:55:19+00:00",
+            "collected_at": "2026-09-20T15:11:33.142237+00:00"
+        },
+        {
             "id": "9951f8ce3b021235adb4e6fc4205e6828fa8b97d18e595bda2bad22c5f9cc552",
             "title": "What happens to TLDs when their country stops existing? (2022)",
             "description": "Comments",
@@ -2696,6 +3571,21 @@
             ],
             "published_at": "2026-09-19T11:00:00+00:00",
             "collected_at": "2026-09-19T15:07:28.914617+00:00"
+        },
+        {
+            "id": "77d557ff7273248898e39e10da1e4aa0e9f727dc74b9d953cd57cde6a81fe54f",
+            "title": "Show HN: Sigabrt.dev – cronjob monitor with an SSH TUI",
+            "description": "Comments",
+            "url": "https://sigabrt.dev",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-19T10:47:59+00:00",
+            "collected_at": "2026-09-20T15:11:33.142272+00:00"
         },
         {
             "id": "957dad81750da0dc352c6ba8ae33c09019d7514e0bcced60d3147202e8fa535b",
@@ -5003,6 +5893,21 @@
             "collected_at": "2026-09-18T20:13:30.524282+00:00"
         },
         {
+            "id": "cddec7a496521d9d7b53a6b627409e3dc9ac57e244c9714ae9aef525e1ce2460",
+            "title": "A Model for Winning Survivor",
+            "description": "Comments",
+            "url": "https://victoriaritvo.com/blog/predicting-survivor/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-18T17:25:55+00:00",
+            "collected_at": "2026-09-20T15:11:33.142425+00:00"
+        },
+        {
             "id": "3abad1e167205ba71e6b78245c1eccb01c84ae2524cdd2bf5cb3e3ae47173a00",
             "title": "Bitcoin Price Hits $81K on Renewed Spot Demand, Leverage Reset",
             "description": "Bitcoin surged past $81,000 on Friday, hitting an intraday high of $81,238, before settling around $80,800 with a $1.62 trillion market cap. CFTC Draft Rules Spark Rally Beyond $81,000 Bitcoin’s price breezed past $81,000 Friday amid reports that the Commodity Futures Trading Commission (CFTC) sent crypto market rules to the White House for review. The […]",
@@ -5891,6 +6796,21 @@
             ],
             "published_at": "2026-09-18T15:05:44+00:00",
             "collected_at": "2026-09-18T15:33:27.597043+00:00"
+        },
+        {
+            "id": "630e0a239cef226d156240d2ea99d1b0ed97c3f86ff267ac57842ee10178131b",
+            "title": "A custom virtual machine for the Stars 4X game",
+            "description": "Comments",
+            "url": "https://nullprogram.com/blog/2026/09/17/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-18T15:01:26+00:00",
+            "collected_at": "2026-09-20T15:11:33.142148+00:00"
         },
         {
             "id": "fd58fce9d4e997c742d627e5150f7429040ff35f1d2c4fd49e9ef12ae95b0d87",
@@ -145436,6 +146356,82 @@
             ],
             "published_at": null,
             "collected_at": "2026-09-20T02:42:11.606624+00:00"
+        },
+        {
+            "id": "4fbc6a671f02b7ce4e730c52c6e94da714bef91714572db28a0ae0b68fba04ac",
+            "title": "A24’s reputation is on the line with the SCP Foundation movie",
+            "description": "After the success of Backrooms, it looks like A24 is trying to cash in on yet another internet horror craze with a new installment in the V/H/S horror anthology series set in the SCP Foundation universe. But as soon as it was announced, the backlash started, and V/H/S: SCP already appears to be on shaky […]",
+            "url": "https://www.theverge.com/entertainment/997853/a24-scp-movie-creative-commons-license",
+            "source": "The Verge",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "gadgets",
+                "internet",
+                "llm",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-09-20T15:11:31.461256+00:00"
+        },
+        {
+            "id": "2760db60486b6b108212153474bf29adbda8d6017464047881663be85d6dcd81",
+            "title": "A great new video game movie",
+            "description": "Hi, friends! Welcome to Installer No. 144, your guide to the best and Verge-iest stuff in the world. (If you're new here, welcome, new tech season is here, and also you can read all the old editions at the Installer homepage.) This week, I flew out to Los Angeles to try on and write about […]",
+            "url": "https://www.theverge.com/tech/997322/resident-evil-steam-frame-fire-emblem-fortunes-weave",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-09-20T15:11:31.461349+00:00"
+        },
+        {
+            "id": "9ee6a75df36f03d0bb612b4014183544a240514eea83c7508ebbf5172a3caea3",
+            "title": "The hidden monopoly behind your TI graphing calculator",
+            "description": "The same calculator has been on most kids' back to school shopping list since the early 2000's and the dominance of Texas Instruments' calculator division goes back even farther. In the next episode of Version History, David Pierce is joined by The Verge's Nilay Patel and Victoria Song to tell the story of TI graphing […]",
+            "url": "https://www.theverge.com/podcast/997725/the-hidden-monopoly-behind-your-ti-graphing-calculator",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-09-20T15:11:31.461445+00:00"
+        },
+        {
+            "id": "9ea97c2857a0153c1aabd4240f8fe4c9ef86ecf5c7f50f093d00865914a222af",
+            "title": "Humans, not rogue AI, are still the biggest cybersecurity risk to energy systems",
+            "description": "Before recent high-profile hacks raised the specter of AI possibly \"killing all humans,\" our energy systems were already disturbingly vulnerable to cyberattack - and the risk is growing. \"We were always prey. We were just kind of surviving at the appetite of our predators,\" Joshua Corman, executive in residence for public safety and resilience at […]",
+            "url": "https://www.theverge.com/science/997834/ai-cyberattack-energy-critical-infrastructure",
+            "source": "The Verge",
+            "category": "cybersecurite",
+            "tags": [
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-09-20T15:11:31.461519+00:00"
+        },
+        {
+            "id": "f6b87433a59fd5241c337f7b5a3648aa8e84018e2d114587a12df12300e38c36",
+            "title": "All roads lead to cable",
+            "description": "This is The Stepback, a weekly newsletter breaking down one essential story from the tech world. For more on streaming platforms, FAST channels, and the future of entertainment, follow Charles Pulliam-Moore. The Stepback arrives in our subscribers' inboxes at 8AM ET. Opt in for The Stepback here. How it started Before Netflix fully committed to […]",
+            "url": "https://www.theverge.com/column/997843/streamers-cable-fast-channels",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-09-20T15:11:31.461600+00:00"
         }
     ]
 }
