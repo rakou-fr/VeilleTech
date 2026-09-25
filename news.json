@@ -1,7 +1,682 @@
 {
-    "updated_at": "2026-09-24T21:01:52.572708+00:00",
-    "count": 11138,
+    "updated_at": "2026-09-25T02:47:17.974471+00:00",
+    "count": 11206,
     "articles": [
+        {
+            "id": "b650a97ca31720fe71496c06f083dd695a6b35d31e6fabeb2d94e9a0c28fdcb3",
+            "title": "A No-Repeat Random Draw Looks Trivial Until Round 70",
+            "description": "Drawing numbers without repeats sounds like a beginner exercise. It is also a place where a lot of shipped code has a real defect. The version most people write function drawNaive ( called : number []): number { let n : number ; do { n = Math . floor ( Math . random () * 75 ) + 1 ; } while ( called . includes ( n )); return n ; } This is rejection sampling. It is correct in the sense that it never returns a duplicate, and it is wrong in two ways that matter. It degrades as the deck empties. Early on, almost every draw succeeds on the first try. At round 70, only 5 numbers remain, so the expected number of loop iterations per draw is 15. Near the very end it gets worse, and the loop has no upper bound. It couples randomness to the array. called.includes(n) is O(n), inside a loop that can run an unbounded number of times. The complexity is embarrassing for a game you might run on a projector laptop. Sample from what is left The fix is to stop guessing and pick directly from the remaining set: export const drawNextNumber = ( called : readonly number [], random : () => number = Math . random , ): number | null => { const used = new Set ( called ); const remaining = Array . from ({ length : 75 }, ( _ , i ) => i + 1 ) . filter (( n ) => ! used . has ( n )); if ( remaining . length === 0 ) return null ; const index = Math . min ( Math . floor ( random () * remaining . length ), remaining . length - 1 , ); return remaining [ index ] ?? null ; }; Three things changed: Set lookup instead of Array.includes inside a loop. Exactly one random call per draw, always. Cost is O(75) worst case, with no variance. null when the deck is exhausted, instead of looping forever. The Math.min(..., remaining.length - 1) clamp is defensive. Math.random() returns values in [0, 1) , so the clamp should never fire — but if someone passes a custom random that returns exactly 1 , an unclamped version reads past the end of the array and returns undefined . Cheap insurance. Make the RNG injectable That random parameter is the highest-value line in the function. // deterministic in tests const seq = [ 0.1 , 0.9 , 0.5 ]; let i = 0 ; const fakeRandom = () => seq [ i ++ % seq . length ]; expect ( drawNextNumber ([], fakeRandom )). toBe ( 8 ); Without an injectable source, testing a random draw means either asserting nothing useful or mocking the global Math.random . With it, the shuffle and draw paths become ordinary deterministic functions you can unit test. The same trick applies to card generation, which needs a real shuffle: const shuffledRange = ( start : number , end : number , random : () => number ) => { const values = Array . from ({ length : end - start + 1 }, ( _ , i ) => start + i ); for ( let i = values . length - 1 ; i > 0 ; i -= 1 ) { const j = Math . floor ( random () * ( i + 1 )); [ values [ i ], values [ j ]] = [ values [ j ] ! , values [ i ] ! ]; } return values ; }; A Fisher–Yates shuffle per B-I-N-G-O column, then sort each column ascending so the card reads correctly, then drop the center for the free space. Do not stop at \"unique\" For a batch of cards, \"unique\" is not enough on its own — you also need the batch to terminate. const cards : BingoCard [] = []; const signatures = new Set < string > (); let attempts = 0 ; while ( cards . length < count && attempts < count * 100 ) { attempts += 1 ; const card = generateBingoCard ( random ); const signature = card . flat (). join ( \" - \" ); if ( ! signatures . has ( signature )) { signatures . add ( signature ); cards . push ( card ); } } if ( cards . length !== count ) { throw new Error ( \" Unable to create a unique card batch. \" ); } Throwing is the right behavior. A silently short batch is worse than a loud failure: the host prints 20 cards for 24 players and finds out at the door. Persisted state is untrusted input The draw is the easy part. The bug that actually bites in production is what happens after you reload the tab. If game state lives in localStorage , then anything on the origin can write to it, and a user can edit it by hand. Treat the read as a parse of external data: const called = Array . isArray ( record . called ) ? record . called . filter ( ( n , i , all ): n is number => Number . isInteger ( n ) && n >= 1 && n <= 75 && all . indexOf ( n ) === i , ) : []; That single expression does four jobs: type check, integer check, range check, and deduplication. The dedupe matters because a duplicated entry in called corrupts every subsequent \"is this used\" question. The same function reconciles the derived status rather than trusting the stored one (abbreviated here; the real version also preserves a running state when the caller explicitly asks for it): const status = called . length === 75 || ( called . length > 0 && record . status === \" complete \" ) ? \" complete \" : \" paused \" ; If all 75 numbers are called, the game is over regardless of what the stored flag says. Derived state should be recomputed, not believed. Syncing a host console with a display If you open a second window for the projector, BroadcastChannel is the least fussy transport: const channel = new BroadcastChannel ( \" bingo-caller-state-v1 \" ); channel . postMessage ( state ); Two details worth copying: Namespace the storage keys. If you ship more than one locale, bingo-caller-game-v1:de keeps a German host console from picking up an English game. Keep the keys stable for the default locale. The default path keeps its original key so existing saved games and already-open display windows keep working after a deploy. The summary The pattern generalizes past bingo: whenever you have a finite pool, a draw without replacement, and persisted state: Sample from the remaining pool, not by retrying. Inject the randomness source. Bound every retry loop and fail loudly. Validate and deduplicate persisted state on every read. Recompute derived values instead of trusting stored ones. I used this implementation while building Bingo Caller Online , a browser-based caller supporting 75-, 90-, 80-, and 30-ball games. The draw logic and the state sanitizer above are close to what actually ships. Disclosure: Bingo Caller Online is my own project.",
+            "url": "https://dev.to/ruixuan_jiang_663eb75f3fa/a-no-repeat-random-draw-looks-trivial-until-round-70-413o",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "programmation",
+                "rust",
+                "web",
+                "windows"
+            ],
+            "published_at": "2026-09-25T02:40:12+00:00",
+            "collected_at": "2026-09-25T02:47:01.683256+00:00"
+        },
+        {
+            "id": "141458ad88085ec624d8525e683d25bcbf72f39946f1394e85422d9ed28ed605",
+            "title": "Normalize Units at the Boundary, or Ship a 12x Bug",
+            "description": "A user types 3 into a depth field. The label says inches. Your formula assumes feet. You just shipped a 12x error, and nothing in the type system noticed, because both values are number . I hit this class of bug repeatedly while building material calculators, so I stopped trusting unit labels and made the conversion a type-level concern instead. One canonical unit Pick a single internal unit and convert everything at the edge. For a US-customary-heavy calculator, feet is the natural choice: export const units = { in : 1 / 12 , ft : 1 , yd : 3 , cm : 1 / 30.48 , m : 1 / 0.3048 , }; export type Unit = keyof typeof units ; The values are conversion factors into the canonical unit . That is the whole trick: downstream code never sees a unit again, so there is exactly one place where a unit can be wrong — and it is a table of five constants you can eyeball. Notice this also gives you a free Unit type. An invalid unit string is now a type error at the call site instead of a silent NaN at runtime. Validate the unit, not just the number The converter should reject an unknown unit and reject a non-positive dimension, and the error should name the field: const dim = ( value : string , unit : Unit , label : string ) => { if ( ! ( unit in units )) throw new Error ( ` ${ prefix } : choose a valid unit.` ); return number ( value , ` ${ prefix } ${ label } ` ) * units [ unit ]; }; The unit in units check looks redundant when the parameter is typed Unit — but the state being validated comes back from persisted, parsed JSON, where the type annotation is a claim rather than a guarantee. export function number ( value : string , label : string , zero = false ): number { const n = Number ( value ); if ( ! value . trim () || ! Number . isFinite ( n ) || ( zero ? n < 0 : n <= 0 )) { throw new Error ( ` ${ label } : enter a ${ zero ? \" non-negative \" : \" positive \" } number.` , ); } return n ; } Two things worth stealing here. !value.trim() catches the empty string. Number(\"\") is 0 , which passes Number.isFinite and then silently becomes a zero dimension. An empty field and a genuine zero are different situations, and the form should say so. The zero flag makes the semantics explicit. A waste allowance may legitimately be 0 . A length may not. Encoding that difference in one boolean is clearer than two near-identical validators. Watch the other quantities Not every numeric field is a measurement. A count of beds, slabs, or retaining walls is an integer: const q = number ( a . quantity , ` ${ prefix } quantity` ); if ( ! Number . isSafeInteger ( q )) { throw new Error ( ` ${ prefix } quantity: enter a whole number.` ); } Number.isSafeInteger also rejects NaN , Infinity , and values past 2^53 — all of which would produce nonsense in a total. Shapes without a shape library Once units are normalized, the geometry is short enough to keep inline. Each branch differs by one or two lines: const surface = a . shape === \" circle \" ? Math . PI * ( l / 2 ) ** 2 : l * dim ( a . width , a . widthUnit , a . shape === \" triangle \" ? \" perpendicular height \" : \" width \" ) * ( a . shape === \" triangle \" ? 0.5 : 1 ); const volume = surface * d * q ; The label switches as the meaning of the input changes — for a circle, length is the diameter ; for a triangle, width is the perpendicular height . Reusing the same three fields with different semantics is fine as long as the error messages and the UI labels change with them. Silently keeping the label \"width\" on a triangle is how users enter the slant height. The guard after the guard Floating point and unit conversion can still produce something unusable: if ( ! Number . isFinite ( volume ) || volume <= 0 ) { throw new Error ( ` ${ prefix } : dimensions are outside the supported range.` ); } This is not paranoia. 1/30.48 multiplied through several dimensions can land on a denormal or overflow for absurd inputs. A final sanity check costs one comparison. Why 324 shows up in mulch formulas If you have ever seen this formula and wondered about the constant: length(ft) × width(ft) × depth(in) ÷ 324 = cubic yards It is not arbitrary. It is two conversions folded together: inches to feet: divide by 12 cubic feet to cubic yards: divide by 27 So 12 × 27 = 324 . Once you normalize units at the boundary, you never write 324 again — the constant disappears into the unit table, which is exactly where it belongs. Validation as a first-class output The pattern that made these calculators maintainable is that invalid input produces a labeled error , not a zero and not a NaN : Area 2 depth: enter a positive number. Area 1 quantity: enter a whole number. That string is useful in the UI, useful in a test assertion, and useful when someone reports a bug six months later. A function that returns 0 on bad input is a function that will be debugged by reading it line by line. The checklist One canonical unit. Convert once, at the edge. Derive a Unit type from the conversion table. Reject empty strings explicitly — do not let \"\" become 0 . Distinguish \"may be zero\" from \"must be positive\". Use Number.isSafeInteger for counts. Relabel a field when its meaning changes (diameter, perpendicular height). Sanity-check the final result, not just the inputs. Throw errors that name the field. I ended up extracting this into Cubic Yard Tools , a set of material calculators for landscaping and construction that accepts both US customary and metric input. The conversion table and the validator above are the parts I would copy first into any new calculator. Disclosure: Cubic Yard Tools is my own project. Estimates there are planning aids, not engineering approvals.",
+            "url": "https://dev.to/ruixuan_jiang_663eb75f3fa/normalize-units-at-the-boundary-or-ship-a-12x-bug-5f72",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "git",
+                "programmation",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-09-25T02:39:54+00:00",
+            "collected_at": "2026-09-25T02:47:01.684215+00:00"
+        },
+        {
+            "id": "7b4e9ab3c7579306fc0afa5df3ad32ebc4153b14b308128ba9b942aa739a4f89",
+            "title": "Small Calculator, Three Bugs: Input Parsing, Unit Drift, and Stale Results",
+            "description": "A calculator with two inputs and one output is the \"hello world\" of interactive UI. It is also a small minefield. These are three defects I hit while building bidirectional CPM ↔ CPC conversion, and the fixes are portable to any numeric form. Bug 1: percentage drift The formula is simple once you see it. Cost per thousand impressions, divided by clicks per thousand impressions, gives cost per click. The bug is in the middle term. CTR is stored as a percentage — 2 means 2%. So how many clicks happen per 1,000 impressions? // wrong: treats 2 as 2 clicks per 1000 const clicksPerThousand = parsedCtr ; // wrong: treats 2 as 2000 clicks per 1000 const clicksPerThousand = parsedCtr * 1000 ; // right const clicksPerThousand = parsedCtr * 10 ; Why 10 ? Because CTR is per hundred impressions (that is what percent means) and CPM is per thousand : clicks per 1000 = 1000 × (ctr / 100) = ctr × 10 Writing the derivation as a comment next to the constant is worth more than a clever variable name. Off-by-1000 errors in ad math are almost always this line. Once you have it, both directions are trivial and symmetric: const convertedValue = mode === \" cpm-to-cpc \" ? parsedCost / clicksPerThousand : parsedCost * clicksPerThousand ; One division, one multiplication, same intermediate. There is no reason to write two separate formulas and let them drift apart. Bug 2: validation that lets an empty field through const parsedCost = Number ( cost ); const parsedCtr = Number ( ctr ); Number(\"\") is 0 . That fails the <= 0 check here, so it happens to be safe — but that is luck, not design. The moment you add an optional field with a legitimate zero ( 0% CTR as a valid \"no clicks\" input, or a 0 budget floor), the empty string slides straight through as a real zero. Be explicit about what is allowed: if ( ! Number . isFinite ( parsedCost ) || parsedCost <= 0 || ! Number . isFinite ( parsedCtr ) || parsedCtr <= 0 || parsedCtr > 100 ) { setResult ( null ); setMessage ( \" Enter a cost above zero and a CTR greater than 0% and no more than 100%. \" , ); return ; } Three things this gets right: Number.isFinite catches NaN and Infinity . Number(\"abc\") is NaN , and NaN > 0 is false , so it would be caught — but Number(\"1e999\") is Infinity , which passes > 0 . Explicit finiteness checks stop the whole class. The upper bound is enforced. A CTR above 100% is impossible under a one-click-per-impression model. If your data source allows multi-count attribution, that assumption changes, and the validation should change with it — but silently accepting 500 as a CTR is worse than rejecting it. The result is cleared on failure. This is the part people forget, and it is actually Bug 3. Bug 3: stale results after an invalid submit Consider the sequence: User enters valid values. Result renders: $0.50 . User edits the cost field, leaving it empty. User submits. Validation fails, an error message appears — and the old $0.50 is still on screen. The message says the input is bad. The screen still shows a number. Users read the number. if ( ! valid ) { setResult ( null ); // <- the important line setMessage ( \" ... \" ); return ; } Clearing the result is not cosmetic. It keeps the error state and the displayed state consistent: either there is a valid result, or there is an explanation. Never both. The same rule applies to switching modes: const changeMode = ( nextMode : Mode ) => { setMode ( nextMode ); setCost ( \"\" ); setCtr ( \"\" ); setResult ( null ); setMessage ( \"\" ); }; If you flip from CPM → CPC to CPC → CPM and leave the old result on screen, you have displayed an output computed under the other mode's formula, next to inputs that no longer mean the same thing. The formatting is part of the correctness Formatting a CPC with Intl.NumberFormat and the default two fraction digits throws away the value users need: const money = new Intl . NumberFormat ( \" en-US \" , { style : \" currency \" , currency : \" USD \" , minimumFractionDigits : 2 , maximumFractionDigits : 4 , }); const number = new Intl . NumberFormat ( \" en-US \" , { maximumFractionDigits : 2 , }); Two formatters, deliberately. Money gets four fraction digits because low CPC values are legitimately sub-cent: $0.0012 displayed as $0.00 is not a rounding choice, it is a wrong answer. Counts and percentages get two digits, because \"1,234.5678 impressions\" is noise. Also note the formatters are created once , at module scope. Constructing an Intl.NumberFormat is not free, and doing it inside a render body on every keystroke is a measurable waste in a form that re-renders on every input change. Every number needs a label The most common defect in calculators is not arithmetic. It is an unlabeled number. 0.5 could be a CPC in dollars, a CTR in percent, or a conversion rate. When a user screenshots a result, the label has to travel with the value. Carry the input alongside the output in the result object so the UI can render \"at $10 CPM and 2% CTR\" beside the number: type Result = { convertedValue : number ; clicksPerThousand : number ; inputValue : number ; }; setResult ({ convertedValue , clicksPerThousand , inputValue : parsedCost }); This also makes the result testable as data rather than as rendered markup. The portable checklist Write the unit derivation next to the constant, not in your head. Make inverse operations share one intermediate value. Check Number.isFinite explicitly; do not rely on comparison operators to catch NaN . Enforce upper bounds that the domain implies, and document the assumption behind the bound. Clear stale output whenever input becomes invalid or the mode changes. Use Intl.NumberFormat with enough fraction digits for the smallest meaningful value. Build formatters once, outside the render path. Never display a number without its unit and its inputs. These three fixes came out of Get CPM Calculator , a set of advertising calculators for CPM, CPC, impressions, and break-even ROAS. The arithmetic is the easy part; the state handling is what determines whether people trust the number on the screen. Disclosure: Get CPM Calculator is my own project. Results are calculations from the values you enter, not platform benchmarks.",
+            "url": "https://dev.to/ruixuan_jiang_663eb75f3fa/small-calculator-three-bugs-input-parsing-unit-drift-and-stale-results-41oj",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "git",
+                "programmation",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-09-25T02:39:16+00:00",
+            "collected_at": "2026-09-25T02:47:01.685227+00:00"
+        },
+        {
+            "id": "feccf75577aebff92e6bba3f26cc232dfa8b3ff76e9bf206549ac72f5b9df0c7",
+            "title": "What React Flow Doesn't Do For You: Building a Diagram Editor With Domain Rules",
+            "description": "I built a diagram editor for genograms. If you have not run into the term: a genogram is a diagram of a family that records more than descent. It uses standardized shapes for people and a set of line conventions for relationships, including emotional ones like closeness, distance, and conflict. The obvious library choice was React Flow ( @xyflow/react ). It is a good fit and I would choose it again. But it is worth being precise about what it gives you, because the gap between \"React Flow demo\" and \"editor a professional can use\" is where all the work lives. What you get out of the box A canvas with pan, zoom, and viewport controls A node/edge data model with React components for each Selection, dragging, and connection handles A store you can subscribe to That is a lot. It is also entirely structural. React Flow knows nothing about your domain. What it does not know Here is the list I had to build on top: Node rendering rules. A genogram person symbol is not a rounded rectangle. It encodes gender (square or circle), and inside it may sit a marker for a health status such as active, in recovery, or suspected. Custom node components are the answer, rendered as SVG inside the node wrapper. Edge routing rules. Family relationships need their own geometry. Partners connect with a horizontal line. Children descend from a midpoint on that line. That midpoint changes when partners are added or removed, which means edge geometry is a function of the surrounding nodes, not of the two endpoints. // conceptually: edges are derived, not stored per pair const familyEdges = buildFamilyEdges ( people , partnerships ); Relationship lines beyond descent. A genogram distinguishes emotional relationships from structural ones, and the conventions differ: a triple line for close, a zigzag for conflict, a dotted line for distant. Each is a different edge component with different path geometry and a different legend entry. That means the domain model has to classify edges before the renderer ever sees them. React Flow will happily draw a custom edge; deciding which edge type a pair of people should have is your problem. The legend. Any editor that introduces non-obvious notation needs a legend on the canvas. Users cannot be expected to remember that a dashed line means distant. This is a domain requirement with no library support at all. Persistence is a separate design problem Two storage modes ended up coexisting: Local projects use IndexedDB, which immediately raises a concurrency question: what happens when two saves overlap? A debounced autosave, a manual save, and an export path can all write to the same record in the same second. The fix is to serialize the writes rather than hoping they do not collide: let operationQueue : Promise < unknown > = Promise . resolve (); function enqueue < T > ( operation : () => Promise < T > ): Promise < T > { const next = operationQueue . then ( operation , operation ); operationQueue = next . then (() => undefined , () => undefined ); return next ; } Note the error handling: operationQueue is advanced with handlers that swallow both fulfillment and rejection, so one failed write does not poison every subsequent operation in the chain. The caller still gets the real rejection via next . The autosave itself is debounced rather than interval-driven — 700 ms after the last change, not every 700 ms. Debouncing means an idle editor writes nothing and a burst of edits produces one write instead of thirty. Cloud projects are a different code path with the same UI. Keeping the load/save surface identical ( loadProject / saveProject regardless of backing store) is what prevents the editor component from filling up with if (isCloud) branches. Validate what you read, always Both storage paths return data that arrived from outside the component: IndexedDB, a file the user picked, or an API response. None of them are guaranteed to match the current schema. export function loadLocalProject ( projectKey = LOCAL_PROJECT_KEY ): Promise < Project | null > { return enqueue ( async () => { const project = await ( await getDatabase ()). get ( LOCAL_PROJECT_STORE_NAME , projectKey ); return project ? validateProject ( project ) : null ; }); } Two decisions are embedded in that short function: Validate on read, not on write. A project saved by an older version of the app will still be in IndexedDB after you ship a schema change. Validating on read lets you migrate or reject it at the only moment you can still do something sensible. Return null rather than throwing. A missing or invalid project is an expected state — it means \"start fresh\" — not an exception. Reserve throwing for corrupt-file cases where the user needs to know their data could not be recovered. Export is its own feature Exporting a diagram to an image is not canvas.toDataURL() . Your nodes are DOM elements, styled with CSS, possibly with fonts and inline SVG. html-to-image handles the DOM-to-PNG conversion, but there is still real work: computing the bounding box across all nodes, not just the visible viewport deciding a scale factor so the output is legible rather than 1:1 screen pixels generating a filename deciding what to do when a node falls outside the computed bounds If your diagram has a \"fit to view\" interaction, the export path usually wants the same geometry logic. Sharing that function between the \"fit\" button and the export saves you from two subtly different definitions of \"the whole diagram.\" The parts that took the longest Ranked by how long they actually took, not by how interesting they are: Edge geometry that responds to node movement. Correct, legible lines between related nodes. Round-trip fidelity between storage, the editor model, and the file format. Every added field is a migration concern. Legend and notation consistency. Domain accuracy, not engineering. Undo/redo and selection semantics. Most of it is state design, not rendering. Snapshotting the project on each mutation and capping the history at 100 entries is the easy half; making sure a drag does not push 60 entries into the history is the hard half. Actually wiring React Flow up. The least of the problems. That ordering is the point. React Flow was the fastest part of the project. What took time was deciding what the diagram means and keeping that meaning consistent across the canvas, the store, the export, and the saved file. If you are starting a similar editor Use React Flow. It is not the bottleneck. Write your domain model first, then derive edges from it rather than storing them independently. Treat every read from storage or the network as untrusted input and validate on read. Serialize writes if more than one code path can save. Plan the legend and notation before the visual polish. Share geometry helpers between \"fit to view\" and \"export\". This is the architecture behind MyGenogramMaker , a browser-based genogram editor with standard family symbols, relationship lines, and editable templates. Projects can be kept locally in the browser or in a cloud project, and the editor runs without requiring an account to start. Disclosure: MyGenogramMaker is my own project. It is a diagramming tool — not a diagnostic, clinical, or compliance service.",
+            "url": "https://dev.to/ruixuan_jiang_663eb75f3fa/what-react-flow-doesnt-do-for-you-building-a-diagram-editor-with-domain-rules-2e3o",
+            "source": "DEV Community",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "developpement",
+                "llm",
+                "programmation",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-09-25T02:39:03+00:00",
+            "collected_at": "2026-09-25T02:47:01.686174+00:00"
+        },
+        {
+            "id": "626b04867c80c89eeebe6a04784bdf7ff3b76a012a9ff00658e328ddbcafbe25",
+            "title": "AI Is My Workforce, Not My Replacement",
+            "description": "I've come to a realization. I have to use AI as part of my workforce. Not because I can't code. Not because I don't understand what I'm building. And certainly not because I want to surrender my projects to a machine. I need to make progress. I have a lot of things I want to build, and unfortunately, I still only have 24 hours in a day. KiwiEngine. Blackwater Sound. Music software. Artist platforms. Stores. Guitar pedals. Amplifiers. Electronics. Games. Writing. Teaching. And that's before we get into actually making music. I can either spend the next several years trying to do every little thing myself, or I can use the tools available to me to start bringing these ideas to life. I've made my decision. I Don't Have The Luxury Of Being A Purist There's a perspective in software development that I understand and respect. Learn your tools. Understand your language. Write your own code. Master your specialty. Become exceptionally good at what you do. There's nothing wrong with that. But I think we sometimes make the mistake of treating one approach to professional development as though it's prescribed to everyone. Not everyone is trying to accomplish the same thing. Some developers want to specialize deeply in a particular area of engineering. Some want to work for established companies. Some want to become experts in a particular language, framework, or discipline. Those are legitimate goals. But they're not necessarily mine. I'm a builder. I have a vision for things that extend well beyond software development. Software is one of the tools I use to bring those things into existence. And if I'm spending all my time proving that I can personally implement every line of code, I'm not necessarily getting closer to those goals. I'm just getting better at doing everything myself. Those aren't the same thing. I Can Put My Code Where My Thoughts Are One thing I've learned about myself is that I'm a big thinker. I see systems. I see how things connect. I see how one piece of infrastructure can support five different projects. I can look at a music business, a software platform, a storefront, and an electronics workshop and start imagining how they could operate together. And for the most part, I can put my code where my thoughts are. I've been doing that with KiwiEngine. The problem isn't that I don't know how to build things. The problem is that I can't personally implement every idea at the speed I can envision it. There are only so many hours available. And I don't have an entire engineering department sitting behind me. So why wouldn't I use technology that helps me extend my capacity? AI Doesn't Design My Vision This is where I think an important distinction needs to be made. I don't hand AI a vague idea and tell it to go build my company. I design the systems. I establish the architecture. I determine the responsibilities of the libraries. I make decisions about how the pieces interact. I write and develop the foundations. Then I use AI to help with implementation, repetitive work, documentation, tests, and other tasks that would otherwise consume significant amounts of time. That's delegation. And delegation doesn't eliminate responsibility. If anything, it makes responsibility more important. Because now I have to understand not only what I'm building, but what I'm approving. No Ghost Code I have a very deliberate boundary when it comes to AI working on KiwiEngine. AI does not have independent authority to commit code, change architectural direction, or make decisions on my behalf. It doesn't get to decide that a library should be rewritten. It doesn't get to introduce dependencies because it thinks they're convenient. It doesn't get to change the design philosophy because another approach is more conventional. And it doesn't get to silently commit code I haven't approved. There is no ghost code. If AI is going to take an action that changes the project, it needs my explicit authorization. I review the work. I approve the direction. I remain responsible for the result. AI can be part of my workforce without becoming the owner of my work. The Grunt Work Is Still Work Here's something I think gets lost in conversations about AI-assisted development. Not every programming task requires the same level of creative investment. Some tasks are genuinely interesting architectural problems. Others are repetitive implementation work. Writing another adapter. Creating another set of tests. Updating documentation. Implementing a pattern that's already established elsewhere in the project. Working through boilerplate. Those things matter. They still need to be done correctly. But they don't all require me to spend hours personally typing every character. If I've already established how a system should work, why wouldn't I use a tool to help implement that established pattern? My time is better spent reviewing the result, improving the architecture, and moving on to the next problem. That's not avoiding engineering. That's managing engineering work. AI Doesn't Eliminate The Need To Understand Your Code There's a difference between using AI to extend your abilities and using it to avoid developing them. I don't believe AI should become an excuse to stop learning. If I don't understand a change, I shouldn't approve it. If I can't explain why something belongs in the architecture, it probably doesn't belong there yet. If AI generates code that violates the design principles of KiwiEngine, that code doesn't get a pass simply because it works. Working code isn't automatically good architecture. And generated code isn't automatically correct. AI can make mistakes. It can misunderstand requirements. It can introduce unnecessary complexity. It can confidently implement something that doesn't fit the rest of the system. That's why oversight matters. I want AI helping me move faster, not helping me accumulate problems faster. I'm Not Trying To Win A Coding Endurance Competition This is the part I've been thinking about the most. What exactly am I proving by doing everything manually? That I can work longer? That I can memorize more syntax? That I can rebuild the same implementation for the fifteenth time? I already know I can build software. I want to use that ability to accomplish something. I want to create tools for musicians. I want to produce music. I want to develop physical products. I want to experiment with electronics. I want to build businesses around things I genuinely enjoy. I want to spend more time creating cool things and less time getting bogged down in technical work simply for the sake of purity. If AI can help me accomplish that while I retain ownership and oversight, I'm going to use it. KiwiEngine Is Supposed To Create Leverage This is actually very consistent with why I'm building KiwiEngine in the first place. The whole point of a reusable framework is to avoid solving the same problems repeatedly. Juice helps me avoid recreating common styling behavior. Nectarine helps establish reusable configuration patterns. Other libraries and engines provide foundations I can build upon. AI fits into that philosophy as another form of leverage. KiwiEngine reduces the amount of infrastructure I need to rebuild. AI reduces the amount of implementation work I need to personally perform. Together, they allow me to spend more time on the problems that are unique to what I'm creating. And that's the entire point. I Want To Build Things, Not Just Talk About Building Them I have enough ideas to keep myself busy for several lifetimes. What I don't have is several lifetimes. I have this one. And I would rather spend it bringing as many meaningful ideas into reality as I reasonably can. I'm not interested in pretending that using AI somehow makes those ideas less mine. The architecture is mine. The decisions are mine. The responsibility is mine. The vision is mine. The tools help me execute it. That's how I see AI. Not as a replacement for my abilities. Not as an excuse to abandon craftsmanship. And not as an autonomous authority over my projects. It's part of my workforce. I intend to use it that way. The future isn't something I'm waiting around for. It's already here. And I have things to build.",
+            "url": "https://dev.to/stinklewinks/ai-is-my-workforce-not-my-replacement-3045",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "git",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-25T02:30:00+00:00",
+            "collected_at": "2026-09-25T02:47:01.687195+00:00"
+        },
+        {
+            "id": "fa0a0a742050f21919428955d3f4f8ec773893d5655623ee953607fef37eaef6",
+            "title": "The Machine Learning Career Roadmap I'd Follow If I Started Today",
+            "description": "After seven years of building ML systems across four continents, I know exactly which early mistakes cost the most. Here is the roadmap I would follow if I were starting from zero — with timelines, milestones, and the numbers that prove each phase matters. I remember the exact moment I wasted the most money of my career. Not a bad client, not a failed deployment — a book. I was starting out, and someone online said you cannot do machine learning without deep mathematical theory. So I bought a $60 linear-algebra text, a $45 probability text, and a $70 calculus text, and I spent the next four months grinding derivations in a Dubai café while the world's most accessible ML tools sat a browser tab away. By month four, I could prove theorems I have never used since, and I had built zero models that anyone could run. That four months is the single most expensive mistake in this field, and I watch beginners make it every single week. If you are about to start, or restarting after a stalled attempt, this roadmap is the one I would run today — built from the knowledge of what works, what does not, and what the market actually pays for. To be precise about the damage: four months of theory meant four months with zero models I could show anyone, zero deployed artifacts, and zero conversations with anyone who could pay me. In that same window, I have since watched a beginner go from his first pandas import to a working churn model that a small agency paid $1,200 for. The difference was not ability. It was that he ran the pipeline in the order the work demands, and I ran it in the order academia demands. Same hours, completely different bank balance. The Money Reality, Up Front Let me put the numbers on the table before the roadmap, because they change what you should optimize for. In the last few years, I have watched complete beginners go from zero to billable applied-ML work in 9–12 months of deliberate practice — and I have watched holders of three certificates go nowhere for two years. The difference was never intelligence. It was sequence. The paid outcomes in ML look like this: First freelance deployment: $25–$60 an hour for scoping and simple models. First real applied-ML role: $110,000–$140,000 base in the US within a year or two of shipping. Freelance rate after 2–3 shipped deployments: $75–$150 an hour. The difference between \"knows ML\" and \"ships ML\" on the market: roughly double the income, with no ceiling in sight. And the cost of doing it wrong: four months of theory, one year of courses, and zero income. That is the price of following the wrong roadmap, and it is the price I paid. The Realization That Changes Everything Here is the insight I wish someone had forced on me at month one: the order you learn in determines whether you finish. The academic order is math → statistics → algorithms → tools. That order produces people who can explain machine learning and cannot ship it. The shipping order is the reverse: tool → model → project → deployment → then the theory you actually need, pulled in on demand. You need enough linear algebra to understand what a dot product is. You need enough statistics to know a p-value from a leak. You do not need to derive a backpropagation by hand before you have ever made a model predict anything. The theory is a shelf you pull from as problems appear, not a gate you must pass first. I have met brilliant production ML engineers who cannot recite the math but ship models that save clients six figures a year — and I have met paper-readers who have never had a model survive a week in production. The roadmap below is built on that ordering: fundamentals through projects, projects through deployment, deployment through portfolio, portfolio through income. The Roadmap: Six Phases With Timelines Here is the exact phased plan I would follow today, with time budgets at a realistic 15 hours a week alongside a job. If you can go full-time, compress the times; the milestones do not change. Phase 0 — One week: pick a lane and a problem. Do not start with \"learn machine learning.\" Start with a target: churn prediction, price forecasting, or image classification — pick one. A lane gives every subsequent decision a filter. Without it, you will buy the wrong books, take the wrong courses, and quit. Phase 1 — Weeks 2–6: Python plus one modeling library. Learn enough Python to manipulate data (pandas and numpy are non-negotiable), then go straight to scikit-learn. Not TensorFlow, not PyTorch. scikit-learn forces you to learn the workflow — train, validate, predict — on models you can understand in an afternoon. Phase 2 — Months 2–4: build three models from scratch-ish. Not from scratch literally — from the library, but with full understanding of every parameter you touch. Linear regression on a housing dataset. A decision tree on a churn dataset. A random forest on anything with more columns than sense. The goal is not accuracy; it is fluency with the loop: clean data, split, train, evaluate, iterate. Phase 3 — Months 4–7: specialize. Pick your lane's core tool and go deep. If your lane is tabular prediction (the highest-paying, lowest-barrier lane in applied ML), this is LightGBM or XGBoost plus a real dataset with a messy reality: missing values, date features, categorical fields. If your lane is language or vision, this is where PyTorch and a transfer-learning model enter. One lane, one tool, deep. Phase 4 — Months 7–9: learn to deploy — this is the differentiator. This phase is what separates you from 95% of people who \"know ML.\" Wrap your best model in a FastAPI service, containerize it, put it on a server, add a drift check, write the README. I have written at length about deployment being where production ML actually lives, and it is the phase that changes your market value more than any other. A person who can ship a model is not competing with a person who can train one; they are not even in the same market. Phase 5 — Months 9–12: build a portfolio of deployed projects, not notebooks. Three projects, each deployed, each with a plain-English write-up of the business decision it informed. No \"titanic survived\" projects. A stranger must be able to hit your URL and see your model make a prediction. That is the artifact that gets you hired and gets you paid — and it is the artifact almost nobody produces. The Milestone Table To make the roadmap checkable, here is each phase with its concrete deliverable — the artifact that proves you finished, not the hours you logged: Phase Timeline Deliverable (proof) 0 — Lane and problem Week 1 One written sentence: lane + problem + target user 1 — Python + sklearn Weeks 2–6 First model predicting on a split dataset 2 — Three core models Months 2–4 Three evaluated models, one write-up 3 — Specialize Months 4–7 Best model tuned on a real, messy dataset 4 — Deploy Months 7–9 A live API a stranger can hit 5 — Portfolio Months 9–12 Three deployed projects with business write-ups If a phase produces no deliverable, you are not in the phase — you are in a course. The deliverable is the definition of progress, and it is the only definition that the market will ever see. The Portfolio Is the Product This is worth its own section, because the portfolio is the single highest-leverage artifact in the entire roadmap. A resume says you know things. A deployed URL proves it. When recruiters and clients evaluate ML people, they are drowning in resumes and starving for proof. Three portfolio rules I enforce with everyone I mentor: Deployed beats polished. A working site with an ugly UI beats a beautiful notebook every time. Deploy first, prettify never. Business framing beats technical framing. Do not title the project \"XGBoost with Feature Engineering.\" Title it \"Predicting which customers will churn, saving a subscription business $40,000 a year.\" The model is the means; the decision is the point. One project per quarter, forever. The habit, not the project, is what compounds. One shipped deployment a quarter, for three quarters, puts you ahead of almost everyone who \"learned ML\" this year. And here is where the modern tooling genuinely helps. When I started, building a portfolio site was itself a two-week side-project — a tax on your actual goal. Today, an AI website builder turns a prompt into a live site in under an hour, which is how I now set up project pages: I used https://misar.dev to take the prompt for a portfolio page straight to a deployed site, then spent my evenings on the ML itself instead of on HTML. Use the tooling so your time goes to models, not to front-end scaffolding. The people who win this race are the ones who realize every hour not spent shipping a model is an hour the market does not pay for. What the Market Pays Per Lane Worth repeating, because a roadmap should optimize for the right target: the market pays very differently for the different ML careers. Applied ML (the tabular majority): $110k–$140k entry, $180k–$230k senior in the US; $75–$150 per hour freelance once you have shipped proof. ML platform / MLOps: at parity with applied ML, and the shortest supply — a backend engineer is already 80% of the way there. Domain hybrid: pays a premium for the domain expertise, not for the ML. A forecaster who understands logistics is a different market from a generic ML engineer. Research: the highest ceiling, the highest barrier, and the only lane where this deploy-first roadmap does not apply. The roadmap above targets applied ML with a deployment differentiator, because that is the lane with the shortest path from learning to income — which is what a career roadmap is for. Optimize for the lane you can enter, not the lane that sounds impressive. How to Know You Are Stalled Roadmaps fail, so here are the four symptoms that mean the plan needs a reset, not more hours: You have been \"in Phase 1\" for three months. Your workspace has more saved course tabs than saved projects. You keep researching the \"right\" framework instead of finishing the current model. Your model exists, but no one but you has ever run it. The fix for every one of these is the same: shrink the deliverable. One small model, deployed, this week. Not the roadmap's deliverable — a smaller one. Momentum matters more than the milestone, and a tiny shipped thing is worth more than a large planned one. The Questions People Actually Ask Do I need calculus? Not to start. Pull in the specific pieces when a technique actually requires them. Should I learn PyTorch or scikit-learn first? scikit-learn. It teaches the workflow without the GPU. PyTorch arrives in Phase 3 if your lane needs it. Are Kaggle competitions a good use of time? For learning, yes. For the portfolio, no — a competition notebook is not a deployed artifact. This roadmap's Phase 5 is deliberately URL-based, not leaderboard-based. Can I skip deployment? Then you are aiming at the research lane, or at a job that does not exist in the volumes people assume. Deployment is the differentiator; skipping it is skipping the payoff. How many projects before the first client? Usually one, if it is deployed, documented, and aimed at a real business problem. One shipped deployment outcompetes ten notebooks. The Application: How to Actually Start Tonight Roadmaps are cheap; starting is not. So here is the application layer — what \"start today\" concretely means: Tonight: install Python, create a plain project folder for your lane, and run your first scikit-learn fit on a built-in dataset. Thirty minutes. The point is that the first session ends with a model that made a prediction, not with a syllabus. This week: pick your lane dataset from a public source and get it into pandas — you are now in the 10% of beginners who actually touched data. This month: finish the first real model and split your data correctly. Correct splitting — no leakage — is the most underrated skill in the field, and it is exactly where beginners silently cheat themselves. By month 7: your model is in a container on a server. This is the milestone that changes everything. The Honest Cost-Benefit of This Roadmap Time cost: roughly 500–700 focused hours to reach deployable — nine to twelve months at 15 hours a week. Money cost: zero for the tooling (all of it is free and open source), maybe $20 a month for a cloud server during the deployment phase. Expected payoff: $110,000+ salary or $75+/hour freelance within 12–18 months of the first deployment. Compare that with the alternative I lived: four months of theory, a year of courses, and zero income. The roadmap above is not faster in hours — it is faster in income , because every phase produces a shippable artifact instead of a certificate. Income is what converts a career path into a career. The Roadmap Is the Discipline If I started today, I would do exactly this: one lane, one library, three models, one deep specialization, deployment as the differentiator, and a portfolio of deployed proof. No math-first detour, no certificate collection, no lane-hopping. The market does not pay for knowledge; it pays for deployed outcomes, and this roadmap is built to produce deployed outcomes on a schedule. Start with Phase 0 tonight — pick a lane, pick a problem. That single decision, made honestly, will do more for your ML career than any course you could buy. The rest of the roadmap is just discipline wearing a timeline. *Gulshan Yad",
+            "url": "https://dev.to/mryadavgulshan/the-machine-learning-career-roadmap-id-follow-if-i-started-today-558i",
+            "source": "DEV Community",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "developpement",
+                "intel",
+                "machine_learning",
+                "programmation",
+                "python",
+                "web"
+            ],
+            "published_at": "2026-09-25T02:30:00+00:00",
+            "collected_at": "2026-09-25T02:47:01.688738+00:00"
+        },
+        {
+            "id": "640d8ab5e80dfddea56074c83f2332b72abea9db42797f779f99a4cc20cac4f5",
+            "title": "I made a small website to check Codex reset",
+            "description": "Hi, I made this small website because I often go X to check if Codex reset. But I found many posts use the word “reset”, and maybe they talk about different thing. Sometimes it is personal reset time. Sometimes many users get a public reset. Sometimes it is banked reset. They are not same, so I try to make it more clear. I made Codex Reset Live . It puts latest public reset news, original source, reset time and history in one page. Personal reset time Personal reset time is from your own account. You can check Settings → Usage to see your 5-hour or weekly reset time. Other people screenshot cannot tell your exact time. My website also cannot read it. I only made a small local timer. You put the time by yourself, and it stays in your browser. Public or global reset This is a public announcement or confirmed reset for eligible users. For this kind of news, I save the time and original source. If I cannot confirm it, the website will not say “YES”. It will show NOT YET , PENDING REVIEW , or UNKNOWN . I think source is important, because one X post can be shared many times and look like new news. Banked reset Banked reset is a reset credit saved in an eligible account. You may use it before it expires. But banked reset does not mean everyone got a global reset. This is one thing I saw many people confuse, so I show it separately. Why I made it simple I do not want use old reset dates to guess the next exact day. History is not a promise. Now the website only does some simple things: show latest public reset signal; link the original source; keep reset history; explain different reset types; send new signal to Telegram. It is free and no signup needed. It cannot see anyone personal usage limit, and it is not affiliated with OpenAI. If you also use Codex, you can take a look . Please tell me what is not clear or what I should add. I am still learning and improving it. Thank you very much :)",
+            "url": "https://dev.to/jiangshan118/i-built-a-small-tracker-because-codex-reset-posts-were-easy-to-misunderstand-3f3b",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "openai",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-25T02:28:19+00:00",
+            "collected_at": "2026-09-25T02:47:01.689073+00:00"
+        },
+        {
+            "id": "180795c6f1c7b8382efa6f21cf72a283878bb6177ad1d7821b5fcade59c0eb4f",
+            "title": "50,000 property tests passed while my app crowned an impostor",
+            "description": "You hear \"buy PEPE\", type PEPE into your wallet, and get fourteen tokens with the same name and the same frog. Which one do you buy? I built a tool to answer that. You type a ticker, and it asks Nansen 's API for every token with that name across chains. Then it checks who actually holds and trades each one: labelled Smart Money, whales, top-PnL wallets, exchange flow, tagged top holders. Exactly one card turns green, or the tool abstains. Last week it crowned a token that its own scorer had flagged as an impostor. My property test ran 50,000 generated cases on that exact decision, and they all passed. While writing this post I found out why, and the answer was worse than I expected. Live: https://whichone.edycu.dev Code: https://github.com/edycutjong/whichone Two rules in two files The engine judges each candidate twice. The impostor rule lives in score.ts . A candidate is an impostor when nothing labelled has touched it, it has no meaningful exchange flow, and it is either brand new or barely held: // packages/core/src/score.ts const impostor = f . labelledWallets === 0 && exchMag < 10 _000 && (( f . ageDays != null && f . ageDays < 14 ) || ( f . totalHolders != null && f . totalHolders < 500 )); if ( impostor ) reasons . push ( \" IMPOSTOR: nothing labelled has ever touched it \" ); The crown rule lives in verdict.ts . It decides whether ranked[0] gets the green card or the tool says \"none of these looks real\". This is how it read before the fix (abridged: I left out the guards for zero results, unscorable chains and failed lookups, which didn't change): // packages/core/src/verdict.ts, before commit 3b5f16f (abridged) export function crown ( ranked : Scored [], sameNameCount : number , q : string ): { winner : Scored | null ; abstainReason ?: string } { const best = ranked [ 0 ]; /* ... guards: 0 results, unscorable, every lookup failed, holders lookup failed ... */ if ( best . score < ABSTAIN_THRESHOLD || ( best . labelledWallets === 0 && ( best . recognisedHolders ?? 0 ) < MIN_RECOGNISED_TO_CROWN )) return { winner : null , abstainReason : \" none of these looks real — nothing labelled has touched any of them \" }; return { winner : best }; } best.impostor isn't read anywhere in it. The score module had already answered the question, and the crown rule never asked. A fix for one bug opened the door Three days earlier, live testing turned up a different failure. SHIB2 was a dead token, about $36K market cap, three years old, with zero labelled wallets, and the tool crowned it REAL. The cause was the holders tiebreak. Nansen's tgm/holders returns an address_label for each top holder, and SHIB2's top holders included a UniswapV2 pool and a SHIB2 Token Deployer . Every token has a pool and a deployer, so those labels prove nothing. That fix excluded structural tags (pools, deployers, ENS/SNS names, burn addresses, the contract itself). It also raised the bar for a candidate with zero labelled wallets: it can be crowned only if at least 3 of its top 20 holders carry a wealth or activity tag, like \"Token Millionaire\" or \"High Activity\". That is MIN_RECOGNISED_TO_CROWN = 3 . I added that clause on purpose as an escape hatch. Nansen's labels are uneven, and some real tokens have no labelled wallets in a 7-day window but plenty of tagged holders. On 2026-09-19, PEPEGA got through that hatch. It had one candidate: 0 labelled wallets in 7 days no meaningful exchange flow 283 holders 7 of its top 20 holders wealth-tagged 283 holders is under 500, so score() set impostor: true . The score cleared the abstain threshold and 7 tagged holders beat the bar of 3, so crown() crowned it anyway. The fix commit put it this way: \"a green card and an IMPOSTOR badge at once.\" The fix takes two lines: // packages/core/src/verdict.ts, after commit 3b5f16f // a card cannot be \"this is the one\" and IMPOSTOR at once: when the best candidate trips the impostor rule, abstain if ( best . impostor ) return { winner : null , abstainReason : \" none of these looks real — the best candidate trips the impostor rule \" }; Here is the CLI output now: PEPEGA — 1 same-name token on Nansen ✖ ethereum 0x9634…c879 PEPEGA 4.68 0 labelled wallets in 7 days · no meaningful exchange flow · 283 holders IMPOSTOR no winner — none of these looks real — the best candidate trips the impostor rule 7 credits · 4 calls (0 cached) · 2.1s · verdict 47b4ac4fc907 Why 50,000 property cases missed it, part one Two days before PEPEGA, I had added property-based tests with fast-check. The crown-rule property generates random lists of scored candidates, ranks them, calls crown() , and checks every winner. It runs 10,000 times for each of five properties, which is where the 50,000 comes from. Everything was green. This is what the property asserted about a winner before the fix: // packages/core/test/property.test.ts, before commit 3b5f16f (the winner check only) return ( winner === ranked [ 0 ] && winner . scorable && ! winner . unchecked && winner . score >= ABSTAIN_THRESHOLD && ! ( winner . labelledWallets === 0 && ( winner . recognisedHolders ?? 0 ) < MIN_RECOGNISED_TO_CROWN ) && abstainReason === undefined ); Each line restates one of crown() 's own if statements, so the property only checked that the function did what the function said. The rule I had missed wasn't in crown() at all. It was a rule about what the user sees: a card is never green and IMPOSTOR at once . That rule crosses two modules, and my tests were organized by module. The fix commit added !winner.impostor && to that list. At the time I thought that closed it. Part two: the generator never made an impostor While writing this post I wanted to say how fast the new assertion would have caught the bug. So I copied the test's generator into a scratch script, paired it with the pre-fix crown() , and counted. The generator draws each wallet class separately, and the labelled count is their sum: // packages/core/test/property.test.ts (abridged: 4 of the 17 fields) smartTraderWallets : fc . nat ( 500 ), whaleWallets : fc . nat ( 500 ), topPnlWallets : fc . nat ( 500 ), publicFigureWallets : fc . nat ( 500 ), // ... . map (( r ) => facts ({ ... r , labelledWallets : r . smartTraderWallets + r . whaleWallets + r . topPnlWallets + r . publicFigureWallets })); For a candidate to have zero labelled wallets, all four independent draws have to land on 0. Across five seeded runs of 10,000 lists, about 44,000 candidates per run, the generator produced zero candidates with zero labelled wallets. So it produced zero impostors, and zero cases where the pre-fix crown() crowned one. Even with the right assertion, the old code passed. It is not just the impostor line. Every branch that matters for a zero-labelled token (the SHIB2 bar, the PEPEGA veto, the failed-holders abstain) was sitting in a corner of the input space the generator never visited. I changed one thing in the scratch copy, not in the repo. Each wallet count became fc.oneof(fc.constant(0), fc.nat(500)) , so zero comes up about half the time for each class. Then I ran it against the pre-fix crown() with the !winner.impostor property. fast-check found a counterexample on all five seeds, after 47, 53, 71, 109 and 244 cases. Two things went wrong, and fixing either one alone would not have caught the bug: The invariant was the implementation restated. Write properties about what the output must never do, not about which branches the code takes. The generator had no weight where the bugs were. A uniform draw almost never produces the edge case your domain revolves around. Here that case was \"zero\". If a value drives a branch, put it in the generator on purpose. As of this writing, the repo's generator still has that gap. The PEPEGA regression test pins the actual bug, so the crown rule is covered. The property test just doesn't cover as much of it as \"50,000 cases\" suggests. The rest of the system The score is plain arithmetic over four Nansen endpoints: search/general : 0 credits tgm/flow-intelligence and tgm/token-information : 1 credit each, for up to 8 candidates tgm/holders : 5 credits, for the top two finalists only Market cap, volume and search rank are left out of the score, because those are what an impostor can buy. The repo includes a benchmark: 12 queries × 2 cold runs against the live API, on 2026-09-16. Cold p50 was 3.6 s , p95 7.2 s , warm p50 3 ms . Verdicts cost 18.6 credits on average and 26 at most. npm run verify replays twelve recorded verdicts offline with the same decision hash. It needs no API access and no network. The web page streams every Nansen call into a side rail as it fires, with the endpoint, credits, latency and a short hash of each response. Limitations search/general decides the candidate set. The tool can't warn about an impostor Nansen hasn't indexed. Label coverage is uneven across chains. A real token on a thinly labelled chain can lose to a bridged copy on a busier one, which is why there's a chain filter. Flow data covers a 7-day window, so a real but dormant token can look quiet. The zero-labelled escape hatch is still there. On 2026-09-16, AI16Z and PEPE UNCHAINED were crowned on wealth-tagged holders alone. The card says \"0 labelled wallets\" so you can see the weakness, but it's a weaker verdict than a green card backed by 90 labelled wallets. DOGE crowns a Solana meme DOGE, because native DOGE has no contract to compare against. USDC is the slow outlier, about 15 s cold. Nansen times out on some of its lookups, and the call drawer shows each timeout. Try it Live: https://whichone.edycu.dev . Try PEPE , then PEPEGA . Code: https://github.com/edycutjong/whichone . npm run whichone -- PEPE --explain prints every term of the score (you need your own Nansen key). If you write property tests, count how often your generator actually produces the values your branches depend on. I hadn't, until this post.",
+            "url": "https://dev.to/edycutjong/50000-property-tests-passed-while-my-app-crowned-an-impostor-2bbo",
+            "source": "DEV Community",
+            "category": "cloud",
+            "tags": [
+                "aws",
+                "developpement",
+                "ethereum",
+                "git",
+                "intel",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-25T02:26:11+00:00",
+            "collected_at": "2026-09-25T02:47:01.690341+00:00"
+        },
+        {
+            "id": "d7a53b5bf47b357c28e6823a033635bb4d2744c3f2e42afa74f7defbe43e2d47",
+            "title": "Nansen called Binance 14 a 'Token Billionaire'. The name cost 1 credit",
+            "description": "It's 2am and you just sent 316 USDT to the wrong address. Maybe it was an old deposit address from an email, maybe a look-alike planted in your history, maybe a contract. You Google \"can I get it back\" and the first three results are recovery scams. What happens next depends on what that address actually is. A Binance customer deposit address means a support ticket and a real chance of recovery. A burn address means it's gone, and anyone offering to recover it is lying. I built Sent Wrong to answer that one question. You paste the address you sent to (and your own, if you like). It runs up to ten calls against Nansen 's API and gives you one of four routes, the evidence behind it, and a support ticket ready to copy. Live: https://sentwrong.edycu.dev Code: https://github.com/edycutjong/sentwrong (MIT) The whole thing depends on the address's entity label . The obvious place to get that label turned out to be the wrong one. The field that should have worked Nansen has cheap profiler endpoints that return a label per address: counterparties (5 credits), first-funder and related-wallets (1 credit each). So the first plan was to profile the address, read its label, and be done. On day one I pointed them at Binance 14, probably the best-known labelled hot wallet on Ethereum. The label that came back was: [ \"Token Billionaire\" ] Coinbase 10 came back as [\"High Activity\"] . Those are wealth and activity tags. They tell you the address is rich or busy. They don't tell you it belongs to an exchange, and they say nothing about a customer deposit address, which is the case that actually gets people their money back. The entity name does exist in profiler/address/labels , which costs 100 credits per call. That's too much to spend by default on every panicked paste. Where the name actually was It turned up, unexpectedly, in transaction-with-token-transfer-lookup . It takes a transaction hash and returns its token transfers, each with a label for both sides. For 1 credit, on the hero address, the sending side read: 🏦 Binance: Deposit [0xe46077] That names the exact customer deposit address, not just the exchange. The receiving side read 🏦 Binance 14 [0x28c6c0] : the sweep into the exchange's own wallet. Nothing in the docs says this endpoint carries entity labels. The repo's decision-table doc says it plainly: the whole engine hangs on that field. That changed the design. I stopped asking \"what is this address?\" and started asking \"which transactions should I look at to find out what this address is?\" Labels live on transactions, so pick transactions The engine gathers in stages: a free search/general call (a token contract stops here), then 14 days of transactions plus the cheap identity lookups, full history for quiet addresses, and finally the choice of which hashes to look up. Abridged from packages/core/src/lookups.ts , with the sender-matching branch removed: // Which transaction hashes to look up: the newest 2 outbound (the sweeps), the newest inbound, the sender's transfer // if we can see it, and the funding transaction. These carry the entity labels the profiler rows do not. const wanted : Array < { hash : string ; role : TxLookup [ \" role \" ] } > = []; if ( transactions . ok ) { const { outbound , inbound } = splitDirection ( transactions . data . data , a ); for ( const r of outbound . slice ( 0 , 2 )) wanted . push ({ hash : r . transaction_hash , role : \" outbound \" }); /* … the sender's own transfer, if --from was given … */ if ( inbound [ 0 ]) wanted . push ({ hash : inbound [ 0 ]. transaction_hash , role : \" inbound \" }); } if ( firstFunder . ok && firstFunder . data . data [ 0 ] && lc ( firstFunder . data . data [ 0 ]. chain ) === chain ) wanted . push ({ hash : firstFunder . data . data [ 0 ]. transaction_hash , role : \" funding \" }); Each hash does its own job: Outbound transactions show where the address sweeps to, and the address's own label. The newest inbound transaction carries the address's own label as a recipient, even if it has never sent anything. The funding transaction shows who paid the address's first gas. Exchanges fund their own deposit addresses, so first-funder → funding tx → 🏦 Binance [0x943080] can name the exchange before the address has swept anything. That's up to four lookups at 1 credit each. The hero verdict costs 13 credits across 10 calls, against 100 for the labels endpoint, which is still available behind --deep (cost printed first; the card says whether it agrees). Parsing a label is its own small trap Labels are free text with emoji and an address stub: 🏦 Binance: Deposit [0xe46077] , 🤖 🏦 Coinbase [0xa9d1e0] , Token Billionaire , sofaking.eth* . The rule behind the most common good-news verdict is short. From packages/core/src/labels.ts , verbatim: /** \"<Entity>: Deposit\" — Nansen's label for a user-level exchange deposit address. */ export function isDepositLabel ( p : ParsedLabel | undefined ): p is ParsedLabel & { entity : string } { return !! p && !! p . entity && /^Deposit$/i . test ( p . role ?? \"\" ); } Getting there took two regression tests: 🏦 doesn't mean \"exchange.\" Nansen puts the same bank emoji on DEX routers: 🤖 🏦 Uniswap: V2 Router 2 . A router's outflow looks exactly like a sweep, so any label that names a contract (Router, Pool, Proxy, …) is now kept out of the sweep rule. Direction matters. A : Deposit label on a destination means a person is depositing into an exchange. That makes the sender an ordinary user wallet, not a deposit address. One of the recorded live runs hit exactly this, and it's now a named regression test: \"a user wallet sending to its own ': Deposit' address is NOT a deposit address.\" The refusal is the answer On burn addresses, transactions and counterparties return HTTP 422 Burn address not allowed . It reads like an error. It's actually the most certain answer the API gives, so it's rule 1 in the decision table: export function isBurnRejection ( r : LookupResult < unknown > ): boolean { return ! r . ok && r . status === 422 && /burn address/i . test ( r . error ); } Paste 0x…dEaD and you get a red CONTRACT OR BURN card with the evidence line profiler/address/transactions → HTTP 422 = Burn address not allowed and the sentence \"Do not pay anyone who promises recovery.\" This check runs before any transaction lookups, so a burn verdict costs 2 credits. The flip side: a 422 is an answer about the input, so it's cached and replayed; a timeout or 5xx is not, so a failed transactions lookup yields a retry , never a verdict. An early build turned a slow minute into \"nothing on record\", a made-up verdict. A property test now checks, over 10,000 generated response sets, that this can't happen. What it looks like end to end Real output from --explain --no-cache , from the repo's DEMO.md (abridged to the verdict and totals): EXCHANGE-DEPOSIT (high · direct-label) This is a Binance deposit address. Recoverable through Binance support. ✔ Nansen has this exact address labelled as a Binance customer deposit address. transaction-with-token-transfer-lookup → token_transfer_array[].from_address_label = 🏦 Binance: Deposit [0xe46077] ✔ Everything it receives is swept into Binance's own wallet. transaction-with-token-transfer-lookup → token_transfer_array[].to_address_label = 🏦 Binance 14 [0x28c6c0] ✔ All outflow ($2,953 at today's prices) goes to one counterparty: the sweep pattern of a deposit address. profiler/address/counterparties → volume_out_usd = 100% to 0x28c6…1d60 ✔ Binance paid this address's first gas — exchanges do that for their deposit addresses. profiler/address/first-funder → first_funder_address (looked up) = 🏦 Binance [0x943080] … 13 credits · 10 calls (0 cached) · 3.9s · verdict 3ea6cfcd752b The numbers. A benchmark of 13 real addresses × 3 runs with every call live gave a cold p50 of 3,157 ms and p95 of 6,477 ms , a mean of 10.2 credits per verdict (0 to 13), 309 live calls and 0 failures other than the expected 422s. Warm from the 24 h cache it's p50 2 ms at 0 credits, with the same decision hash every run. There are 234 vitest tests. 13 recorded fixtures replay offline with identical hashes ( npm run verify , no key, no network). Honest limits Latency is Nansen's. Per-call latency varies from 0.3 to 3 s depending on the minute, so a cold verdict takes 4–13 s. On Vercel the cache is in-memory per function instance, so a cold start is fully live. \"Nothing on record\" is ambiguous. It can't tell a brand-new address from one Nansen doesn't index. vitalik.eth returns empty profiler pages and comes back as a low-confidence fresh stranger. The card says so instead of promising that waiting will help. Ethereum is the deeply tested chain. Seven other EVM chains go through the same endpoints, but only Base has been checked live. Odds on the stranger route are words, not numbers. Nansen can tell whether a wallet moves funds. Nobody can tell whether its owner is honest. It's triage, not legal advice. Every route's text tells you not to pay recovery services. The takeaway If an API returns labels in more than one place, don't assume the cheapest field is a cheaper copy of the expensive one. Here they were different kinds of label: wealth tags on the profiler rows, identity on the transfer rows. Test the field on an address whose answer you already know. Binance 14 took one call to show the problem. Try it at https://sentwrong.edycu.dev , or clone https://github.com/edycutjong/sentwrong and run npm run verify without a key. The 30-second demo is on X . If you've been sent here after a 2am mistake: paste the address before you reply to anyone offering help.",
+            "url": "https://dev.to/edycutjong/nansen-called-binance-14-a-token-billionaire-the-name-cost-1-credit-4cm2",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "ethereum",
+                "git",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-25T02:26:09+00:00",
+            "collected_at": "2026-09-25T02:47:01.691845+00:00"
+        },
+        {
+            "id": "4fca1e2fd15642012077ba26519fa1720bfe8483f4c9d0fdbf8f79bc507dfd4c",
+            "title": "I built a sell planner to dodge the pros. They were under 4% of buys",
+            "description": "Somebody hands you a token you never asked for, and now you have to turn it into dollars. Maybe a nonprofit got a $40K memecoin donation, or a freelancer got paid in a project's token. They have never used a DEX, and they don't want to be the seller who knocks the price down, or the one selling into a day when the funds are dumping too. I built Glidepath for that person. You paste token, chain and amount held. It gives you a dated selling calendar: one tranche per day, each sized to the token's organic demand, with a .ics file so the plan lands in your calendar. It plans. It never trades. Live: https://glidepath.edycu.dev Code: https://github.com/edycutjong/glidepath (MIT) The whole design rested on one assumption. The data knocked it down in the first afternoon. This post covers what I assumed, what Nansen 's labels showed, and which part of the product turned out to do the real work. The assumption My premise was that a big chunk of a memecoin's DEX buying comes from pros: Smart Money wallets, funds, whales, exchanges, sniper-bot users. If you size your daily sell against headline volume, you are sizing it against money that can leave the same afternoon. So take the pros out, size against what's left, and call that organic demand. Nansen can do that split, because its wallets carry labels. The list of labels that make a buyer \"not organic\" lives in one constant: /** * Labels that make a buyer \"not organic\": Nansen's Smart Money tiers, funds, whales, exchanges and the Telegram * sniper-bot user tags. From the OpenAPI `LabelType` enum; Public Figure / LP / miner labels are deliberately kept — * those are people, not the cohort a forced seller must avoid competing with. */ export const EXCLUDED_LABELS = [ \" Smart Trader \" , \" 30D Smart Trader \" , \" 90D Smart Trader \" , \" 180D Smart Trader \" , \" Fund \" , \" Whale \" , \" Exchange \" , \" Maestro Bot User \" , \" Top Maestro Bot User \" , \" BananaGun Bot User \" , \" Top BananaGun Bot User \" , ] as const ; Surprise 1: you can't see the label you filtered on My first plan was to pull every buyer from tgm/who-bought-sold and classify the rows myself. That doesn't work. The address_label on a row is a display name, not the label the filter matched. On PEPE, the single wallet that exclude_smart_money_labels removed shows up as nftsindubai.eth . Elsewhere, excluded rows read High Balance or <X> Token Deployer . So the organic/pro split only exists on Nansen's side, as a filter. On the 8 tokens I probed, include_smart_money_labels and exclude_smart_money_labels with the same list partitioned the buyer set exactly. That became the pager: // packages/core/src/nansen.ts — abridged: signature and field list trimmed const filters : Record < string , unknown > = {}; if ( filter . exclude ) filters . exclude_smart_money_labels = [... filter . exclude ]; if ( filter . include ) filters . include_smart_money_labels = [... filter . include ]; const rows : WhoBoughtSoldRow [] = []; let pages = 0 ; for ( let page = 1 ; page <= maxPages ; page ++ ) { const res = await client . post < WhoBoughtSoldResponse > ( \" tgm/who-bought-sold \" , { chain , token_address : token , buy_or_sell : \" BUY \" , date : { from : iso ( from ), to : iso ( to ) }, pagination : { page , per_page : 1000 }, filters , order_by : [{ field : \" bought_volume_usd \" , direction : \" DESC \" }], } /* , fields, opts */ ); pages ++ ; rows . push (...( res . data ?? [])); if ( res . pagination ?. is_last_page !== false || ( res . data ?? []). length === 0 ) return { rows , pages , truncated : false }; } return { rows , pages , truncated : true }; Surprise 2: you can't page the organic side either The obvious next move was to page the organic buyers and add them up. Then I ran it on 5-to-7-day-old Solana launches. They had more than 20,000 buying addresses in 7 days : 20 pages of 1,000, 110 seconds, 20 credits, and the list was still truncated. So the math is flipped. Glidepath never adds up the organic side. It takes total DEX buys from tgm/token-information and subtracts the pro rows. Across every token I looked at, the pros were at most 67 wallets, so that list is one page, three at most: // packages/core/src/plan.ts — computePlan, the organic-demand block (abridged: surrounding code omitted) if ( totalBuy7dUsd != null ) { if ( proBuy7dUsd == null ) { organicBuy7dUsd = totalBuy7dUsd ; organicShare = null ; warnings . push ( \" pro-buyer split unavailable (who-bought-sold failed) — organic = all DEX buys \" ); } else { organicBuy7dUsd = Math . max ( 0 , totalBuy7dUsd - proBuy7dUsd ); organicShare = totalBuy7dUsd > 0 ? organicBuy7dUsd / totalBuy7dUsd : null ; } } // from the pager's own flag: a list that ends exactly on page 3 is complete, not truncated if ( facts . proTruncated ) warnings . push ( `pro-buyer list truncated at ${ facts . proPages } pages — organic volume is an upper bound` ); const organicDailyUsd = organicBuy7dUsd == null ? null : organicBuy7dUsd / 7 ; That last comment is a bug I fixed later. The warning used to fire on proPages >= 3 , so a pro list that happened to end on exactly page 3 was reported as truncated when it was complete. Surprise 3: the premise was wrong Once the subtraction worked, I printed the split for real tokens. Here is PEPE, recorded live on 2026-09-16: organic buys $458,738/day = ($3,236,056 DEX buys 7d − $24,893 by Smart Money/Fund/Whale/Exchange/bot users [1 wallets]) / 7 · organic share 99.2% · 528 organic buyers One labelled wallet. 99.2% organic. And PEPE wasn't unusual. On all 11 tokens I tried, pros were 0–3.6% of DEX buy volume. Majors came out 98.5–100% organic. Fresh Solana launches came out 96.4–96.7%. The four sniper-bot labels matched zero rows, even on pump.fun launches with 20,000+ buyers. I kept them in the exclusion list, but I don't claim they do anything. So the label filter I built the product around moves the \"organic\" number by a few percent. That's worth knowing, but it isn't the headline. I had a choice: make the split look dramatic on screen, or show it at its real size. The app shows it at its real size, and the README lists it as a limitation. What actually changes the calendar The part of Nansen's data that visibly changes a plan is cohort flows , not buyer labels. Glidepath marks a day red if Smart Money is net-selling, or if exchanges are receiving more tokens than organic buyers absorb in a day: /** Red-day test: Smart Money net-selling past θ_sm, or net deposits to exchanges past θ_ex. */ export function redDay ( smNetUsd : number | null , exNetUsd : number | null , th : Theta ): { red : boolean ; reason : string | null } { const fmt = ( v : number ) => ` ${ v < 0 ? \" − \" : \" + \" } $ ${ Math . round ( Math . abs ( v )). toLocaleString ( \" en-US \" )} ` ; if ( smNetUsd != null && smNetUsd < - th . smUsd ) return { red : true , reason : `Smart Money net ${ fmt ( smNetUsd )} ` }; if ( exNetUsd != null && exNetUsd > th . exUsd ) return { red : true , reason : `Exchange net deposits ${ fmt ( exNetUsd )} ` }; return { red : false , reason : null }; } export function theta ( organicDailyUsd : number | null ): Theta { const d = organicDailyUsd ?? 0 ; return { smUsd : Math . max ( THETA_FLOOR_USD , THETA_SM_SHARE * d ), exUsd : Math . max ( THETA_FLOOR_USD , THETA_EX_SHARE * d ) }; } \"Today\" comes from tgm/flow-intelligence . The 13 complete days before it come from tgm/flows daily cohort history. A red today halves the first tranche, and the red-day rate over the last 13 days stretches the expected finish date. On PEPE's 16 September run, 4 of the 13 days had been red, all from exchange deposits between +$499K and +$1.92M. That turned a 2-tranche plan into \"expect ~3 days\". When I recorded the demo on the 19th, today itself was red (+$736K net exchange deposits) and the first tranche was halved on camera. The exchange threshold is a full day of organic buying, and that's on purpose. For CEX-listed tokens, ±$1M of exchange flow is routine shuffling. The threshold is the point where you would really be competing with the pros. Tranche size is min(k × organic/day, 1% of liquidity_usd) , where k slides from 10% down to 3% as Nansen's peer-percentile risk indicators rise. For PEPE that came to 2 tranches, $30,598 then $9,372. Under a constant-product model the estimated cost is $147.90, against $230.36 for dumping the whole bag today. Testing the planner computePlan is a pure function of (facts, input, now) , so it's cheap to test hard. There are 6 fast-check properties at 10,000 runs each, 60,000 generated cases . They check that tranches plus remainder equal the bag, that every tranche stays under both caps, that a red today halves tranche 1 and only tranche 1, and that the dates are consecutive. On its first run it found a real bug. At a dust price, the liquidity cap underflowed to a tranche of zero tokens, and the planner printed 90 empty rows. The fix is one guard: // packages/core/src/plan.ts — sizeTranches (abridged: loop omitted) // a tranche of zero tokens (liquidity cap underflowing at a dust price) would otherwise emit MAX_DAYS empty rows: // nothing can be sold at this pace, so the calendar is empty and the whole bag is the unsold remainder if ( ! ( trancheTokens > 0 )) return { tranches , days : 0 , truncated : true , remainderTokens : amount , remainderPct : 1 }; The suite has 258 vitest tests in total. 13 recorded live plans replay offline byte-for-byte with zero network calls. Cold plans run p50 3.5 s / p95 6.0 s against live Nansen, averaging 13 credits each (12 on EVM chains, 15 on solana/base, where three trade/quote calls replace the cost model with a real route). Limitations The cost model is an approximation. It treats liquidity_usd as one pool with the token on one side. That's optimistic for tokens whose depth sits in a single thin pool, and it ignores MEV and gas. Only solana and base get a real routed quote. Future days can't be known red or green. Each calendar event carries the rule, so you re-check it on the morning. Two definitions of \"Smart Money.\" Today's test uses flow-intelligence's smart_trader cohort. History uses tgm/flows ' smart_money cohort. For PEPE that's 21 wallets vs 18 holders. A nonexistent-but-valid address still spends 12 credits , because the calls fan out in parallel with no existence check first. Stablecoins get no history strip. tgm/flows refuses them with a 422, and the plan says so. This is not financial advice. It is a pacing calculator with its reasoning shown. Try it Live: https://glidepath.edycu.dev . Click the PEPE or BONK chip, then open \"Every Nansen call\" to see what each number came from. Whether today is red depends on that day's flows. Code: https://github.com/edycutjong/glidepath . npm run verify replays all 13 plans with no key. Built for the Nansen Meridian Buildathon. The entry post is here on X . If you've measured the pro share on a token where it's actually large, I'd like to see the number.",
+            "url": "https://dev.to/edycutjong/i-built-a-sell-planner-to-dodge-the-pros-they-were-under-4-of-buys-4h82",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "git",
+                "intel",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-25T02:26:08+00:00",
+            "collected_at": "2026-09-25T02:47:01.693559+00:00"
+        },
+        {
+            "id": "17417361fe597d6cc1fd4ff471795ba5c13ed2083c5c806bf4e66503eeb8cf69",
+            "title": "Jev and System One Models: Calibration Beats Accuracy",
+            "description": "Comments",
+            "url": "https://www.kartikpansuriya.com/blog/jev-system-one-model-calibrated-decisions",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-25T02:24:21+00:00",
+            "collected_at": "2026-09-25T02:47:01.204376+00:00"
+        },
+        {
+            "id": "3da5c5f5242a351f837a1e3d80b6953a1f0c56806884a5dd147db8b78081d119",
+            "title": "Beyond the Risk Score: An Agentic Fraud Investigator on TigerGraph",
+            "description": "About Fraud teams don't lack signals — they lack time to connect them. We built an agent that takes a single fraud alert (a risk score, a customer complaint, or an analyst's request) and does what a human investigator would: pull the transaction history, walk the graph to find shared devices, regions, and cards, compare it against past cases, and decide — with evidence, not just a score — what to do next. Built for the TigerGraph Agentic Fraud Investigation hackathon on the HHGOA_IEEE dataset. What we built An agent that investigates a fraud alert end-to-end: gathers evidence, assesses the likely fraud pattern and risk, opens and progresses a case, asks for more evidence when it's genuinely unsure, and recommends (or auto-executes, within policy) the next action — then writes the whole investigation back into the graph so future cases can learn from it. It runs against 20 benchmark alerts and produces one structured case file per alert, with the reasoning and evidence trail attached. The architecture The flow mirrors how a human investigator works: trigger → open/lookup case → investigate (deterministic graph queries first) → assess (LLM reasons over the evidence) → check uncertainty → request more evidence if needed → re-assess → apply policy → explain → write to memory. Deterministic code (not the LLM) decides exposure math, approval routes, and SAR-vs-case calls, so the model's job is reasoning and explanation, not enforcing rules it might get wrong. Every step is logged to a trace so the whole investigation can be replayed in the UI. How TigerGraph is used A graph schema connecting customers, cards, transactions, devices, regions, and email domains, plus our own AgentCase vertices that are the case memory. GSQL queries for the actual investigation work: pulling a card's transaction window, its normal baseline behavior, and its neighbors by shared device/region/email. A graph algorithm to find fraud rings rather than checking cards one at a time. Vector search over closed historical cases for GraphRAG — retrieving similar past investigations and their outcomes, then expanding them in the graph for real evidence, not just text similarity. TigerGraph MCP exposes all of this to the agent as callable tools, so every graph lookup the agent makes is a logged, auditable tool call. The agentic capabilities we implemented Multi-trigger investigation (risk score, customer report, analyst request); evidence gathering across graph, transaction history, and prior cases; pattern and risk assessment; case creation and progression as evidence arrives; case memory that future investigations query; controlled evidence requests (customer validation, step-up auth, analyst input) only when uncertainty is genuinely unresolved; policy-bound next-best actions with approval routing (auto vs. requires human sign-off); and explicit stopping logic so the agent doesn't over-investigate once it has enough to act defensibly. What we learned A risk score alone is a weak signal — most high-score transactions in this data turned out legitimate, so the agent has to earn its confidence from graph evidence, not the score. Base rates matter: historical closed cases skew heavily toward confirmed fraud, but real-world alerts are much closer to 50/50. Training our judgment on history alone would have made the agent trigger-happy. Shared attributes (a device, a region) are only meaningful when they're rare — common device profiles connect thousands of unrelated cards and mean nothing on their own. Separating \"reasoning\" (LLM) from \"enforcement\" (deterministic policy code) made the agent far more consistent and easier to debug. What we'd improve with more time Tighter calibration of fraud probability against a larger backtest sample. A live autonomous monitor that scans new alerts proactively instead of only responding to the 20 benchmark cases. Richer UI visualization of the fraud-ring graph for analysts. More regulatory reference material fed into GraphRAG for stronger SAR narratives.",
+            "url": "https://dev.to/ankit_khatkar_5112/beyond-the-risk-score-an-agentic-fraud-investigator-on-tigergraph-5e3d",
+            "source": "DEV Community",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "developpement",
+                "git",
+                "llm",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-25T02:24:18+00:00",
+            "collected_at": "2026-09-25T02:47:01.694082+00:00"
+        },
+        {
+            "id": "e495143608657520e1170325c1c75563e9cc2daf5a470fb83e5fd90abdc97267",
+            "title": "I rerolled one AI video prompt 10 times. The prompt was the problem, not the dice.",
+            "description": "When an AI video clip comes out wrong, the reflex is to hit generate again. Sometimes that's right: video models are probabilistic, and some takes are just weaker than others. But when the same thing goes wrong ten times in a row, it's not the dice. The experiment I wanted a 5-second vertical clip of a coffee spill in a café. One line: A barista bumps a customer's elbow and a paper coffee cup slips and spills onto the café floor next to white sneakers, slow motion, handheld close-up, warm morning light. I generated it 10 times with the same settings (9:16, 5 s). Top row (before): the cup falls, rolls, lands upright. The spill, which was the whole point, barely happens in any of them. Bottom row (after): the same app and settings, with a rewritten prompt for just the spill. The splash lands on the sneaker in 10 out of 10. What was actually wrong Nothing exotic. Two mistakes that show up in almost every failing video prompt: 1. Two actions fighting in one clip. \"A barista bumps an elbow\" and \"the cup spills.\" In 5 seconds the model has to stage a bump, a slip, a fall and a splash. It picks some of that and drops the rest. 2. The key action was the last clause. The spill came after the barista, the elbow, the cup and the café. Models tend to weight what comes first. Mine kept delivering the setup and skipping the payoff. A real film crew would never shoot it that way. The director would break it into shots. The DP would frame the spill tight at floor level with a locked camera, because liquid physics is hard. The script supervisor would flag that one clip is trying to do two things. So the rewrite for the spill shot was: Extreme close-up at floor level, 50mm lens, locked-off camera, on clean white leather low-top sneakers standing on a polished grey concrete floor. Black coffee splashes down onto the sneaker toe and spreads across the concrete in a wide splatter, droplets bouncing. 2x slow motion. Warm morning sunlight raking from camera-left, hard highlights on the wet coffee. 35mm film look, fine grain. One subject. One action, stated first in its own sentence. One camera instruction. The bump becomes its own shot. It isn't perfect. In a few takes the coffee reads a bit syrupy, so the next change would be dropping slow motion to real time. But now I'm fixing texture, not whether the shot happens at all. The checklist These are the rules I now run every video prompt through: One action and one camera move per shot. Two actions means two shots. Lead with the action. Put the event you need first, with a clear start and end. Describe the frame, not the feeling. \"Tense\" isn't something a camera can see. \"Jaw clenched, eyes on the door\" is. Name a lens and a light source. \"50mm, window light from camera-left\" does more than \"cinematic.\" Frame hard physics tight. Pours, splashes, hands and small objects: close-up, simple background, locked camera. Paste character descriptions verbatim in every shot. Paraphrasing a character gives you a different person. No readable text in frame. Add it in the edit. Delete empty quality words. \"8k, masterpiece, stunning\" push out words that help. After a bad take, change one thing. If you change five things you learn nothing from the reroll. I turned it into an agent skill Running that checklist by hand gets tedious, so I packaged it as an open-source agent skill: ai-film-crew . It runs your idea past seven roles, each with one job: Role Catches Director mood-only beats, slow openings Production designer characters drifting between shots (writes a continuity bible) DP combined camera moves that warp geometry Gaffer flat, evenly lit \"AI look\" Editor shots longer than the model can generate Sound audio cues sent to silent models Script supervisor continuity, feasibility, slop; can veto any shot It has three modes: Plan: idea in, shot list and one prompt per shot out Fix: paste a failing prompt, get the problems ranked and a rewrite Review: describe a bad clip, get the one change to make before rerolling It works with Wan, LTX, HunyuanVideo, Kling, Veo, Seedance, Hailuo and Runway, and it runs in Claude Code, Codex, Cursor or anything else that reads SKILL.md : npx skills add HEOJUNFO/ai-film-crew Then just ask for a video: > 15s vertical ad for a handmade ceramic mug, for Kling > this prompt keeps failing: \"a chef flips a pancake in slow motion, cinematic, 8k\" The coffee example and a full Kling ad plan are in the repo's examples/ folder. Disclosure I work on Ludyte , an AI video app, and both rows of clips above were generated there. The skill is MIT-licensed and model-agnostic; nothing in it depends on Ludyte. If an adapter for your model is out of date, or you have a before/after that proves a rule wrong, PRs are welcome. The per-model advice goes stale fast.",
+            "url": "https://dev.to/heojunfoi/i-rerolled-one-ai-video-prompt-10-times-the-prompt-was-the-problem-not-the-dice-5bbe",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "anthropic",
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-25T02:22:42+00:00",
+            "collected_at": "2026-09-25T02:47:01.694789+00:00"
+        },
+        {
+            "id": "0a1b747674a111a1ba0b66d7e6cd845488513029c484372ff412dc56fdb2d34a",
+            "title": "XRP Average Long-Term Trader Still Down 11.75% After Rebound",
+            "description": "XRP’s recent rebound has not lifted its average long-term trader back into profit, according to Santiment. Among five major cryptocurrencies, XRP shows an 11.75% loss, while bitcoin, ether, and chainlink show small gains. XRP Remains in the Red After Its Rebound XRP and dogecoin were the only two coins showing average losses in Santiment’s Sept. […]",
+            "url": "https://news.bitcoin.com/market-updates/xrp-average-long-term-trader-still-down-11-75-after-rebound/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-25T02:10:01+00:00",
+            "collected_at": "2026-09-25T02:47:16.420362+00:00"
+        },
+        {
+            "id": "342ca6964941312a6da22fd80bd9f658af47b8337986a5cb2b67759e8f78e5d4",
+            "title": "Pencils Down, Eyes Open: A Rails Developer After Rails World",
+            "description": "Comments",
+            "url": "https://caio.ca/blog/pencils-down-eyes-open-rails-world",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-09-25T01:31:43+00:00",
+            "collected_at": "2026-09-25T02:47:01.433521+00:00"
+        },
+        {
+            "id": "b2ce8663707a390be871f58537932f49627e4bf79b18775fa1f4c47d41a17d4f",
+            "title": "100 Coinbase Users Trusted Fake Support and Lost Nearly $16M",
+            "description": "A Brooklyn man who posed as a Coinbase representative and stole nearly $16 million from about 100 people has been sentenced to four to 12 years in prison. A judge also ordered him to pay nearly $16 million in restitution. Coinbase Users Lost Nearly $16 Million Some individual victims lost $1 million or more after […]",
+            "url": "https://news.bitcoin.com/regulation-and-legal/100-coinbase-users-trusted-fake-support-lost-nearly-16m/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto",
+                "rust"
+            ],
+            "published_at": "2026-09-25T01:30:08+00:00",
+            "collected_at": "2026-09-25T02:47:16.420471+00:00"
+        },
+        {
+            "id": "14c2b6e820e7f41b5fc36ca1daa95e1cd685b49fd9a61f1fd4fa50fd7f7ab523",
+            "title": "Launching FreeBSD/EC2 desktop AMIs",
+            "description": "Comments",
+            "url": "https://www.daemonology.net/blog/2026-09-24-Launching-FreeBSD-EC2-desktop-AMIs.html",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-09-25T01:17:51+00:00",
+            "collected_at": "2026-09-25T02:47:01.433713+00:00"
+        },
+        {
+            "id": "9174b9fec5786f404831e700e4bdaa9dbe4f63197045ffd8477a9235b46c7923",
+            "title": "Nintendo Reportedly Rejected A Ubisoft Zelda Spin-Off Starring Ganondorf",
+            "description": "What if? A new \"exclusive\" report from Insider Gaming's Tom Henderson has supposedly lifted the lid on a Ubisoft Zelda project that never saw the light of day. The story, which is based on \"reporting conducted over more than 18 months\" and has been \"independently corroborated\", claims Ubisoft Milan (the Mario + Rabbids studio) pitched a Zelda spin-off featuring a previously unknown protagonist. Nintendo apparently liked the concept but told Ubisoft to replace the character with Ganondorf. Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/news/2026/09/nintendo-reportedly-rejected-a-ubisoft-zelda-spin-off-starring-ganondorf",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-09-25T00:55:00+00:00",
+            "collected_at": "2026-09-25T02:47:14.581244+00:00"
+        },
+        {
+            "id": "ad244864a1d197c488373ab47406f4cf3ee4879dcaff87393909b9bb0318a347",
+            "title": "XRP Became Programmable, Then Gained Vaults and Wider DeFi Access",
+            "description": "A year after FXRP launched, XRP holders can use a representation of their tokens in vaults, lending markets, and applications on Ethereum. Flare says about 130 million FXRP is now deployed in decentralized finance. One Year After FXRP Launched Flare marked FXRP’s first anniversary by tracing how XRP gained access to financial applications beyond the […]",
+            "url": "https://news.bitcoin.com/featured/xrp-became-programmable-then-gained-vaults-and-wider-defi-access/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto",
+                "ethereum"
+            ],
+            "published_at": "2026-09-25T00:50:33+00:00",
+            "collected_at": "2026-09-25T02:47:16.420579+00:00"
+        },
+        {
+            "id": "743b9e7b3b4971dd6f466c6945782168f02b4ce5de3169cb9233a14a4788ebf7",
+            "title": "‘Bull Market Confirmed’: Analyst Flags Bitcoin’s Fifth Historic Signal",
+            "description": "Bitcoin has produced a fifth historical signal that a new analysis interprets as confirmation of a bull market. The reading follows a July signal that the bear market was nearing its end, while ETF inflows provide another sign of renewed demand. Bitcoin’s Fifth Bull Market Signal Bitcoin’s latest signal reflects a change in what newer […]",
+            "url": "https://news.bitcoin.com/market-updates/bull-market-confirmed-analyst-flags-bitcoins-fifth-historic-signal/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-25T00:10:50+00:00",
+            "collected_at": "2026-09-25T02:47:16.420707+00:00"
+        },
+        {
+            "id": "ebf1f5ad5a6669936e6f2112fe22ac3f38d222debe4c5eafe407a6b3ef9d598e",
+            "title": "Brazil Orders Reporting of $10K Self-Custody Crypto Wallet Trades",
+            "description": "The new measures aim to strengthen the central bank’s AML/TF oversight over digital asset transactions where wallets are under complete user control, a situation that the bank says “can reduce the availability of information for monitoring and risk assessment purposes.” Central Bank of Brazil Eyes Self-Custody Wallets In New Resolution The Central Bank of […]",
+            "url": "https://news.bitcoin.com/regulation-and-legal/brazil-orders-reporting-10k-self-custody-wallet-trades/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto",
+                "git"
+            ],
+            "published_at": "2026-09-24T23:39:58+00:00",
+            "collected_at": "2026-09-25T02:47:16.420818+00:00"
+        },
+        {
+            "id": "32f37a75309c7c75e2b772834e38c2ff0789a1a75edd31b5a2829ae1084a234c",
+            "title": "Waymo is scaling fast. Here’s what the fleet data shows.",
+            "description": "In the past month, Waymo has expanded its fleet in Texas by 49%. There are other hotspots as well.",
+            "url": "https://techcrunch.com/2026/09/24/waymo-is-scaling-fast-heres-what-the-fleet-data-shows/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-09-24T23:24:33+00:00",
+            "collected_at": "2026-09-25T02:46:59.209587+00:00"
+        },
+        {
+            "id": "4ceb9fc2285ee918a0c86180bdf4a46dbbc2a453883ffd074e2a44d67b918bb2",
+            "title": "Introducing Lev",
+            "description": "Comments",
+            "url": "https://yogthos.net/posts/2026-09-24-introducing-lev.html",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-09-24T23:11:11+00:00",
+            "collected_at": "2026-09-25T02:47:01.433747+00:00"
+        },
+        {
+            "id": "2cd7c8a7ef8d73acb927f895f212c104b67872df31509cde52650984633bf49c",
+            "title": "New York sues Polymarket, alleging it is running an illegal gambling operation",
+            "description": "",
+            "url": "https://www.coindesk.com/policy/2026/09/24/new-york-sues-polymarket-alleging-it-is-running-an-illegal-gambling-operation",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-24T22:41:44+00:00",
+            "collected_at": "2026-09-25T02:47:16.120975+00:00"
+        },
+        {
+            "id": "ecc258ad93fe416079d5461774bd4946f999b12dfdcaf1f5752c32519a68504c",
+            "title": "Gold’s 50-Year Money-Making Trick Just Went Onchain",
+            "description": "Gold lending rates have been quoted every working day for 50 years, yet most people who actually own gold have effectively been locked out of the market. Paxos Labs launched PAXGy on Sept. 24 to change that, wrapping institutional gold-leasing economics into a token backed by pax gold (PAXG). The reserves are deployed to institutional […]",
+            "url": "https://news.bitcoin.com/blockchain/golds-50-year-money-making-trick-just-went-onchain/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-24T22:30:58+00:00",
+            "collected_at": "2026-09-25T02:47:16.420915+00:00"
+        },
+        {
+            "id": "eb4b6aa0094b5940a53e2a4f02a2a6980d0d3efca4f0743251cb90a4c3fbab6c",
+            "title": "CDC opens state ordering for COVID-19 vaccines after unexplained delay",
+            "description": "Health department previously blamed delay on \"not yet finalized procurement decisions.\"",
+            "url": "https://arstechnica.com/health/2026/09/cdc-opens-state-ordering-for-covid-19-vaccines-after-unexplained-delay/",
+            "source": "Ars Technica",
+            "category": "technologie",
+            "tags": [
+                "informatique",
+                "innovation",
+                "technologie"
+            ],
+            "published_at": "2026-09-24T22:29:48+00:00",
+            "collected_at": "2026-09-25T02:46:59.069631+00:00"
+        },
+        {
+            "id": "627482e99b56e5a19753374c571e5f33e9c2a09d6e7f03d465ecc4d6635cc8a1",
+            "title": "U.S. Federal Reserve moves on proposals to implement GENIUS Act for stablecoins",
+            "description": "",
+            "url": "https://www.coindesk.com/policy/2026/09/24/u-s-federal-reserve-moves-on-proposals-to-implement-genius-act-for-stablecoins",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-24T22:28:49+00:00",
+            "collected_at": "2026-09-25T02:47:16.121030+00:00"
+        },
+        {
+            "id": "e8d655039929a11cc5ad2388ea7313255b656a6559b75f4fa5fb6de0507bbd30",
+            "title": "Back and shoulder surgery is often worse than useless",
+            "description": "Comments",
+            "url": "https://www.economist.com/leaders/2026/09/24/back-and-shoulder-surgery-is-often-worse-than-useless",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-24T22:15:58+00:00",
+            "collected_at": "2026-09-25T02:47:01.205377+00:00"
+        },
+        {
+            "id": "6f7031564ad470e1a67124ab1ec6acfb740391e248b508d0b5783574be8fedf3",
+            "title": "Google's TPUs to catch some rays in orbit next week",
+            "description": "Part of Project Suncatcher, the proof of concept aims to see how well lightly modified compute fares in orbit",
+            "url": "https://www.theregister.com/systems/2026/09/24/googles-tpus-to-catch-some-rays-in-orbit-next-week/5298990",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-09-24T22:12:48+00:00",
+            "collected_at": "2026-09-25T02:47:00.155041+00:00"
+        },
+        {
+            "id": "65c81edf5972c6d1a00b5887aced834daf3aad2f3c8cca257245ee9bd29b2f8a",
+            "title": "Ubuntu 26.10 adds Windows-style snap layouts",
+            "description": "Ubuntu 26.10 offers a new way to tile your apps, with a layout picker sliding in from the top of the screen when you move a window. This “dropzone” concept for quick tiling will be familiar to users of Windows 11 users or those who’ve tried the Tiling Shell extension for GNOME Shell – they do, broadly, the same thing. When you drag a window a layout picker with a small set of preset layouts drop zones moves in from the top of the display. You drag your window up over a layout zone (a ‘ghost’ preview of where the […] You're reading Ubuntu 26.10 adds Windows-style snap layouts , a blog post from OMG! Ubuntu . Do not reproduce elsewhere without permission.",
+            "url": "https://www.omgubuntu.co.uk/2026/09/ubuntu-2610-tiling",
+            "source": "OMG! Ubuntu",
+            "category": "linux",
+            "tags": [
+                "desktop",
+                "linux",
+                "ubuntu",
+                "windows"
+            ],
+            "published_at": "2026-09-24T22:01:28+00:00",
+            "collected_at": "2026-09-25T02:47:05.923428+00:00"
+        },
+        {
+            "id": "73297b515a5002b4f9499626ebdec150ed2f92a00f760d40613c451132fd4cff",
+            "title": "Crypto exchange Bitget says $352 million affected in a hack, claims user funds are 'safe'",
+            "description": "",
+            "url": "https://www.coindesk.com/markets/2026/09/24/crypto-exchange-bitget-loses-usd352-million-in-hack-claims-user-funds-are-safe",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-24T21:59:32+00:00",
+            "collected_at": "2026-09-25T02:47:16.121076+00:00"
+        },
+        {
+            "id": "43943e288e79c5692933cfa9d19f74b3dadaef92defed9067724d8bb6bec5b8f",
+            "title": "Forget new models — Gemini’s working on what really matters: dark mode options",
+            "description": "Plus, a new notification archive.",
+            "url": "https://www.androidauthority.com/gemini-dark-mode-3715309/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "gemini",
+                "smartphone"
+            ],
+            "published_at": "2026-09-24T21:45:49+00:00",
+            "collected_at": "2026-09-25T02:47:09.119329+00:00"
+        },
+        {
+            "id": "d2a1ec16e266c6cc53d4c4d96261e1823eeb899979f0e3caf7e4097552ac4d0d",
+            "title": "Bitget Hit by $351M Hack, Withdrawals Frozen as Probe Begins",
+            "description": "What began as hundreds of millions of dollars mysteriously moving from Bitget-labeled wallets now has an answer. Bitget founder Gracy Chen disclosed Thursday that the crypto exchange suffered unauthorized transfers from portions of its hot and warm wallet infrastructure, with the damage estimated at approximately $351.6 million. Tens of Millions in Onchain Transfers Flagged From […]",
+            "url": "https://news.bitcoin.com/security/bitget-hit-by-351m-hack-withdrawals-frozen-as-probe-begins/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-24T21:41:19+00:00",
+            "collected_at": "2026-09-25T02:47:16.421016+00:00"
+        },
+        {
+            "id": "9c4f380eaf5561cda5760f34de0c005418ba8fb06630f2e46167582ec829de19",
+            "title": "Donald Duck's uncle was partly based on Wernher von Braun",
+            "description": "Introducing the \"world-famous authority on outer space...\"",
+            "url": "https://arstechnica.com/space/2026/09/disneys-ludwig-von-drake-was-inspired-by-rocket-scientists-65-years-ago/",
+            "source": "Ars Technica",
+            "category": "technologie",
+            "tags": [
+                "informatique",
+                "innovation",
+                "technologie"
+            ],
+            "published_at": "2026-09-24T21:40:07+00:00",
+            "collected_at": "2026-09-25T02:46:59.069711+00:00"
+        },
+        {
+            "id": "2d9aa2fabffd3ba8f5d7f1f530846926d65209e5f1b124b2733dd8d78114fc6a",
+            "title": "Cathie Wood Takes Ark Invest’s $1.3B Venture Fund Onchain",
+            "description": "Ark Invest is putting its roughly $1.3 billion ARK Venture Fund on Ethereum through Securitize, giving eligible investors a blockchain-based representation of a portfolio that includes OpenAI, Anthropic, Stripe and Databricks. The fund’s NAV has roughly tripled from near $20 at its 2022 launch to about $60.50 on Sept. 23, 2026. A $1.3 Billion Venture […]",
+            "url": "https://news.bitcoin.com/blockchain/cathie-wood-takes-ark-invests-1-3b-venture-fund-onchain/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "anthropic",
+                "bitcoin",
+                "blockchain",
+                "crypto",
+                "ethereum",
+                "openai"
+            ],
+            "published_at": "2026-09-24T21:35:37+00:00",
+            "collected_at": "2026-09-25T02:47:16.421114+00:00"
+        },
+        {
+            "id": "78b04af7b380bba64ce74a9ffcfd622658ae33bf764b5367d68988188af83a8e",
+            "title": "Show HN: Koi.rest – watch some fish and regain your balance",
+            "description": "Comments",
+            "url": "https://koi.rest",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-24T21:33:03+00:00",
+            "collected_at": "2026-09-25T02:47:01.204851+00:00"
+        },
+        {
+            "id": "8cb20bab754047f2e758a934c2955ab70d47dd5eceaa2f44f7acc92361f8abc7",
+            "title": "TestFlight 4.4.0",
+            "description": "Download the appView release notes",
+            "url": "https://developer.apple.com/news/releases/?id=09224026a",
+            "source": "Apple Developer Releases",
+            "category": "mobile",
+            "tags": [
+                "apple",
+                "ios",
+                "iphone"
+            ],
+            "published_at": "2026-09-24T21:30:00+00:00",
+            "collected_at": "2026-09-25T02:47:09.226873+00:00"
+        },
+        {
+            "id": "0ca2e08ad4f897b52bf006f74d92c390a87a54889f813d222e86f59695d06b6c",
+            "title": "Android Auto may finally give GameSnacks the full screen treatment",
+            "description": "Our APK teardown revealed that GameSnacks could soon match other Android Auto games with a fully immersive experience.",
+            "url": "https://www.androidauthority.com/gamesnacks-android-auto-immersive-apk-teardown-3715285/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-09-24T21:14:49+00:00",
+            "collected_at": "2026-09-25T02:47:09.119398+00:00"
+        },
+        {
+            "id": "9e7b4de9cac33374ffd5c56a20c0347fc407db7385fa0be932c55495f177c366",
+            "title": "'Salesbleed' Exploits Salesforce Agents to Enable Slack Phishing",
+            "description": "Agentic AI can smuggle arbitrary instructions from the Web, across multiple apps, into trusted internal communications channels.",
+            "url": "https://www.darkreading.com/application-security/salesbleed-exploits-salesforce-agents-slack-phishing",
+            "source": "Dark Reading",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "enterprise-security",
+                "phishing",
+                "rust"
+            ],
+            "published_at": "2026-09-24T21:04:03+00:00",
+            "collected_at": "2026-09-25T02:46:58.343138+00:00"
+        },
+        {
+            "id": "603740a539b90ba98ef10f841d5d7ce8932142498dfd15dc64f635e7db813e93",
+            "title": "Google’s new Gemini Live Avatars want to make support bots feel more human",
+            "description": "Google's Gemini 3.8 Live Avatars can check you into a hotel while you keep chatting.",
+            "url": "https://www.androidauthority.com/gemini-live-avatar-3715280/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "gemini",
+                "smartphone"
+            ],
+            "published_at": "2026-09-24T21:03:59+00:00",
+            "collected_at": "2026-09-25T02:47:09.119462+00:00"
+        },
+        {
+            "id": "e69a2844d3d1c8d3ecc043a4a94e3531b1f5f50690e48f6e3c76694bc3153d79",
+            "title": "Platform-independent SIMD in Go",
+            "description": "Comments",
+            "url": "https://go.dev/blog/simd-experiment",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-09-24T21:02:52+00:00",
+            "collected_at": "2026-09-25T02:47:01.433675+00:00"
+        },
+        {
+            "id": "62e8486faf85bfa0cbad9ef3117880cc99df5d183b4c69dc155300fed24eb949",
+            "title": "Amazon EventBridge relaunches event buses for enterprise scale",
+            "description": "Amazon EventBridge relaunches event buses with a new enhanced Custom event bus that lets you build event-driven applications that decouple teams and can scale with your organization. Create a custom event bus, share it across accounts, and now teams can publish and consume events with strict ordering, open event formats, built-in retention, and support for advanced event transformations. The EventBridge Custom event bus is a serverless event broker that enables you to create scalable event-driven applications by routing events between your applications, SaaS integrations, and AWS services. It can now be shared with one or more accounts through AWS Resource Access Manager allowing publishers to send events directly to the central event bus. With a new event publishing API, you can now publish events in popular JSON based event formats like CloudEvents and preserve their schema without modification. Custom event buses include 24 hours of built-in retention that can be extended for up to one year allowing you to recover from application errors or hydrate new components from historical data. A new Subscriber resource allows you to filter events and deliver them to over 250 AWS services. Now with native support for strictly ordered use cases, customers can ensure events are processed in the exact order they were received and new event evaluations allow automatic content based deduplication. To get started, you can create and share the new Custom event bus using the AWS Management Console, AWS CLI, AWS SDKs, Serverless Agent skill, and AWS CloudFormation. To help you separate the existing Custom event bus experience from the new enhanced Custom event bus, we have renamed the existing bus to Custom event bus - classic. All existing APIs remain unchanged. The enhanced Custom event bus is available at launch in fourteen AWS Regions: United States (N. Virginia, Ohio, Oregon), Europe (Ireland, Frankfurt, Stockholm, Spain), and Asia Pacific (Tokyo, Singapore, Sydney, Malaysia, Thailand, Mumbai, Hong Kong). We have introduced a new pricing model that charges for data transferred rather than events, and rewards you with lower costs as your workloads scale. To learn more, visit Amazon EventBridge . To learn more, see the AWS News blog , the EventBridge user guide , and the EventBridge product page , or download the agent skills .",
+            "url": "https://aws.amazon.com/about-aws/whats-new/2026/09/eventbridge-relaunches-custom-event-buses/",
+            "source": "AWS What's New",
+            "category": "cloud",
+            "tags": [
+                "amazon",
+                "aws",
+                "cloud"
+            ],
+            "published_at": "2026-09-24T21:00:00+00:00",
+            "collected_at": "2026-09-25T02:47:04.713928+00:00"
+        },
+        {
+            "id": "a8346c8636e8f4b5feb4aa494e16c2fdfd067fe49398932615329ac9622ccf9c",
+            "title": "The Board Game of the Alpha Nerds (2014)",
+            "description": "Comments",
+            "url": "https://grantland.com/features/diplomacy-the-board-game-of-the-alpha-nerds/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-24T20:53:39+00:00",
+            "collected_at": "2026-09-25T02:47:01.205041+00:00"
+        },
         {
             "id": "7265697f416b0e92d6dafd99d9c6521aa04b1c2dc78f5e64a8f03b4c2bbfc1d6",
             "title": "MacSync malware uses public iCloud calendars to deliver new payloads",
@@ -17,6 +692,22 @@
             ],
             "published_at": "2026-09-24T20:53:35+00:00",
             "collected_at": "2026-09-24T20:59:19.093657+00:00"
+        },
+        {
+            "id": "4d38562b9232dce9c87df4ca3a35e216e53e1e735178800faebb78a5f91a0e03",
+            "title": "F-Droid app store thumbs its nose at Google's dev crackdown",
+            "description": "The Chocolate Factory is tightening the screws on Android sideloading, but the FOSS app market is rolling out a huge overhaul and planning for the future",
+            "url": "https://www.theregister.com/applications/2026/09/24/f-droid-app-store-thumbs-its-nose-at-googles-dev-crackdown/5298974",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "android",
+                "entreprise",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-09-24T20:52:29+00:00",
+            "collected_at": "2026-09-25T02:47:00.155113+00:00"
         },
         {
             "id": "975e728b5edb6b4ec18451b82c131c859cb68f241df9eb95cd8eeea7b6402aa7",
@@ -295,6 +986,21 @@
             "collected_at": "2026-09-24T20:59:20.085026+00:00"
         },
         {
+            "id": "d2fc3d06d40b68a8f25c3098d86e541265aa6d79cc421aa2502fe19a2d874329",
+            "title": "California is chasing wealth that has feet",
+            "description": "Comments",
+            "url": "https://blog.landeconomics.org/p/california-is-chasing-wealth-that",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-24T20:34:32+00:00",
+            "collected_at": "2026-09-25T02:47:01.204888+00:00"
+        },
+        {
             "id": "2d4cfaf4c1edbfa3ff96e4f93e914d07d31a842c125ef78931e6c2897ee1a9be",
             "title": "OpenAI agent got into Australia's Medicare stats portal with 84-day notification delay",
             "description": "Australia says an OpenAI agent got past blocks on a Medicare statistics portal in June. OpenAI's notification arrived in September.",
@@ -481,6 +1187,22 @@
             "collected_at": "2026-09-24T20:59:22.252800+00:00"
         },
         {
+            "id": "602f978f5bff6bb9dc2e1d48f5db0c782dd9da0fa5c61c5166053065846dfd11",
+            "title": "Docker's new sandboxes aim to contain AI agents for real",
+            "description": "With Cloud Sandboxes, devs can keep agents at arm's length",
+            "url": "https://www.theregister.com/ai-and-ml/2026/09/24/dockers-new-sandboxes-aim-to-contain-ai-agents-for-real/5298964",
+            "source": "The Register",
+            "category": "devops",
+            "tags": [
+                "docker",
+                "entreprise",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-09-24T19:51:26+00:00",
+            "collected_at": "2026-09-25T02:47:00.155163+00:00"
+        },
+        {
             "id": "2f2df04747b5b666b31285f173098bb713d25bb786f5a54ef783402c4da4385f",
             "title": "Nothing Headphone 1 Pro leak delivers first look at the premium cans",
             "description": "Nothing Headphone 1 Pro breaks cover in latest leak.",
@@ -615,6 +1337,23 @@
             ],
             "published_at": "2026-09-24T19:07:19+00:00",
             "collected_at": "2026-09-24T20:59:20.610901+00:00"
+        },
+        {
+            "id": "076dce41c8fb9e48646e54a543b9123e956144dc99e6193419f7677aa0453c90",
+            "title": "Salesforce Agentforce vulns allowed 0-click CRM data theft, anonymous phishing",
+            "description": "'SalesBleed' security flaws 'lead to very unexpected consequences'",
+            "url": "https://www.theregister.com/security/2026/09/24/salesforce-agentforce-vulns-allowed-0-click-crm-data-theft-anonymous-phishing/5298958",
+            "source": "The Register",
+            "category": "cybersecurite",
+            "tags": [
+                "aws",
+                "entreprise",
+                "informatique",
+                "phishing",
+                "technologie"
+            ],
+            "published_at": "2026-09-24T19:01:15+00:00",
+            "collected_at": "2026-09-25T02:47:00.155210+00:00"
         },
         {
             "id": "30290d8cdac77d28ad1c1aa2f46927ee2f5ac2bfba17a51cf4b3a5c2b06775ff",
@@ -968,6 +1707,21 @@
             "collected_at": "2026-09-24T20:59:19.093775+00:00"
         },
         {
+            "id": "f3bbcdbc405b24316adc555fbff51a1212226de1c9babfab64a7f8fc08501f4b",
+            "title": "Meta's new AI fidget is a ... Tamagotchi?",
+            "description": "We hope Zuck's Muse Charm doesn't die if you neglect it",
+            "url": "https://www.theregister.com/personal-tech/2026/09/24/metas-new-ai-fidget-is-a-tamagotchi/5298936",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-09-24T17:44:35+00:00",
+            "collected_at": "2026-09-25T02:47:00.155259+00:00"
+        },
+        {
             "id": "3286528cfb8b0d0488be3f6babbf88a7c8c94dbb35c78a8110b2487d9c56c4b1",
             "title": "AI Workers' Inquiry 2026",
             "description": "Comments",
@@ -1057,6 +1811,21 @@
             ],
             "published_at": "2026-09-24T17:14:32+00:00",
             "collected_at": "2026-09-24T21:01:51.147853+00:00"
+        },
+        {
+            "id": "537e2fe29e9284878ecb8af74d83bdc50aa841c85f380915e70dafa68bf77f32",
+            "title": "Ubuntu 26.10 beta delayed by a week",
+            "description": "The Ubuntu 26.10 beta, which had been due on 24 September, has been pushed back to 1 October. Canonical’s Matthieu Clemenceau, announcing the delay, said “unforeseen infrastructure issues” require pushing the release back by one week. The exact issue isn’t detailed, but Clemenceau did add that the company expects to resolve the cause shortly and that it doesn’t expect any impact on the final, stable Ubuntu 26.10 release date. That’s still set for 15 October, 2026. While it’s only a bump of a week, it does mean the wider Ubuntu community gets less than two weeks to test the Stonking […] You're reading Ubuntu 26.10 beta delayed by a week , a blog post from OMG! Ubuntu . Do not reproduce elsewhere without permission.",
+            "url": "https://www.omgubuntu.co.uk/2026/09/ubuntu-2610-beta-release-delay",
+            "source": "OMG! Ubuntu",
+            "category": "linux",
+            "tags": [
+                "desktop",
+                "linux",
+                "ubuntu"
+            ],
+            "published_at": "2026-09-24T17:13:00+00:00",
+            "collected_at": "2026-09-25T02:47:05.923595+00:00"
         },
         {
             "id": "49e38cc9e511c187cfcf3f5d7be65827a62124192e503413e521a051ab282df4",
@@ -1180,6 +1949,26 @@
             "collected_at": "2026-09-24T21:01:51.577369+00:00"
         },
         {
+            "id": "0df99032bef2ae9d4e10530b1c5ad07b71f82a614610772517db628a92bf7421",
+            "title": "Decades-old file security flaws found in Android, Linux, macOS, and Windows",
+            "description": "Security researchers report that Microsoft considers the side-channel leak of file events to be by design",
+            "url": "https://www.theregister.com/security/2026/09/24/decades-old-file-security-flaws-found-in-android-linux-macos-and-windows/5298672",
+            "source": "The Register",
+            "category": "cloud",
+            "tags": [
+                "android",
+                "aws",
+                "entreprise",
+                "informatique",
+                "linux",
+                "macos",
+                "technologie",
+                "windows"
+            ],
+            "published_at": "2026-09-24T17:00:00+00:00",
+            "collected_at": "2026-09-25T02:47:00.155306+00:00"
+        },
+        {
             "id": "3517da0d116068b2ab7d17f3b5b04f24cb400c17d454320720f9c71499ff8dce",
             "title": "Google Home error warns users of movement even when they’re at home",
             "description": "Users are getting flooded with notifications.",
@@ -1251,6 +2040,38 @@
             ],
             "published_at": "2026-09-24T16:35:13+00:00",
             "collected_at": "2026-09-24T20:59:20.795634+00:00"
+        },
+        {
+            "id": "59e9041002b04dad8c8d2cbee4ba26f6246ddc9c997c59f2a288c9fef8ee27ee",
+            "title": "iPhone 18 Pro benchmark boosted by giving it a cold drink",
+            "description": "3x the vapor-chamber surface area can only do so much; luckily the fridge helped with sustained performance",
+            "url": "https://www.theregister.com/offbeat/2026/09/24/iphone-18-pro-benchmark-boosted-by-giving-it-a-cold-drink/5298918",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "ios",
+                "technologie"
+            ],
+            "published_at": "2026-09-24T16:34:18+00:00",
+            "collected_at": "2026-09-25T02:47:00.155359+00:00"
+        },
+        {
+            "id": "aa72be045fb2347e7f4043ca741c6e5e85e534f53e34856dc6b31d2a3a35781f",
+            "title": "CVE flood pushes Ubuntu onto weekly kernel release cycle",
+            "description": "AI-assisted bug hunting is helping pile up vulnerabilities faster than defenders can patch them, so Canonical is picking up the pace",
+            "url": "https://www.theregister.com/os-platforms/2026/09/24/cve-flood-pushes-ubuntu-onto-weekly-kernel-release-cycle/5298912",
+            "source": "The Register",
+            "category": "linux",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "linux",
+                "technologie"
+            ],
+            "published_at": "2026-09-24T16:33:00+00:00",
+            "collected_at": "2026-09-25T02:47:00.155410+00:00"
         },
         {
             "id": "3179c5de5974307ad0f47e603ff9f815b6abb2b6ecbfc18a413e6f9af4fd59ce",
@@ -1670,6 +2491,21 @@
             "collected_at": "2026-09-24T21:01:42.477753+00:00"
         },
         {
+            "id": "e71344fd8bf786ee337d34fe517a03c85a5f44ab87a4699c2c513c67151733d9",
+            "title": "AI boom could wipe 230 million budget phones a year from the market",
+            "description": "Sub-$200 shipments forecast to shrink 40% by 2030 as component costs climb",
+            "url": "https://www.theregister.com/personal-tech/2026/09/24/ai-boom-could-wipe-230-million-budget-phones-a-year-from-the-market/5298906",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-09-24T16:00:00+00:00",
+            "collected_at": "2026-09-25T02:47:00.155458+00:00"
+        },
+        {
             "id": "460c93557f43cc5ccfb3d90d4e9932745a0902d11d5b984a7f59786d6d2be11b",
             "title": "Sythetic data generation",
             "description": "Synthetic data often fails in production because domain gaps — especially with transparent objects! I am developing a solution focused on High-Fidelity Validation Assets. By moving beyond \"pretty\" images to industrial-grade evaluation, we can stress-test models against complex refractions and dynamic lighting while maintaining 100% geometric truth. Github-link: https://github.com/ForgeCore-Labs/Synthetic-Glass-Transparent-Packaging-Indoor-Pack",
@@ -1943,6 +2779,21 @@
             ],
             "published_at": "2026-09-24T15:00:00+00:00",
             "collected_at": "2026-09-24T16:14:47.694900+00:00"
+        },
+        {
+            "id": "dd1ff0be079b4ca3b284be0261e78a0b3e76e925a3e871e3074a9d2701418bd0",
+            "title": "AWS Network Security Manager is now generally available in US East (N. Virginia) Region",
+            "description": "Today, AWS announces the general availability of AWS Network Security Manager, a comprehensive network security management solution designed to simplify security policy deployment and enforcement at scale. Network Security Manager supports AWS WAF and AWS Shield Advanced, with support for AWS Network Firewall soon to follow. AWS Network Security Manager enables security teams to consistently enforce firewall and DDoS protection configurations across their entire AWS organization. Network Security Manager features always-on security deployment automation that applies AWS WAD and AWS Sheild Advanced security protection to Internet facing assets like AWS Application Load Balancer and Amazon CloudFront. This automated approach helps security teams deploy and manage WAF rules and Shield Advanced protections efficiently, ensuring consistent security posture across targeted accounts and resources. Teams can centrally manage security policies, automatically detect configuration drift, and apply remediation reducing the operational overhead of manual security management while maintaining comprehensive protection. AWS Network Security Manager is generally available in US East (N. Virginia). For pricing information, visit the AWS Network Security Manager Pricing page .",
+            "url": "https://aws.amazon.com/about-aws/whats-new/2026/09/network-security-manager-us-east-va/",
+            "source": "AWS What's New",
+            "category": "cloud",
+            "tags": [
+                "amazon",
+                "aws",
+                "cloud"
+            ],
+            "published_at": "2026-09-24T15:00:00+00:00",
+            "collected_at": "2026-09-25T02:47:04.714741+00:00"
         },
         {
             "id": "fef3d86a310799acb7876b66cae44bdbba1092adfffbc6e6d7a4569898f7166c",
@@ -4241,6 +5092,58 @@
             "collected_at": "2026-09-24T10:53:56.644815+00:00"
         },
         {
+            "id": "6696aba600af7ac4a89808fbc6e00ed9a207b486f4d45109eba6fb05aba4ae3d",
+            "title": "Amazon SageMaker HyperPod Inference Gateway for scalable LLM inference",
+            "description": "Amazon SageMaker HyperPod Inference Gateway is a Kubernetes-native, GPU-aware routing system that deploys as a single EKS managed add-on on existing SageMaker HyperPod infrastructure with zero application changes. By replacing unintelligent round-robin load balancing with real-time inference-signal-driven routing, it reduces first-token latency by up to 82% and p99 TTFT reductions of 97–98% in mixed-hardware and burst traffic scenarios. The Gateway is built around 3 core components. The Envoy Endpoint terminates HTTPS traffic and exposes a single private endpoint per cluster. The Body-Based Router reads the model name directly from each incoming request and routes it to the correct GPU pool - enabling one gateway to serve many models from a single endpoint URL with no client-side changes required. The Endpoint Picker continuously scores every model server pod in real time across 6 inference-level signals - KV cache utilization, queue depth, LoRA adapter residency, prefix cache hit rate, predicted latency and running requests - selecting the optimal pod for each individual request. The gateway works with any OpenAI-compatible model server, including vLLM and SGLang, requiring no application code changes. Per-cluster routing is available today in all AWS Regions where the SageMaker HyperPod inference add-on is supported. Coming soon - cross-cluster and cross-region routing with a centralized fleet gateway, global rate limiting, and cost-tier-aware traffic shaping. To learn more, read the launch blog and explore the documentation",
+            "url": "https://aws.amazon.com/about-aws/whats-new/2026/09/sagemaker-hyperpod-inference-gateway/",
+            "source": "AWS What's New",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "amazon",
+                "aws",
+                "cloud",
+                "intel",
+                "ios",
+                "kubernetes",
+                "llm",
+                "openai"
+            ],
+            "published_at": "2026-09-24T08:00:00+00:00",
+            "collected_at": "2026-09-25T02:47:04.714958+00:00"
+        },
+        {
+            "id": "cf77c6efb7b1b0713a234e74270abecb2cbddcdfcda718c70d2d78ea2c70a4fd",
+            "title": "Run interactive workloads on Amazon EMR on EKS with Spark Connect",
+            "description": "Amazon EMR on EKS now supports interactive Apache Spark sessions with Spark Connect. Data engineers and data scientists can develop and debug Apache Spark applications interactively from managed notebooks in Amazon SageMaker Unified Studio and their own IDEs, such as Jupyter and Visual Studio Code, with Spark running on the Amazon EKS clusters they already operate. An interactive session provides a persistent Spark context that spans across cells and scripts, letting you blend local Python code execution with remote Spark operations. Spark Connect's client-server architecture decouples your application client from the Spark driver and allows you to maintain your preferred development environment and tooling while Spark runs on your Amazon EKS cluster. This architecture supports workflows including ad hoc data exploration and incremental PySpark job development before deploying to production. Each session runs as pods on a virtual cluster, secured with your AWS Identity and Access Management (IAM) execution role and tagged by project and user. Spark Connect on Amazon EMR on EKS is available with EMR release 7.14 (Apache Spark 3.5) and emr-spark-8.1.0 (Apache Spark 4.1), in all AWS Commercial Regions. The Amazon SageMaker Unified Studio experience is available in supported AWS Regions . To get started, visit the Spark Connect on Amazon EMR on EKS documentation or the Amazon SageMaker Unified Studio Getting Started guide.",
+            "url": "https://aws.amazon.com/about-aws/whats-new/2026/09/emr-eks-spark-connect-interactive/",
+            "source": "AWS What's New",
+            "category": "cloud",
+            "tags": [
+                "amazon",
+                "aws",
+                "cloud",
+                "python"
+            ],
+            "published_at": "2026-09-24T08:00:00+00:00",
+            "collected_at": "2026-09-25T02:47:04.715140+00:00"
+        },
+        {
+            "id": "afda35d2b22faf6551556dc1f23f04df8a45b18baff4208fc325482036149a6d",
+            "title": "Amazon GameLift Servers now available in 5 new regions and 8 Local Zones",
+            "description": "Amazon GameLift Servers is a fully managed service for deploying, operating, and scaling dedicated game servers for multiplayer games. High latency caused by geographic distance between players and servers remains one of the most common challenges in multiplayer game development. This expansion helps game developers and studios address that challenge by bringing Amazon GameLift Servers to 5 new AWS Regions and 8 AWS Local Zones worldwide. With this expansion, customers can deploy game server fleets closer to players across Latin America, Southeast Asia, Europe, the Middle East, and South Asia, reducing latency and improving gameplay responsiveness. The 5 new AWS Regions are il-central-1 (Tel Aviv), mx-central-1 (Mexico/Queretaro), eu-south-2 (Spain/Zaragoza), ap-south-2 (Hyderabad), and ap-southeast-3 (Jakarta). The 8 new AWS Local Zones are us-east-1-atl-2 (Atlanta), us-east-1-chi-2 (Chicago), us-east-1-iah-2 (Houston), us-east-1-mia-2 (Miami), us-west-2-phx-2 (Phoenix), sa-east-1-bue-1 (Buenos Aires), us-east-1-nyc-2 (NYC) and sa-east-1-lim-1 (Lima). To learn more about Amazon GameLift Servers and supported locations, or to deploy fleets in these new Regions and Local Zones, visit the Amazon GameLift Servers documentation .",
+            "url": "https://aws.amazon.com/about-aws/whats-new/2026/09/amazon-gamelift-servers-region-expansion-2026",
+            "source": "AWS What's New",
+            "category": "cloud",
+            "tags": [
+                "amazon",
+                "aws",
+                "cloud",
+                "ios"
+            ],
+            "published_at": "2026-09-24T08:00:00+00:00",
+            "collected_at": "2026-09-25T02:47:04.715298+00:00"
+        },
+        {
             "id": "ec39513b202e84c6ded7bb30349f001581a06022a646a12dd9b15eadea78a1a2",
             "title": "South Korea’s KB Securities Plans to Move Traditional Assets Onchain",
             "description": "South Korea’s KB Securities has partnered with tokenization platform Securitize and The Optimism Foundation to bring tokenized securities to domestic institutional investors. Phased Rollout Plan South Korea’s KB Securities has entered into a strategic collaboration with digital asset tokenization platform Securitize and blockchain organization The Optimism Foundation to develop and distribute tokenized financial products for […]",
@@ -4345,6 +5248,36 @@
             ],
             "published_at": "2026-09-24T07:01:30+00:00",
             "collected_at": "2026-09-24T10:53:56.644923+00:00"
+        },
+        {
+            "id": "d1f5b5458a78540e12f188fe876ef038c824eeb967df52e9e8b82a9a9b95d457",
+            "title": "Amazon RDS supports Multi-AZ for SQL Server Developer Edition",
+            "description": "Amazon Relational Database Service (Amazon RDS) for SQL Server now supports Multi-AZ deployments using Always On Availability Groups for SQL Server Developer Edition. Multi-AZ deployments maintain a synchronous standby replica in a different Availability Zone and provide automatic failover during infrastructure failure. You can use this capability to build and test high availability configurations in non-production environments using Developer Edition, which includes all the functionality of Enterprise Edition at no license cost. You can use this feature to validate your high availability architecture, test failover behavior, and develop against production-equivalent configurations without incurring Enterprise Edition licensing costs. Multi-AZ with Always On Availability Groups is available on SQL Server Developer Edition major versions 2019 and 2022, and on SQL Server 2025 Enterprise Developer Edition. SQL Server 2025 Standard Developer Edition does not support this feature. For more information about the AWS Regions where this feature is available, see Working with SQL Server Developer Edition on RDS for SQL Server . For pricing details, see Amazon RDS for SQL Server Pricing .",
+            "url": "https://aws.amazon.com/about-aws/whats-new/2026/09/amazon-rds-sql-server-multi-az-developer-edition/",
+            "source": "AWS What's New",
+            "category": "cloud",
+            "tags": [
+                "amazon",
+                "aws",
+                "cloud"
+            ],
+            "published_at": "2026-09-24T07:00:00+00:00",
+            "collected_at": "2026-09-25T02:47:04.715445+00:00"
+        },
+        {
+            "id": "657a4f483d456edd93b6fcd19c3549c27a8be62fa14e7bd1d63336f068cd8bcc",
+            "title": "Amazon ElastiCache Global Datastore now supports tagging and tag-based access control",
+            "description": "Amazon ElastiCache now supports resource tagging and tag-based access control (TBAC) for Global Datastore. Previously, ElastiCache supported tagging on all resources except Global Datastore, which prevented customers from applying a single, consistent permission and cost-allocation model across their ElastiCache fleet. With this launch, you can use AddTagsToResource, RemoveTagsFromResource, and ListTagsForResource on a Global Datastore, and reference those tags as conditions in IAM policies and Service Control Policies (SCPs) to grant permissions based on tag attributes rather than enumerating individual resources. Tag changes on a Global Datastore propagate automatically to every Region it spans, so access-control and cost-allocation policies stay consistent without per-Region operations. There is no additional cost for this feature, and no change to how you create or manage Global Datastores. This feature is available in all AWS Regions where ElastiCache Global Datastore is available. To learn more, see Tagging your ElastiCache resources and Using condition keys with ElastiCache .",
+            "url": "https://aws.amazon.com/about-aws/whats-new/2026/09/amazon-elasticache-global-datastore-tagging/",
+            "source": "AWS What's New",
+            "category": "cloud",
+            "tags": [
+                "amazon",
+                "aws",
+                "cloud"
+            ],
+            "published_at": "2026-09-24T07:00:00+00:00",
+            "collected_at": "2026-09-25T02:47:04.715594+00:00"
         },
         {
             "id": "886240193d06589b61821e5dd16acab2e85e13f6f739196e30a8e9f8a1d10ab1",
@@ -5491,6 +6424,21 @@
             "collected_at": "2026-09-24T02:30:06.444715+00:00"
         },
         {
+            "id": "1fe1f021a895e0f28beedd1fd144cf45822ba4dbb888b6e7439325b3c3839baf",
+            "title": "Toyota is taking the Corolla electric",
+            "description": "Comments",
+            "url": "https://electrek.co/2026/09/23/toyota-best-selling-corolla-electric/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-23T22:37:28+00:00",
+            "collected_at": "2026-09-25T02:47:01.204557+00:00"
+        },
+        {
             "id": "ce397ff19aa790952a3e0dab59877e38fe17cbe358c851802310f8da99ff54cd",
             "title": "Bitmex Crypto Exchange Closes; Funds Left Behind Face New Account Fees",
             "description": "Bitmex has ended exchange operations, but users can still log in and withdraw their crypto. Balances left on the platform are now subject to account fees for users who completed identity verification, making the withdrawal terms the immediate concern. Bitmex Trading Ends, but Withdrawals Remain Open Users with funds on Bitmex can still access their […]",
@@ -5582,6 +6530,21 @@
             ],
             "published_at": "2026-09-23T21:56:33+00:00",
             "collected_at": "2026-09-24T02:30:11.622534+00:00"
+        },
+        {
+            "id": "250953959ec9dd3aa1e8ee6e51732b930997c2a8f1deada2c6285f96002fef49",
+            "title": "The Bayeux Tapestry: Woven by the Victors",
+            "description": "Comments",
+            "url": "https://www.historytoday.com/archive/out-margins/bayeux-tapestry-woven-victors",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-23T21:54:35+00:00",
+            "collected_at": "2026-09-25T02:47:01.204806+00:00"
         },
         {
             "id": "d4ab232e3327c005687afd9dc1fa612367750e940e460829e88a3b96ed6e9527",
@@ -13836,6 +14799,21 @@
             "collected_at": "2026-09-22T16:01:46.809947+00:00"
         },
         {
+            "id": "07ad6df080ba8ebfa2112defd1ab702dcfc2c8819050e39973d891a4f932ae04",
+            "title": "Writing Parquet files using Haskell",
+            "description": "Comments",
+            "url": "https://www.datahaskell.org/blog/2026/09/18/writing-parquet-files-using-haskell.html",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-22T15:02:39+00:00",
+            "collected_at": "2026-09-25T02:47:01.204646+00:00"
+        },
+        {
             "id": "43ff83d960d8e231158ca187135ab3c993f9035c5164463a24f079e314ce2aaf",
             "title": "Get this spiffy, stealthy MSI Gaming Trio RTX 5090 for just $4,299",
             "description": "Walmart has MSI's GeForce RTX 5090 Gaming Trio for just $4299 as part of its GeForce Week event, a rare deal on the most powerful graphics card around as the AI boom drives prices ever higher.",
@@ -14205,6 +15183,21 @@
             ],
             "published_at": "2026-09-22T14:04:31+00:00",
             "collected_at": "2026-09-22T16:01:43.305164+00:00"
+        },
+        {
+            "id": "cae97260a32522f72a340bb99326c80d87ea0e190fd660272813edd62cf21680",
+            "title": "2DWillNeverDie",
+            "description": "Comments",
+            "url": "https://2dwillneverdie.com/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-22T14:00:08+00:00",
+            "collected_at": "2026-09-25T02:47:01.204484+00:00"
         },
         {
             "id": "0e4841e68bdba06c13c9e9d6211af1e7996fd64d901c9cb4775163eb350ea9ce",
@@ -172189,6 +173182,86 @@
             ],
             "published_at": null,
             "collected_at": "2026-09-24T20:59:20.855328+00:00"
+        },
+        {
+            "id": "e1598ad102f02fa48687154bcf5dde157f6052698df392bbdffbf6024e137264",
+            "title": "Here’s the Tesla Semi… again",
+            "description": "Remember the Tesla Semi? The long-gestating, heavy-duty truck first introduced in concept form in 2017 is finally in volume production as of April 2026 - nearly a decade after its initial introduction. On Thursday evening, the company held yet another event for the Semi to demonstrate to customers and investors that the long wait was […]",
+            "url": "https://www.theverge.com/transportation/1000317/tesla-semi-launch-customer-delivery-freight-battery-engineer",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-09-25T02:46:59.308583+00:00"
+        },
+        {
+            "id": "2bee89eb63bc3507fa429bc1e76faa7a0f651ab38d8635f9e2fe24d9a41c5f20",
+            "title": "Microsoft is killing off the ‘Copilot Plus PC’ brand",
+            "description": "Remember when Microsoft wanted everyone to know that \"Copilot Plus PCs\" were the ones to get, because those were the PCs that that'd have enough built-in AI muscle to get things done? Two and a half years later, Microsoft and Qualcomm seem to be admitting the brand is already dead. Windows Central's Zac Bowden reports […]",
+            "url": "https://www.theverge.com/tech/1000495/microsoft-is-killing-off-the-copilot-plus-pc-brand",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "qualcomm",
+                "technologie",
+                "windows"
+            ],
+            "published_at": null,
+            "collected_at": "2026-09-25T02:46:59.308701+00:00"
+        },
+        {
+            "id": "aa95f7861ac6e2e356c49697fc085deb57315e46dab7c76a9386b76dd976d339",
+            "title": "Meta employees ordered ‘attorney/client privilege’ hats while fighting child safety disclosures",
+            "description": "Meta's lawyers have argued that certain evidence should be withheld from public view on the grounds of attorney-client privilege in the ongoing lawsuits over alleged harm to teens' safety and mental health. Lawyers suing the company said this week that the label has been applied far too broadly, while pointing to a recently unsealed document […]",
+            "url": "https://www.theverge.com/tech/1000370/meta-instagram-attorney-client-privilege-hats",
+            "source": "The Verge",
+            "category": "cloud",
+            "tags": [
+                "aws",
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-09-25T02:46:59.308790+00:00"
+        },
+        {
+            "id": "98250f9291e2c6ed0c075c02619524e6783d5cdb3feac768b538eef790a5f999",
+            "title": "Qualcomm’s new ‘Elite’ sound chip might finally deliver the Wi-Fi earbud dream",
+            "description": "What if your wireless earbuds - or audio glasses - could stream high-quality lossless audio that doesn't cut out when you leave your phone on the bedside charger or buried in the couch? Qualcomm's new Snapdragon Sound Elite Gen 2 is its first to integrate \"micro-power Wi-Fi 6E\" right into the chip, so they can […]",
+            "url": "https://www.theverge.com/tech/1000443/qualcomms-new-elite-sound-chip-might-finally-deliver-the-wi-fi-earbud-dream",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "qualcomm",
+                "technologie",
+                "wifi"
+            ],
+            "published_at": null,
+            "collected_at": "2026-09-25T02:46:59.308882+00:00"
+        },
+        {
+            "id": "99ff6e3fec1ed6bf64777330a8a22172dafab67894c95d44295c01afcdac83b2",
+            "title": "Microsoft puts Brad Smith in charge of communications",
+            "description": "Microsoft is moving its communications group out of marketing and into its Corporate, External, and Legal Affairs (CELA) organization. The surprise change will see Microsoft vice chair and president Brad Smith oversee communications, while the company searches for a replacement for Frank Shaw, chief communications officer, who is departing later this year. Microsoft CEO Satya […]",
+            "url": "https://www.theverge.com/news/1000374/microsoft-comms-pr-brad-smith-cela",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-09-25T02:46:59.308977+00:00"
         }
     ]
 }
