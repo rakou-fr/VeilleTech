@@ -1,7 +1,490 @@
 {
-    "updated_at": "2026-09-25T16:15:21.627264+00:00",
-    "count": 11425,
+    "updated_at": "2026-09-25T20:56:52.377867+00:00",
+    "count": 11507,
     "articles": [
+        {
+            "id": "c3b38d9074fa6a38ead51dd06b141263f399000dae5b7439488ba0a100c11f8e",
+            "title": "Integração com o iFood: o problema na homologação do developer",
+            "description": "O desafio Hoje eu quero falar da Temperô, um SaaS multi-tenant de gestão de restaurantes: pedidos, cozinha, caixa, comandas, várias unidades por restaurante. Stack em Node/TypeScript/Express, Postgres com pg puro (sem ORM, SQL cru, migrations numeradas). O objetivo era simples de enunciar,mas em termos de produção, bem difícil de sustentar: um pedido feito no marketplace iFood precisa entrar automaticamente no fluxo operacional do Temperô, cair na cozinha, seguir para produção e entrega, fechar o pagamento - e tudo isso com o status sincronizado nos dois sentidos. O restaurante não pode ter que operar dois sistemas em paralelo, um para o delivery do marketplace e outro para o resto. No artigo de hoje, eu conto como implementamos isso, os bugs que apareceram no caminho, e principalmente a investigação mais longa do projeto: o por que, às vezes, o evento de confirmação de um cancelamento simplesmente não chegava nunca. As decisões de arquitetura Polling, não webhook. A Order API do iFood expõe GET /order/v1.0/events:polling , que devolve os eventos pendentes de um merchant, e POST /order/v1.0/events/acknowledgment , que confirma o recebimento e tira o evento da fila. A cada 15 segundos, o Temperô sempre inicia a chamada, dentro de um setInterval no próprio processo Node, sem serviço separado. Uma flag de controle simples evita sobreposição de execuções caso um tick demore mais que o intervalo: let polling = false ; setInterval ( async () => { if ( polling ) return ; polling = true ; try { await pollIfoodEvents (); } finally { polling = false ; } }, 15 _000 ); Nesse sentido, é importante dizer que não escolhemos polling por preferência técnica; ela era a única opção viável no momento: o iFood nunca chama o Temperô, o Temperô sempre chama o iFood. App \"Centralizado\" do iFood Developer. O iFood oferece dois modelos de credencial: \"Distribuído\", uma credencial OAuth2 por restaurante/unidade, e \"Centralizado\", uma única credencial client_credentials para toda a plataforma, filtrando o merchant específico via header x-polling-merchants em cada request. Por aqui, escolhemos Centralizado, o que exigiu refatorar no meio do projeto um cache de token que originalmente era por unidade para um cache único em memória. Token OAuth2 com renovação proativa e reativa. O token fica em memória, com expiração baseada no expiresIn que o próprio iFood devolve. Em termos de renovação, fizemos tanto de forma proativa, com um buffer de 30 segundos antes de expirar, como de forma reativa, invalidando e tentando de novo uma vez em qualquer resposta 401. Pedido do iFood sempre nasce com origin='ifood' e dine_type='entrega' fixo. O v1 da integração cobre só delivery. Pedidos de takeout ou dine-in que por algum motivo chegam via marketplace são recusados automaticamente, chamando requestCancellation com o primeiro motivo disponível na lista de códigos. Sem mapeamento de cardápio. O item do pedido iFood entra com menu_item_id=null , usando nome e preço direto do payload recebido. Mapear cada item do cardápio do iFood para o cardápio interno do Temperô ficou fora do escopo do v1. Pagamento sem operador humano. Cada unidade tem um usuário \"de sistema\" sintético e um caixa virtual que abre e fecha sozinho, sem depender de alguém abrindo caixa manualmente pra receber pedido de marketplace. O bug do code vs fullCode Ao longo da trajetória, é claro, surgiram alguns problemas. Entre eles, estava o fato de que cada evento do polling do iFood vem com dois campos parecidos: code , um código abreviado tipo \"PLC\" , e fullCode , o nome por extenso, tipo \"PLACED\" . Durante semanas, o switch que processava os eventos comparava contra code : switch ( event . code ) { case \" PLACED \" : await handleOrderPlaced ( event ); break ; case \" CANCELLED \" : await handleOrderCancelled ( event ); break ; // ... default : break ; } O problema é que event.code nunca era \"PLACED\" , o valor real ali era \"PLC\" . Todo evento verdadeiro caía silenciosamente no default, um no-op sem log de erro, sem exceção, sem nada que chamasse atenção. O sistema simplesmente parecia \"não fazer nada\" com eventos reais, enquanto testes manuais via curl pareciam funcionar, porque testavam outras partes do fluxo, não o processamento do evento em si. Só descobrimos isso analisando o JSON bruto de um evento capturado no log estruturado, comparando campo por campo com a documentação: { \"id\" : \"b3f1...\" , \"code\" : \"PLC\" , \"fullCode\" : \"PLACED\" , \"orderId\" : \"a921...\" , \"merchantId\" : \"9f02...\" , \"createdAt\" : \"2026-09-03T14:22:10.000Z\" } A correção foi fácil, com a troca de event.code por event.fullCode no switch, mas o aprendizado não foi, nem de perto, trivial: sempre compare contra o campo que a documentação define como canônico, não o que parece, pelo nome da propriedade, ser o identificador do evento. code parecia óbvio demais pra estar errado, e foi exatamente por isso que passou despercebido por tanto tempo. Foi na mesma leva de correções que outro bug sutil apareceu, de filtro de data em UTC comparado contra horário local sem conversão explícita, fazendo pedidos de fim de noite sumirem da tela de \"Pedidos do dia\": o tipo de erro que só aparece quando alguém confere manualmente um caso de borda, não em teste automatizado com dados sintéticos. O problema do cancelamento assíncrono Na esteira de problemas, tivemos que o POST /requestCancellation do iFood devolve 202 Accepted . Isso não significa que o pedido foi cancelado, mas que \"recebi seu pedido de cancelamento\". A confirmação real chega depois, de forma assíncrona, pelo mesmo mecanismo de polling: um evento CANCELLED se o cancelamento foi aceito, ou CANCELLATION_REQUEST_FAILED se foi recusado. A primeira versão do sistema não respeitava essa assincronia. Ela marcava o pedido como cancelado imediatamente, de forma otimista, no mesmo instante da chamada HTTP. Isso divergia do estado real da plataforma toda vez que o iFood demorava ou nunca confirmava. A correção foi introduzir um estado intermediário, só para pedidos origin='ifood' : ALTER TABLE ifood_orders ADD COLUMN cancellation_pending boolean DEFAULT false ; ALTER TABLE ifood_orders ADD COLUMN cancellation_requested_at timestamptz ; Enquanto cancellation_pending é verdadeiro, o pedido não muda de status de verdade. Na interface, a linha de ações do pedido é substituída por um único indicador, \"Cancelamento em processamento\", em vez de simplesmente desabilitar o botão de cancelar ao lado dos outros (o que deixava a tela ambígua sobre o que realmente estava acontecendo). O status só muda quando o evento de confirmação chega pelo polling. A investigação mais longa: por que o evento de cancelamento às vezes não chegava Trocando em miúdos, essa foi a parte que mais consumiu tempo do projeto, e a que mais ensinou. Reuni algumas hipóteses que guiaram essa trajetória. Hipótese 1: instabilidade genérica do sandbox A primeira suspeita foi que o ambiente de testes do iFood processava eventos em lote, às vezes com atraso de horas. Tínhamos evidência real disso em outro contexto: um pedido que foi pra DISPATCHED recebeu o evento CONCLUDED só várias horas depois, com um payload de metadata assim: { \"fullCode\" : \"CONCLUDED\" , \"metadata\" : { \"triggerEvent\" : { \"previousStatus\" : \"DISPATCHED\" , \"value\" : \"CONCLUDED\" } } } Isso reforçou a hipótese, mas não explicava por que, em alguns testes, o evento de cancelamento nunca chegava, nem depois de horas. Hipótese 2: o motivo do cancelamento importava Reparamos que testes usando o código de cancelamento \"503\" (item indisponível) travavam sem confirmação, enquanto \"501\" e \"512\" (problema de sistema, loja vai abrir mais tarde) resolviam na hora. Isso virou a teoria de que códigos \"contestáveis\" pelo consumidor final exigiriam algum fluxo de negociação separado antes da confirmação. Hipótese 3: o Handshake Platform Pesquisando a documentação a fundo, encontramos endpoints reais de disputa: POST /disputes/{disputeId}/accept , /reject , /alternatives/{alternativeId} . Existiam para cancelamentos contestáveis iniciados pelo consumidor, e nunca eram chamados pelo nosso sistema. Ufa, finalmente! Ela pareceu ser a explicação perfeita: estávamos deixando uma disputa aberta sem responder. Mas como nem tudo são flores, o teste que derrubou a hipótese 3. Minutos depois, repetimos o mesmo teste, com o mesmo cancellationCode \"503\" . Dessa vez, o evento CANCELLED chegou em cerca de 200 milissegundos, sem chamar nenhum endpoint de disputa. O payload trazia um metadado informativo, não um estado pendente de fato: { \"fullCode\" : \"CANCELLED\" , \"metadata\" : { \"CANCELLATION_DISPUTE\" : { \"IS_CONTESTABLE\" : \"CANCELLATION_IS_CONTESTABLE\" } } } Ou seja, o campo só indicava que aquele cancelamento poderia, em tese, ser contestado pelo consumidor. Não significava que estava, de fato, esperando handshake. A causa raiz foi encontrada por acaso. Tínhamos duas instâncias da aplicação rodando o mesmo loop de polling contra o mesmo merchantId : o ambiente local de desenvolvimento e a produção no Railway, ambos usando a mesma credencial de teste. A fila de eventos do iFood é por merchant, não por consumidor da API. Quem faz o poll primeiro recebe o evento e o reconhece via acknowledgment, tirando-o da fila pra sempre. Se a instância que fez a chamada de cancelamento não fosse a mesma que vencesse a corrida pelo próximo poll, ela nunca mais veria a confirmação, enquanto a outra instância recebia e descartava um evento que não tinha efeito nenhum no banco dela. Naquele momento, tivemos um grande aprendizado, que entenderíamos só tempos depois: nunca rode dois consumidores de uma fila de webhook ou polling apontando pro mesmo recurso externo ao mesmo tempo, mesmo em ambientes nominalmente \"separados\", como dev local e produção, se eles compartilharem a mesma credencial e o mesmo merchant de teste. Para corrigir o problema, isolamos de vez os ambientes: o polling contra o merchant passou a rodar exclusivamente em produção, e o ambiente local parou de consumir a fila. Um único consumidor ativo por merchant deixou de ser uma regra implícita e virou uma invariante garantida pela própria topologia do sistema, não por disciplina de quem estava testando naquele dia. Homologação: quando \"funcionar certo\" não é suficiente Fomos reprovados duas ou três vezes no processo formal de homologação do iFood, com uma mensagem genérica de \"Erro ao recuperar logs da aplicação\" no cenário de cancelamento. Em uma das tentativas, os logs estruturados provavam, com timestamp de cada etapa, que o fluxo inteiro (confirmação, requisição de cancelamento, CANCELLATION_REQUESTED , CANCELLED , acknowledgment) rodou em menos de dois minutos, sem erro nenhum do nosso lado. Às vezes o \"seu sistema está errado\" de um avaliador automático de terceiros é, na verdade, um sintoma de um problema no próprio avaliador. A única defesa nessa situação é ter logs estruturados e cronometrados o suficiente para provar isso com uma solicitação de revisão manual, em vez de ficar tentando adivinhar o que \"consertar\" num sistema que já estava funcionando. O que sustentou toda essa investigação Nada disso teria sido reconstruível sem uma decisão tomada cedo: logar toda chamada HTTP ao iFood (path, método, unitId, merchantId, orderId, status, código de erro) e todo evento recebido, com o payload bruto completo, como uma linha JSON por evento, não só em caso de erro: logger . info ({ event : \" ifood.polling.event_received \" , merchantId , orderId : event . orderId , code : event . code , fullCode : event . fullCode , raw : event , }); Foi isso que permitiu reconstruir cada uma das hipóteses da investigação, analisando só os logs do Railway, sem acesso direto ao painel do iFood. Numa integração assíncrona com um sistema externo que você não controla, o log estruturado deixa de ser um detalhe de observabilidade e vira a única fonte de verdade disponível quando algo não bate. O que você precisa saber quando for integrar com marketplaces por polling Compare sempre contra o campo canônico documentado, não o que parece ser o identificador pelo nome. Trate qualquer resposta 202 ou similar como confirmação de recebimento, nunca como confirmação de efeito. Modele o estado intermediário explicitamente no banco em vez de assumir otimisticamente que uma ação já aconteceu. E, acima de tudo, garanta que só existe um consumidor ativo por fila externa compartilhada, porque duas instâncias \"separadas\" brigando pela mesma fila produzem um bug que parece instabilidade de terceiro, mas é “apenas” um problema inteiramente seu.",
+            "url": "https://dev.to/felipebufelli/integracao-com-o-ifood-o-bug-que-ficou-escondido-por-semanas-e-a-investigacao-que-terminou-numa-30hf",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "ios",
+                "programmation",
+                "typescript",
+                "web"
+            ],
+            "published_at": "2026-09-25T20:48:48+00:00",
+            "collected_at": "2026-09-25T20:56:38.629580+00:00"
+        },
+        {
+            "id": "de5c8f2a0e1045f4ff5e07aa4f0aea8020d502e5cac875e9adaa27206c8d8e7b",
+            "title": "DORA metrics + SLOs without external infrastructure: a Cloudflare Workers approach",
+            "description": "You do not need Prometheus, a metrics SaaS, or a dedicated observability stack to run DORA-style delivery metrics and service-level objectives. On Cloudflare Workers you already own the two things SLOs need: an execution environment and a durable store. This post shows the P31 approach: telemetry rows in D1, a cron worker that rolls them up, and a burn-rate dashboard driven by plain SQL. Every request appends a row to the api_usage table — method, route, status, latency, timestamp. Nothing fancy, but it is the raw material for both availability and latency percentiles, and it costs almost nothing to store. -- error budget window: 30 days, target 99.9% availability SELECT count ( * ) AS total , sum ( status >= 500 ) AS errors , sum ( status >= 500 ) * 1 . 0 / count ( * ) AS error_rate FROM api_usage WHERE ts > datetime ( 'now' , '-30 days' ); The SLO is 99.9% availability, which yields roughly 43 minutes of allowed downtime per month. From that budget the worker classifies burn as fast , slow , or ok . Fast burn means the budget is being consumed at multiples of the rate; it triggers the immediate channel. Slow burn is the quiet killer and triggers a review. ok requires no action — and the p95/p99 latency numbers ride along in the same rollup. The cron runs on the platform via p31-ci (Cloudflare cron triggers), so the whole pipeline is api_usage rows → SQL rollup → status page, with no external infrastructure and no third-party dependencies. You can reproduce the entire stack in a day and delete your observability vendor. The three SLOs to start with: availability (99.9%), p95 latency, p99 latency. Everything else is a refinement.",
+            "url": "https://dev.to/trimtabsignal/dora-metrics-slos-without-external-infrastructure-a-cloudflare-workers-approach-423c",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-25T20:48:37+00:00",
+            "collected_at": "2026-09-25T20:56:38.629908+00:00"
+        },
+        {
+            "id": "6ad4052d0af04332d6e80c6fc7d62618e08c600ec5743ef8aceed38a56083eb0",
+            "title": "Google Gemini 3.8 Connects Expressive Voice, Live Avatar and Notebook Context",
+            "description": "Google is expanding Gemini 3.8 across voice generation, conversational AI and knowledge work. The connected updates include Gemini 3.8 Flash TTS and Flash-Lite TTS , Gemini 3.8 Live with Live Avatar , and notebook integration spanning Gemini and NotebookLM-related experiences . Together, they point to a broader push to make Gemini more useful in interactions that involve spoken output, visual context and organization-specific source material. The most visible part of the rollout is Gemini 3.8 Live with Live Avatar. In Google's official Live Avatar announcement , the company presents the capability as bringing near real-time visual presence and visual grounding to Gemini conversations. Separate official documentation and announcements support the related text-to-speech and notebook components, which were introduced across Google's developer, Gemini and Workspace-oriented products rather than through one single release page. For businesses, the practical significance is not one standalone feature. It is the possibility of combining more natural audio, visually grounded dialogue and reusable notebook context in customer-facing and internal AI workflows. The scope is broad, though the features serve different audiences and product surfaces. What Google Gemini 3.8 adds across its AI products Google's 3.8 updates cover three distinct capabilities. They are connected by the goal of making Gemini interactions more expressive and more grounded in the information or context available to the user. Gemini 3.8 update Confirmed capability Primary audience or product context Flash TTS and Flash-Lite TTS Expressive text-to-speech generation Developers using the Gemini API Gemini 3.8 Live with Live Avatar Near real-time, visually grounded conversational presence Gemini Live users Gemini Notebook integration Notebook content connected to Gemini conversations across products Gemini and NotebookLM-related knowledge work Expressive speech generation for Gemini API developers Gemini 3.8 Flash TTS and Gemini 3.8 Flash-Lite TTS are Google's new expressive audio-generation models. Google documents them through its Gemini API speech-generation materials and a dedicated text-to-speech announcement. The two models were announced in early September 2026. The supplied research confirms their positioning as expressive text-to-speech models, but it does not provide a feature-by-feature benchmark against earlier Gemini speech models. That distinction matters: businesses should assess output quality, latency and integration fit against their own use case rather than assume a specific performance gain not stated in the documentation. Potential uses follow naturally from text-to-speech capabilities: Turning help content into spoken guidance for customer-support experiences. Producing audio versions of product explanations, training material or marketing content. Adding natural-sounding spoken responses to internal copilots and other AI-enabled interfaces. These are implementation opportunities, not assurances that every workflow will produce better customer outcomes. The value will depend on the quality of source content, the design of the experience and how the generated audio is reviewed and deployed. Gemini Live adds a visual layer to conversations Gemini 3.8 Live with Live Avatar is the central conversational update. Google describes Live Avatar as bringing near real-time visual presence to Gemini's conversational AI, with visual grounding as a core element. The related Gemini Live materials were announced in mid-September 2026, followed by a general-availability update for broader use. Visual grounding is important because some questions are easier to resolve when an AI interaction incorporates what is visible, rather than relying only on typed or spoken language. That can make conversational interfaces more relevant for guided explanations, product demonstrations or support situations where visual context matters. The research does not establish particular industry deployments, accuracy levels or a universal implementation model. Companies considering Live Avatar should therefore start with a narrow, clearly defined interaction, such as guiding a user through a product or answering recurring questions around a visual asset. They should also define where human support remains necessary. Notebook context links Gemini and knowledge work The third component is Gemini Notebook integration . Google's Gemini Notebook and Workspace-related materials describe notebook content being connected to Gemini conversations across Gemini Apps and NotebookLM-related experiences. This work has evolved through updates during 2026. For teams that already build notebooks around research, project material or internal reference information, this could reduce the friction of moving between stored context and a Gemini conversation. Rather than treating a chat as completely separate from the documents and notes assembled for a task, the integration is intended to connect those environments. That makes the feature relevant to knowledge-intensive work such as preparing briefings, consolidating research and helping teams navigate source material. It does not remove the need to keep notebook content current or to check AI-generated outputs against the underlying material. What the combined rollout means for businesses The 3.8 updates span developers, end users and knowledge workers. That breadth makes them more strategically relevant than a narrowly focused model update, but it also means organizations should avoid treating them as a single switch to turn on. A practical evaluation starts by separating the opportunities. Flash TTS and Flash-Lite TTS are relevant where an application needs generated speech. Live Avatar is relevant where conversational visual context can improve an interaction. Notebook integration is relevant where teams need Gemini to work more closely with organized source material. Businesses can then test the component that maps to a real workflow, define the human review points and measure whether it saves time or improves the user experience. The verified materials confirm the releases and their high-level roles, but they do not provide pricing details for this combined 3.8 set. Buyers should consult the applicable Google product documentation and account terms before making cost assumptions. For companies evaluating where voice, visual AI or notebook-grounded assistance can reduce manual work, Scalevise's AI consultancy can help turn promising Gemini capabilities into a focused implementation plan, from selecting the right workflow to defining practical tests and success measures. Taking action early helps avoid scattered experiments and directs effort toward use cases with clear operational value. Request an AI consultation. Frequently Asked Questions What are the main Google Gemini 3.8 updates? Google's confirmed Gemini 3.8 updates include Flash TTS and Flash-Lite TTS for expressive speech generation, Gemini 3.8 Live with Live Avatar, and notebook integration connecting notebook content with Gemini conversations. What does Gemini 3.8 Live with Live Avatar do? Live Avatar adds near real-time visual presence and visual grounding to Gemini Live conversations, according to Google's official announcement. Who are Gemini 3.8 Flash TTS and Flash-Lite TTS for? The text-to-speech models are documented for developers using the Gemini API and are intended for expressive audio generation. How does Gemini Notebook integration help teams? The integration ties notebook content to Gemini conversations across Gemini Apps and NotebookLM-related experiences, helping connect organized source material with AI-assisted work. Has Google published pricing for the complete Gemini 3.8 update set? The supplied research does not provide pricing for the combined set of Gemini 3.8 updates. Pricing and access should be checked in the relevant Google product documentation and account terms. Conclusion Google's Gemini 3.8 rollout brings together three complementary directions for AI work: expressive generated speech, visually grounded live conversation and notebook-connected context. The updates serve different products and users, so the most useful business response is to identify the specific workflow where one capability can add value, then test it against clear operational needs.",
+            "url": "https://dev.to/alifar/google-gemini-38-connects-expressive-voice-live-avatar-and-notebook-context-32h6",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "gemini",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-25T20:45:30+00:00",
+            "collected_at": "2026-09-25T20:56:38.630936+00:00"
+        },
+        {
+            "id": "a5faecc4adb1ef1705d5038a880b6a652093e7ca64d1db16c5b0ee9f7acf8a1a",
+            "title": "Crystals: agent memory that arrives before you act",
+            "description": "Most agent memory is a search box. The model wonders something, a retriever runs, chunks come back. That design has one load-bearing hole: retrieval fires only when the agent already suspects it needs help. The expensive mistakes are the confident ones, and a confident agent never queries. So we push instead. A note gets bound to an action , and it arrives in the moment before that action runs, whether or not anybody asked. We call these crystals . The name earns its keep. A crystal has one axis, it formed under pressure, and what you get out is small and hard. One knowing per crystal. That constraint turns out to be the difference between this working and this quietly failing, for reasons I will get to. Before writing this up I went looking for prior art, expecting to find none. Expecting to find none is usually the sign you have not looked hard enough, and sure enough, two of the four ideas here are already published. Rules that fire on the action rather than on a similarity score have been described, right down to injecting before a git commit under a hook time budget. The agent-memory evaluation literature also has a failure taxonomy that comes close. Mem2ActBench attributes memory-grounded errors to five types, two of which sound like the one below: Retrieved-but-Unused , \"evidence is retrieved but not utilized\", and Lossless Retention Failure , \"long/structured values are corrupted (e.g., truncation or character-level errors)\". Read them closely, though, and both sit on the model's side of the boundary. Retrieved-but-Unused means the evidence reached the context window and the model ignored it. Lossless Retention Failure means the model mangled a long value on the way out. The failure I describe below happens earlier, in the plumbing: the note is correctly matched and then cut by the budget packer, so it never reaches the model at all. To the model it never existed; to the logs it was a hit. The budget problem is named too. A 2026 survey of agent memory lists \"curation under fixed budgets, including update, eviction\" as an open direction, and asks for benchmarks that measure \"memory quality as a function of token budget, storage cost, and latency, reflecting the bounded-memory conditions of real deployments.\" Which is a fair description of what follows, so treat this as a field report against that request rather than a new idea. What I have that the papers mostly do not is a channel that has been running long enough to overflow, and the numbers from the far side of that. Here is the mechanism, the budget it collides with, and the two rules we did not know we needed. Anatomy of a crystal A crystal is a markdown file with a binding block at the top: crystal : on : bash, write # which ACTS it fires on match : git reset --hard, git clean, rm -rf # substrings in the act's text deliver : act # the channel stale_after : 2027-03-25 # after this, the claim is withheld and, further down, the part that actually gets delivered, fenced by two markers: <!-- crystal:essence --> ⛔ A DESTRUCTIVE VERB ACTS ON A TREE YOU SHARE. `git reset --hard <ref>` also discards TRACKED-but-uncommitted changes; only UNTRACKED files survive... <!-- /crystal:essence --> The file around it can run three thousand words of history, rationale and dead ends. Only what sits between those markers reaches the model. So the crystal is the delivered sentence, and the file is where it came from. That split matters: the file is for whoever is arguing about the rule later, the essence is for whoever is about to break it in four seconds. Hooks, and what an \"act\" is A hook fires on the tool call before it executes. Which tool it was determines the act, and the act determines what a crystal can match against: act fires what match: tests against bash before a shell command the command line write before a file write or edit the path, plus the content being written delegate before briefing a subagent the brief commit inside the git pre-commit hook the staged file list prompt when a request arrives, before any tool runs the request text boot at session start nothing yet The third column is where the power sits. write can see content, so a crystal about pricing claims fires on the pricing claim itself and leaves your other edits alone. prompt fires earliest of all: the crystal lands before the first tool call, which is the only place you can still change the plan rather than the keystroke. Matching stays deliberately dumb. match: is a comma list of plain substrings, tested case-insensitively, with no word boundaries and no embedding anywhere in the path. A substring test stays auditable at a glance and cannot drift, which is what you want from something firing three hundred times a day. What it looks like when a crystal fires Three real ones from a single day of work. Before a shell command. I typed a git reset --hard . Before it ran: ⛔ A DESTRUCTIVE VERB ACTS ON A TREE YOU SHARE. git status --short first, and account for every line. Uncommitted work you did not make is an agent's. Before a file write. I began writing a note that made a causal claim. Before the write landed: ⛔ If you are naming a CAUSE: write the RIVAL (what ELSE produces this exact observation?) and the DISCRIMINATOR (the one measurement that separates them). On 2026-07-19 four confident cause-claims were made in one evening; every one had evidence and every one was wrong. Before a commit. In the pre-commit hook, matched against the staged file list: ⛔ FINISHING SOMETHING IS NOT THE SAME AS IT BEING RECORDED WHERE PEOPLE READ IT. Name in the commit message everything the commit changed, especially a flag touched while doing something else. I asked for none of those. That is the entire point, because in each case I was not wondering. Then you hit the budget There are 300-odd crystals. The median action matches five of them, wanting 13,014 characters . The budget is 4,000 characters per action , and no single crystal may take more than 2,000 of it unless it wins outright. 93% of actions want more than the whole budget. Three times oversubscribed, at the median. So the channel behaves like an auction that runs a few hundred times a day, and on almost every run something loses. That reframes the design question. Delivery was the easy half. The hard half is an admission rule, an eviction cost, and a way to degrade. Fair scheduling beats relevance here Selection goes least-served-first, then longest-unheard, then shortest as a packing tiebreak. A crystal that already fired this session steps aside for one that has not. Relevance ranking sounds better and fails badly here. A handful of broad crystals win every auction while fifty go undelivered, which is what we measured before rotation existed. A cheap tier that somebody wrote When a crystal cannot fit, it emits a one-line summary instead. We call that its TELL, and the median TELL runs 81 characters. We tested whether a TELL carries anything real. Take 20 crystals whose full text demonstrably changes what the agent does, and run a blind judge against three resolutions: what the model receives median chars behaviour preserved full essence 2,302 20 / 20 head, 750-char prefix 631 19 / 20 authored TELL 81 17 / 20 421-char prefix 421 12 / 20 Two things fall out, and I nearly published the second one backwards. An authored 81 characters beat an arbitrary 421-character prefix, 17 against 12, at a fifth the size. A prefix stops wherever the character count happens to land, which is mid-argument more often than not. But a longer arbitrary prefix does fine: 750 characters keeps 19 of 20. So the enemy here turns out to be brevity itself. Cut lightly and curation barely matters; cut deep and it starts to matter enormously. Zero items flipped the other way at any resolution, which argues against judge noise. Where it still breaks Head-first truncation is safe when a crystal carries one idea, because the claim leads. Give a crystal two ideas and the second one sits in the tail, where it silently vanishes. Across our corpus that comes to 98,715 characters which are stored, correctly matched to an action, and withheld on any act where rotation does not elevate them. Of 102 crystals over the per-item cap, 88 withhold at least one marked claim in the tail. Treat that 88 as an upper bound. Some tails turn out to be supporting evidence for the head's claim, and I have not separated those by hand. No retrieval metric has a name for this. The crystal is present, correctly selected, and cut: it logs like a hit and behaves like a miss. I found it by shipping the same bug twice in one session with the warning sitting one character-cap away from my eyes. Match precision is the other open front. A blind two-judge study asked how often an admitted crystal actually changes the action, against random same-act controls. The controls scored 0 of 41 both times, so the matcher is doing real work (p=0.0001 and p=0.0054). The crystals themselves scored somewhere between 20% and 49%. That range is embarrassing, and explaining it matters, because it turns out to be an artifact of my own apparatus. The 20% end was measured by showing the judge a 421-character excerpt, which the resolution study above had already identified as the worst representation tested. Shown fuller text, the same judge said 48.8%. I had measured relevance through a truncation, and I nearly published the truncation's score as the system's. Either way, roughly half the admitted crystals fail to earn their slot. Substring keys are the reason. A two-letter key like pt matches nearly everything, and one loose key is how a single crystal loses the auction for everybody else. The two rules we did not have One knowing per crystal. This reads as style advice and turns out to be load-bearing. Head-first truncation is only safe when the claim leads, and we learned that by watching second claims disappear. A crystal that has grown two ideas wants splitting. A crystal earns its binding by beating what it evicts. Truth alone will not buy a slot. At three times oversubscribed, every new binding forcibly removes one that already matched, so admission is always a comparison against the incumbent. We put that to the test. I proposed binding eight orphaned notes. Two reviewers, briefed separately, independently came back with zero to two, and the admission test they both converged on was: Does it change this action? Can a tight key reach it without catching everything else? Is the act earlier than the next reliable check that would catch the same mistake? Is there no cheaper enforcer? Does it beat the incumbent it evicts? Most candidates die on 4. A crystal about your own tooling usually wants to be an assert in the script instead. If you build one The core design holds. Pushing beats pulling for anything that must not be forgotten, precisely because the agent's sense of when it needs help is the faculty you cannot lean on. What we underestimated is that a push channel is a budget , and a budget needs an economics. We built the delivery first and found the economics a month later, by measuring what never arrived. Measure that early. The useful question about a crystal is what did this displace, and did anyone ever read the part that got cut.",
+            "url": "https://dev.to/tom_jones_230c4659491adcd/crystals-agent-memory-that-arrives-before-you-act-27h8",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "git",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-25T20:44:57+00:00",
+            "collected_at": "2026-09-25T20:56:38.632588+00:00"
+        },
+        {
+            "id": "1a320af688c736d666b495fdbcb0e72a55a4c4a4c5957e0b4746fbb46b0ba880",
+            "title": "The System Never Checked If You Slept. Ours Reads Your Pulse First.",
+            "description": "Let's Start With Hackathon Scene Main video is made by the Organizers of Hacktropica this my edited version on it Right now, while you read this, your face is changing colour. Not by much. Every heartbeat pushes a pulse of blood into the capillaries under your skin. Haemoglobin soaks up green light a little more than the tissue around it, so your cheeks darken and fade, darken and fade, roughly once a second. The change is far too small for anyone looking at you to notice. A phone camera notices it anyway. You have never seen it happen. It has happened every second of your life. Keep that in mind, because this story runs on three clocks, and they do not run at the same speed: CLOCK 1 THE SCAN 10 seconds a face, a front camera, a pulse CLOCK 2 THE BUILD 36 hours four people, one repo, one prize CLOCK 3 THE READING 5 months one line in the docs we never read The first clock is the product. The second is how it got made. The third is the reason this post exists, and it does not show up until near the end. When it does, it changes what the first two mean. The System never checked if you slept In Solo Leveling, a mysterious System hands Sung Jinwoo the same daily quest every single day. 100 push-ups, 100 sit-ups, 100 squats, a 10 km run. Didn't sleep? The System doesn't care. Nearly died yesterday? The System doesn't care. Every fitness app is that System. It asks how you feel, lets you tap a smiley face, and then serves the plan it was always going to serve. But your face is already telling the camera how you feel. Heart rate and breathing rate are sitting right there in the colour of your skin. So the question is not \"what workout should I do today?\" It is: What if the System measured you before it assigned the quest? That is SoloFit (\"Arise. Train. Conquer.\"), a React Native app that reads heart rate from the phone camera, turns it into a readiness score, and only then asks an LLM to write your week. Our team, Kolkatar Rosogollas, built it in 36 hours at HackTropica 2K26, and it won MLH: Best Use of Presage SDK . Here is the whole pipeline, with the real numbers from the code: 1 scan -> 2 vitals -> 1 score -> 3 bands -> 7 days -> 7 rules One thing up front, because it changes how you read everything below SoloFit has two ways of getting your vitals, and you need to know which is which before any number in this post means anything. Measured. The video goes to Presage, comes back as heart-rate and breathing-rate samples, and the result is tagged source: \"presage_api\" . The scan screen shows a green badge. Estimated. If anything fails (no API key, no video file, upload error, a 100-second timeout), the service does not throw. It returns randomly generated vitals : heart rate 65-95, breathing 13-20, tagged mock_no_key , mock_no_video or mock_api_fallback . The scan screen shows an amber badge that says \"Estimated Vitals.\" The fallback was a deliberate hackathon decision. The code comment says so plainly: Fallback is expected in some environments; keep this non-error in UI/logs. A demo that crashes on bad venue Wi-Fi is not a demo. What that fallback does downstream is a different story, and the third clock is where I tell it. For now, remember the amber badge. And one line that applies to the whole post: Presage's own documentation says its metrics are for general wellness and informational purposes only, have not been cleared by the FDA, and may not be used for medical diagnosis or treatment. SoloFit is a fitness app. It is not a medical device, and nothing below is medical advice. What I Built CLOCK 1 · THE SCAN · 10 SECONDS [Daily Quest] Look at the camera for ten seconds. Reward: a plan that knows how you slept. Most fitness apps give you a plan built from your goals and your equipment, and the plan is the same on the morning after a full night's sleep as it is the morning after an all-nighter. The README puts it in one line I still like: \"Most fitness apps ask the user how they feel. Solofit measures it.\" The app runs on three beats: Measure, don't assume. A 3-second countdown, then a 10-second front-camera recording. Presage reads your heart rate and breathing rate from that video. Reason, don't template. Those vitals, plus your profile (age, goals, equipment, injuries, diet, allergies, budget, cuisine), become a readiness score and a prompt. Gemini 2.5 Flash writes a 7-day workout and diet plan. Adapt, don't repeat. Scan again tomorrow and the plan is rebuilt from tomorrow's body, not yesterday's. Every screenshot in this post is the real app, running on web through Playwright with no API keys. That matters later, so remember it. The rest of the app keeps the Solo Leveling mechanics : quests with XP, a global leaderboard, a community feed, a posture screen that uses MediaPipe, and exercise GIFs so nobody has to guess what a \"Bulgarian split squat\" is. It doesn't keep the Solo Leveling look . It had it for part of the weekend, and why it lost it is the best story from the event. That's in Hackathon Experience. The stack: React Native on Expo SDK 54, Firebase Auth and Firestore for profiles, the Presage Physiology REST API for vitals, Gemini 2.5 Flash for plans, Groq for fast meal swaps, MongoDB Atlas behind an Express server for the leaderboard and community, and Zustand for state. Three engineering decisions worth stealing 1. Never trust an LLM's JSON. Validate it against hard rules, repair it, then fall back to code. The LLM does not get the last word on your workout. A validator does (more on the seven rules below). If the plan breaks a rule, the exact violation goes back to the model in a repair prompt. If the repair still breaks a rule, a deterministic plan builder takes over. The user always gets a valid week. 2. Route each call to the model that fits its latency budget. Generating a whole week can take a while, and nobody minds. Swapping one meal while you stand in the kitchen has to feel instant. So meal swaps go to Groq's llama-3.1-8b-instant in JSON mode at temperature 0.2, and only fall back to Gemini if that fails. Plan generation goes the other way: Gemini first (with a backup key), then Groq's openai/gpt-oss-120b if Gemini is down. 3. Tag every data point with where it came from. Every vitals object carries a source string. That one field is what lets the UI tell measured data apart from estimated data. It is also what made the problem in the third clock easy to find. Demo ipsamurai / solofit Solofit — Real-Time Adaptive AI Fitness Coach A mobile fitness application that uses live biometric data to generate and continuously adapt personalised workout and diet plans — in real time, for every individual. Table of Contents What is Solofit? The Problem We Solve Core Technology Stack Presage SmartSpectra — The Heart of Solofit Gemini AI — The Brain of Solofit MongoDB — The Social Layer Full Architecture Overview Key Features Challenges & How We Solved Them Business Model — Freemium Proposal Getting Started What is Solofit? Solofit is a real-time adaptive AI fitness coach built as a React Native mobile application. It combines clinical-grade biometric analysis, large-language-model reasoning, and a social community layer to deliver hyper-personalised fitness and nutrition plans that update every time a user's physiological state changes. Most fitness apps ask the user how they feel. Solofit measures it. A 10-second face scan through the phone camera captures… View on GitHub Verify this in 60 seconds, no keys The whole Presage pipeline in one function. presageService.js L223-L278 . Read the try block top to bottom: read file, get upload URLs, upload chunks, complete, poll. The catch at the bottom is the fallback. The readiness score. readinessEngine.js L23-L65 . Start at 100, subtract. Then look at lines 62-65, which come up again in the third clock. The LLM guardrails. geminiService.js L40-L128 for the validator, and L1491-L1603 for the generate, validate, repair, fall back chain. Why the scan is 10 seconds. ScanScreen.js L36 . One line, one comment. Remember it. Partner Technologies Presage (the prize) What rPPG actually is. Remote photoplethysmography. A pulse oximeter clipped to your finger shines light through your skin and watches how much comes back as blood surges with each heartbeat. rPPG does the same thing with ambient light and a camera, from a distance. The colour change is tiny and buried in noise from movement, lighting and compression, so the hard part is not the idea. The hard part is pulling a clean signal out of a shaky phone video, and that is the part Presage does for you. What we used, exactly. The prize is called \"Best Use of Presage SDK.\" What SoloFit ships is the Presage Physiology REST API at https://api.physiology.presagetech.com , called from React Native with plain fetch , not the on-device native SDK. The header comment in our service says the flow was \"reverse-engineered from official Python client v1.6.0.\" In other words, Saikat read Presage's Python client, worked out the HTTP calls it makes, and wrote them again in JavaScript, because there was no drop-in React Native package for what we needed. None of the rest of us could have built this part. The flow has five steps: Step Call What it does 1 POST /v1/upload-url Send the file size and hr_br: { to_process: true } . Get back a job id , an upload_id , and a list of presigned S3 URLs. 2 PUT to each S3 URL Upload the video in 5 MB chunks. Keep each chunk's ETag . 3 POST /v1/complete Send the job id, upload id and the { ETag, PartNumber } list. Processing starts in the cloud. 4 POST /retrieve-data Poll every 2.5 s. 201 means still processing, 200 means results are ready. Give up after 40 tries (100 s). 5 Parse Response looks like { hr: { \"0.5\": 72, \"1.0\": 74, ... }, rr: { ... } } . Here is the heart of it, trimmed from the source: const { id , urls , upload_id : uploadId } = await requestUploadUrls ( fileSize , apiKey ); const parts = await uploadChunks ( fileBuffer , urls ); await completeUpload ( id , uploadId , parts , apiKey ); for ( let attempt = 0 ; attempt < MAX_POLL_ATTEMPTS ; attempt ++ ) { await new Promise (( r ) => setTimeout ( r , POLL_INTERVAL_MS )); const res = await fetch ( ` ${ BASE_URL } /retrieve-data` , { method : \" POST \" , headers : { \" x-api-key \" : apiKey , \" Content-Type \" : \" application/json \" }, body : JSON . stringify ({ id }), }); if ( res . status === 200 ) return parseResults ( await res . json ()); if ( res . status === 201 ) continue ; // still processing } throw new Error ( \" Presage processing timed out \" ); In plain English: ask Presage where to put the video, put it there in pieces, tell Presage the pieces are all in, then knock on the door every two and a half seconds until the answer is ready or 100 seconds have passed. And the parse step, which matters more than it looks: const hrVals = Object . values ( data . hr ). filter (( v ) => typeof v === \" number \" && v > 0 ); hr = Math . round ( hrVals . reduce (( a , b ) => a + b , 0 ) / hrVals . length ); // ...same for rr... return { heart_rate : hr ?? 72 , breathing_rate : rr ?? 15 , stress_level : inferStress ( hr ), source : \" presage_api \" , }; In plain English: take every positive sample in the time series, average them into one number, and label the result as live Presage data. Stress is not measured at all. It is inferred from heart rate alone: above 90 is high , above 72 is medium , anything else is low . Hold on to three details from that block: every sample is averaged, nothing looks at confidence, and there is a ?? 15 . All three come back later. What Presage made easy. The server-side processing. We never touched a colour channel, a bandpass filter or a face tracker. Upload a video, get a heart-rate time series back. For a team with a 36-hour clock, that is the entire reason the feature exists. What fought back. The upload. Presage's API has a 10 MB file limit, and a phone's front camera fills that quickly. The fix is in ScanScreen.js : const RECORD_DURATION_S = 10 ; // Reduced to keep file under 10MB API limit Plus quality: \"480p\" , mute: true (rPPG does not need audio), and a maxFileSize cap of 9 MB. The in-code estimate is 2-4 MB for ten seconds, which fits in a single 5 MB part. The scan had been longer (a leftover comment in the same file still says recording (15s) ). We cut it to ten to make the upload fit. That trade looked free at 2 a.m. It is the most important line in this post, and the third clock explains why. Gemini 2.5 Flash, and the guardrails around it The prompt is heavy. Gemini gets the full user profile, the vitals JSON, the readiness score and band, the list of injuries to work around, the equipment, the allergens (marked STRICT ), and the full exercise catalog with the instruction use ONLY these, EXACT names . A prompt is a request, though, not a guarantee. So every plan goes through validateAndNormalizeWorkoutPlan() , which throws on the first violation: # Rule Error it throws (verbatim) 1 Exactly 7 days workout_plan must contain exactly 7 days. 2 2-4 exercises per day Day 3 must contain 2-4 exercises, got 5. 3 Only exercises from the catalog Day 2, exercise 1 uses unknown exercise: \"...\" 4 No duplicates within a day Day 4 has duplicate exercise \"...\" 5 No exercise on consecutive days Day 5 repeats \"...\" from the previous day. Consecutive-day repeats are not allowed. 6 At most 2 rest or recovery days workout_plan has too many recovery/rest days (3). Max allowed is 2. 7 Enough variety across the week workout_plan has low variety: 3 unique exercises, need at least 4. Rule 7 is smarter than it looks. The variety floor is max(4, min(10, availableCount)) , where availableCount is how many catalog exercises this user can actually do with their equipment and injuries. A bodyweight-only user with a bad knee cannot be asked for ten unique exercises. The comment in the code explains that without the cap, \"every plan, including the deterministic fallback, [would] fail validation.\" Somebody found that out the hard way. The chain around the validator: Gemini (primary key -> backup key) -> Groq gpt-oss-120b if Gemini fails -> parse (with truncated-JSON recovery) -> validate -> fail: repair prompt containing the exact error -> parse -> validate -> fail: deterministic fallback workout -> validate -> tune for equipment + injuries -> validate again -> diet normalisation -> allergen check That is one generation, one targeted repair, then code. Not a retry loop that hopes for the best. The elimination test. Could Gemini be replaced by a template? Try this user: vegan, peanut allergy, resistance bands only, knee injury, high stress this morning. A template needs a branch for every combination of those. The LLM handles the combinatorics. The validator makes sure the combinatorics came back in a shape we can trust. An LLM without guardrails is just a template with extra steps. The guardrails are the engineering. Groq Meal swaps only, and only for speed. llama-3.1-8b-instant , temperature: 0.2 , JSON mode with a retry without it, 550 max tokens, and Gemini as the fallback. One job, done fast. MongoDB Atlas The social half of the System. An Express server exposes GET /leaderboard , sorted { xp: -1, streak: -1 } (XP first, streak as the tiebreak), and GET / POST /community/posts , sorted newest first, with image upload. If Atlas can't be reached, the server swaps in an in-memory collection seeded with demo users, so the screen never goes blank on stage. Why none of this is decoration Feature Where Why it isn't decoration Camera vitals Presage REST API Replace it with a \"how do you feel?\" slider and you've rebuilt every other fitness app. The scan is the thesis. Plan generation Gemini 2.5 Flash + Groq fallback Combinations of constraints no template covers Plan validation validateAndNormalizeWorkoutPlan Turns a probabilistic output into a guaranteed shape Meal swap Groq llama-3.1-8b-instant Latency budget different from plan generation Leaderboard + community MongoDB Atlas + Express Quests without a scoreboard are just chores One scan, all the way down Let's go down through the layers of a single scan. This is a worked example with plausible values , not a saved reading from the event. Every arithmetic step uses the real formula from readinessEngine.js . Layer Value Where it comes from Video 10 s, 480p, muted, ~3 MB ScanScreen.js , in-code estimate 2-4 MB Upload parts 1 3 MB fits in one 5 MB chunk Job id from /v1/upload-url Presage HR samples a time series keyed by seconds /retrieve-data , status 200 Averaged HR 88 bpm mean of every positive sample Averaged RR 20 br/min mean of every positive sample Stress medium inferred: 88 > 72 Source presage_api green badge Readiness 68 decomposed below Band light workout 45-74 Plan 7 days, lighter volume Gemini, told RECOMMENDATION: light workout Validation passes 7/7 or repair, or fallback Now the score by hand, for a 19-year-old with no declared health issues: start 100 HR 88 > 80 excess 8, min(8 x 2, 30) -16 HR > 0.7 x (220 - 19) = 140.7 ? no 0 RR 20 > 18 (20 - 18) x 3 -6 stress medium -10 health issues none 0 ---- readiness 68 -> \"light workout\" The step to watch is the breathing term. Two breaths per minute of RR moved the score by 6 points. RR is also the number the third clock is about. Hackathon Experience CLOCK 2 · THE BUILD · 36 HOURS HackTropica 2K26. Asansol Engineering College, West Bengal. April 4-5, 2026. Thirty-six hours. The theme was Nature, and how beautiful it is. We built an app that stares at your face. That sounds like the opposite of the brief until you remember the first paragraph of this post: a pulse is the oldest rhythm in nature, and it's been running under your skin your whole life. We just pointed a camera at it. That's the event, not the product. The app demo is up in the Demo section. This is what the 36 hours looked like from outside the laptop. The crew We called ourselves Kolkatar Rosogollas , after Kolkata's most famous syrup-soaked sweet, and then spent a weekend building an app that writes people diet plans. I'll let that sit. Saikat Das built the Presage connection: the upload, the S3 chunks, the polling, the parsing. It was the one piece nobody else on the team could have done, and the whole app stands on it. Me (Subarna Maity) built the UI of the Expo app, including the redesign you're about to read about, plus the posting features and a steady stream of bug fixes as everything else broke around him. Soumyadeep Dey Community posting, the onboarding flow that collects everything the prompt needs (age, goals, equipment, injuries, diet type, allergies, budget, cuisine), and the diet planning feature. So finding #6 further down is in my part of the code. Sriz Debnath helped where he could, and spent much of the rest of the 36 hours on dedicated fieldwork into the food and the swag. He reports that both were excellent. Every team needs one person who remembers there's an event going on outside the terminal. A note on reading the repo: every commit is under Saikat's account, so the log tells you when things happened, not who did them. Treat it as the team's diary, not a scorecard. The costume came off The biggest challenge of the weekend wasn't rPPG, or S3, or getting JSON out of an LLM. It was a question. We had started out building the app to look like the System itself: glowing blue quest windows, notification panels, the whole anime interface, as if the phone were Jinwoo's status screen. We loved it. It was the reason the name was SoloFit. Then the judges walked up to our table, looked at it, and asked something like: if a serious fitness person opens this app, will they stay once they see an anime theme? We didn't have a good answer, because there isn't one. Someone who trains every morning wants their numbers, not a costume. A theme that makes four hackers grin can make the person the app is actually for close it in five seconds. That hurt more than any stack trace that weekend, because it wasn't a bug. It was taste, and the judges were right. So we tore it down in the middle of the hackathon and rebuilt it as minimalist neo-brutalism . Every colour is now in theme.js : a warm grey #E8E8E6 background, near-black #111111 text, one loud orange #FF5A1F for anything you're meant to press, hard 1.5-2px borders, no glow anywhere. Heart rate, breathing and stress each get a single flat colour of their own. It's quiet enough for a serious lifter and blunt enough to still feel like a System. What we kept were the bones: quests, XP, the leaderboard, \"Arise.\" What we threw away was the paint. That rebuild is where Version 2.0.0 : Massive UI overhaul in the log below comes from. The anime was for us. The app was for them. The diary Here's the diary, in IST: Time Commit Apr 4, 19:10 Solofit: AI-powered adaptive fitness coach app Apr 4, 19:15 chore: Secure API keys and move Firebase config to environment variables Apr 4, 19:18 Updated gitignore five and a half hours of silence Apr 5, 00:54 Presage implementation successful along with custom fallbacks Apr 5, 01:00 feat: dynamic exercise GIFs with chevron dropdown in WorkoutScreen Apr 5, 03:05 Harden env safety and stabilize AI workout generation Apr 5, 03:23 Version 2.0.0 : Massive UI overhaul Apr 5, 06:20 3.0.0 : Leader board and Community sections live using Mongo DB Apr 5, 10:10 2.6.0 : UI changes and AI model fallbacks added Apr 5, 12:13 version 3.0.1 : Minor changes Look at the gap. Between 19:18 and 00:54 there isn't a single commit. Those were Saikat's five and a half hours, and the commit that ends them is the one the whole project depends on. Our Devfolio \"challenges\" field sums up those hours in one line: \"Implementing presage SDK into React Native App but we nailed It.\" The Devfolio stack also lists C++ and CMake, which are not what you reach for when calling a REST API. The rest of the log reads like a team that has stopped being scared. Six minutes after Presage lands, someone ships exercise GIFs. By 03:23 the costume is off and the neo-brutalist UI is in. By 06:20 the leaderboard is live on Mongo. At 10:10 the version number goes backwards , from 3.0.0 to 2.6.0, in a commit that adds AI model fallbacks. That tells you exactly how much sleep was involved. Look at the 00:54 commit message again, too. Not \"Presage implementation successful.\" It's \"Presage implementation successful along with custom fallbacks.\" The fallback was born in the same minute as the feature. Hold on to that. Then judging, and the prize: MLH: Best Use of Presage SDK. We also applied to the MongoDB and Gemini tracks. We didn't win those. We won the one the whole app was built around. [Warning] What I'd fix before anyone trains on this CLOCK 3 · THE READING · 5 MONTHS LATER [Warning] Vitals estimated. Intense quests should be locked. They aren't. Five months later, sitting down to write this post, I opened Presage's current SmartSpectra docs to get one sentence right about breathing rate. This is the sentence: Confidence is 0 until the full 30-second window is reached. Our scan is 10 seconds long. Go back through everything above with that in mind. The upload limit that pushed the scan down to ten seconds. The parse step that averages every sample and never checks confidence. The readiness formula where two breaths per minute cost six points. None of it was wrong at 2 a.m. It was just built without the one number that tells you whether the breathing data can be trusted at all. These are findings, not apologies. Each one comes with its fix. 1. Breathing rate from a 10-second window. Presage's docs say breathing-rate confidence stays at 0 until 30 seconds. (Those docs describe the SDK. I haven't confirmed whether the REST endpoint behaves exactly the same.) Either way, a breathing rate from ten seconds of video is a number the provider itself says not to lean on, and our score leans on it. Fix: On scans under 30 seconds, drop RR from the score completely. When breathing matters, scan for 30 seconds and keep the file under the limit by dropping to a lower resolution. 2. Averaging blindly. parseResults() averages every positive sample. The docs list what degrades the signal: large head, body or camera motion, chewing gum, flickering light like a TV screen. Pulse is valid for roughly 40-110 BPM. Fix: If the API returns confidence with each sample, weight by it or throw away low-confidence samples. Either way, clamp HR to the valid range before it gets near a score. 3. A hard-coded breathing rate labelled as live data. Look at rr ?? 15 again. If Presage sends back heart rate but no usable breathing rate, the app puts in 15, and the object still says source: \"presage_api\" . The green badge lights up for a number nobody measured. Fix: Return breathing_rate: null and track source per field, not per object. 4. The fallback can unlock an intense workout. This is the big one. Here are lines 62-65 of readinessEngine.js : // For estimated/mock vitals, keep readiness randomized strictly within 55-85. if ( isFallbackSource ) { score = Math . floor ( Math . random () * ( 85 - 55 + 1 )) + 55 ; } In plain English: if the vitals were made up, make the score up too, somewhere between 55 and 85. But 75 and above maps to \"intense workout\" . From 55 to 85 there are 31 possible scores, and 11 of them are 75 or higher. So on a fallback scan, there's roughly a 35% chance the app prescribes an intense session from vitals that were never measured. I didn't have to imagine this. I ran into it while taking the screenshots for this post. Chromium's fake webcam produced no usable video file, so the app returned mock_no_video , and the random roll landed on 78: The amber badge was there, just like it's supposed to be. So were a green 78, a \"READY\" pill and an upper-body hypertrophy session, all built on a heartbeat nobody measured. It gets worse downstream: the vitals JSON goes into the Gemini prompt under the heading REAL-TIME BODY DATA . The source field is inside that JSON, but nothing tells the model what mock_api_fallback means. The fallback was a good decision for a demo. The mistake was letting it go further than the badge. Fix: if ( isFallbackSource ) { return { readiness_score : null , recommendation : \" light workout \" , details : \" Vitals were estimated, not measured. Intense quests stay locked until a real scan. \" , }; } In plain English: when we don't know, say so, and pick the safe option. Estimated vitals can unlock a light day. They should never unlock a hard one. Tell the model the same thing in the prompt, and make the amber badge impossible to miss. 5. Two different definitions of \"high stress\". Real vitals call stress high above 90 bpm. The mock generator uses above 85. That's small, but it means the same heart rate gets a different stress label depending on where it came from. Fix: One inferStress() function, used by both paths. 6. The allergen check flags instead of blocking. validateNoAllergens() does a substring match on meal names and, on a hit, renames the meal [ALLERGEN WARNING] ... . It doesn't reject the plan, and it can't catch a peanut-based satay that never uses the word \"peanut.\" Fix: Send a flagged plan back through the same repair loop the workout validator uses, and match against ingredients, not just names. The magic trick was real. The part we never checked was how long it needs to run. What this unlocks Solo Leveling was the costume, and the judges already made us take it off once. What was left underneath is one idea: measure the user before you personalise anything. Nearly every \"personalised\" app personalises from a profile you filled in once. A camera-based vital sign is a profile that updates every morning. Study planners that check fatigue before scheduling the hard chapter. Focus timers that stretch the break when your resting heart rate is up. Rehab programmes that won't progress the load on a day your body says no. Shift and driver apps that ask for thirty seconds before a long night, not a checkbox. Every one of them gets the same three lessons from this post: tag the source, respect the window, and never let an estimate unlock the risky option. FAQ How do you measure heart rate from a phone camera in React Native? Record a short front-camera video with expo-camera ( recordAsync with quality: \"480p\" and mute: true ), then send it to an rPPG service. With the Presage Physiology REST API: POST /v1/upload-url , PUT the chunks to the presigned S3 URLs, POST /v1/complete , then poll POST /retrieve-data until you get a 200 . The response is a heart-rate time series you can summarise. What is rPPG and how accurate is it? Remote photoplethysmography reads the tiny colour changes in skin caused by blood flow. Presage's docs give a valid pulse range of about 40-110 BPM and list large motion, flickering light and chewing gum as things that degrade it. Its metrics are for general wellness, not FDA cleared, and not for diagnosis. How long does a Presage scan need for breathing rate? Presage's SmartSpectra docs say breathing-rate confidence is 0 until a full 30-second window, and HRV statistics need 60 seconds. A 10-second scan is fine for a pulse estimate. It isn't enough to trust breathing rate. How do you stop an LLM from returning an invalid workout plan? Don't rely on the prompt. Validate the parsed JSON against hard rules in code (for us: 7 days, 2-4 exercises per day, catalog-only names, no duplicates in a day, no consecutive-day repeats, at most 2 rest days, a variety floor). On failure, send the exact error back in a repair prompt. If the repair fails too, build the plan deterministically. Why does my Presage poll keep returning 201? 201 from /retrieve-data means the job is still processing, not that it failed. Keep polling. We used a 2.5-second interval and gave up after 40 attempts (100 seconds), which is when Presage processing timed out fires and the fallback kicks in. Credits Team Kolkatar Rosogollas: Saikat Das (the Presage pipeline), Subarna Maity (the UI, posting and bug fixes), Soumyadeep Dey (posting, onboarding, diet planning), Sriz Debnath (morale, food reconnaissance, swag). HackTropica 2K26 and Asansol Engineering College, for the 36 hours and a Nature theme we stretched as far as it would go. The judges , for the question that killed our anime UI. It was the best feedback we got all weekend. MLH , for the Presage track and the prize. Presage , for an API that turned \"read a pulse from a face\" into five HTTP calls, and for docs honest enough to tell us where we went wrong. Solo Leveling by Chugong, for the System we wanted to argue with. SoloFit is a general-wellness fitness app. Its vitals are not medical measurements, and nothing in it or in this post replaces advice from a doctor. This post was drafted with AI assistance; the code, the build and the mistakes are ours.",
+            "url": "https://dev.to/dronzer2code/the-system-never-checked-if-you-slept-ours-reads-your-pulse-first-2hai",
+            "source": "DEV Community",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "cpp",
+                "developpement",
+                "gemini",
+                "git",
+                "java",
+                "javascript",
+                "llm",
+                "openai",
+                "programmation",
+                "python",
+                "rust",
+                "web",
+                "wifi",
+                "windows"
+            ],
+            "published_at": "2026-09-25T20:43:24+00:00",
+            "collected_at": "2026-09-25T20:56:38.636050+00:00"
+        },
+        {
+            "id": "d350cf09d61eb550054dbeb3226489a1e79d9d4068949d4278823e49baec0a0b",
+            "title": "# Building an Interactive Excel Dashboard for E-commerce Product Analysis: A Case Study of Jumia Products",
+            "description": "Introduction E-commerce platforms generate huge volumes of product-level data every day prices, discounts, reviews, and ratings , but raw data on its own doesn't tell a story. It has to be cleaned, structured, and visualized before it can support real decisions. For this project, I set out to analyze a dataset of products scraped from Jumia , one of Africa's largest e-commerce platforms, and turn it into an interactive Excel dashboard. My objective was to answer three practical questions that any Jumia seller or category manager would care about: Do higher discounts actually drive more customer engagement (reviews)? Do highly rated products command higher or lower prices? Which products are performing best, and which need a different pricing or marketing strategy? This article walks through the full workflow — from raw data to a finished dashboard — including the data cleaning steps, the Excel formulas and techniques I used, the pivot tables and charts I built, and the business recommendations that came out of the analysis. 📸 [Insert screenshot: project overview / cover image of the final dashboard] Dataset Description The raw dataset contains 115 products pulled from Jumia, with the following original fields: Column Description Product Product name/title Current price Listed selling price (KSh) Old price Original price before discount (KSh) Discount Discount percentage Review Number of customer reviews Rating Star rating (e.g. \"4.5 out of 5\") The data came in a fairly \"raw\" state — prices were stored as text strings with currency symbols and thousands separators (e.g. \"KSh 1,525\" ), ratings were embedded in descriptive text ( \"4.5 out of 5\" ), and a large portion of the review and rating fields were blank. 📸 [Insert screenshot: raw dataset — first rows of the \"Excel_jumia_dataset\" sheet] Data Cleaning and Preparation Process Before any analysis could happen, the dataset needed a proper cleanup. Here's what that involved: Converting price fields to numeric values — stripping the \"KSh\" prefix and comma separators from Current price and Old price so they could be used in calculations. Extracting numeric ratings — pulling the numeric score out of text like \"4.5 out of 5\" into a clean Rating column. Handling missing values — out of 115 products, 58 were missing a review count and 58 were missing a rating , meaning roughly half the catalog has no visible engagement data. Rather than dropping these rows (which would bias the analysis toward only the most popular products), I kept them and flagged this as a data-quality issue in the final insights — this gap directly affects how confidently Jumia can price and merchandise nearly half its listings. Creating derived columns to make the data analysis-ready: Discount Amount = Old price − Current price Price category (Low / Medium / High) Discount category (Low / Medium / High) Rating category (Poor / Average / Excellent) 📸 [Insert screenshot: cleaned dataset — \"cleaned products\" sheet showing the new columns] Excel Techniques, Formulas, and Analysis Performed The core of the cleaning and categorization work was done with nested IF() formulas. A few examples from the cleaned dataset: Price categorization: =IF(B2<500,\"Low Price\",IF(B2<=2000,\"Medium Price\",\"High Price\")) Discount amount: =D2-B2 Discount categorization (based on discount %): =IF(G2<20%,\"Low Discount\",IF(G2<=40%,\"Medium Discount\",\"High Discount\")) Rating categorization: =IF(J2<3,\"Poor\",IF(J2<4,\"Average\",\"Excellent\")) 📸 [Insert screenshot: formula bar showing the nested IF formulas above, applied to the cleaned products sheet] Beyond the IF() logic, I used array formulas to automatically pull ranked \"Top 10\" lists directly from the dataset — for example, surfacing the top 10 products by discount percentage, by review count, and by rating, without manually sorting the data. This made the \"analysis\" sheet dynamic: if the underlying data changes, the top-10 lists update automatically. 📸 [Insert screenshot: \"analysis\" sheet — Top 10 Highest Discounts / Top 10 Highest Reviews / Top 10 Highest Rated tables] Dashboard Creation Process With the data cleaned and categorized, I built PivotTables to summarize the dataset across multiple dimensions at once: Average current price, average discount, average rating, and total reviews (overview KPIs) Count of products by discount category (Low / Medium / High Discount) Count of products by price category (Low / Medium / High Price) Count of products by rating category (Poor / Average / Excellent) Average review count broken down by discount category and by rating category Average rating broken down by price category 📸 [Insert screenshot: pivot tables sheet showing the summary tables] These pivot tables fed directly into a set of charts, which I then arranged into a single-page interactive Dashboard with KPI cards for: Total products analyzed Average price Average discount Average rating Total reviews 📸 [Insert screenshot: chart(s) built from the pivot tables — e.g. bar chart of product count by price category, discount category distribution] 📸 [Insert screenshot: final Dashboard sheet, showing KPI cards, charts, and layout together] Key Insights and Business Recommendations After building the analysis and dashboard, here's what the data actually showed: 1. Do higher discounts lead to higher customer engagement? No — the data shows no meaningful correlation between discount size and review volume. Deep discounts are not the lever driving customer engagement on Jumia. 2. Do highly rated products have higher or lower prices? Neither, meaningfully. Price and rating are only weakly related in this dataset — being expensive doesn't guarantee a better rating, and being cheap doesn't guarantee a worse one. 3. Which products are performing best? Crochet/knitting kits, cake-decorating sets, and cleaning gadgets stand out — they combine solid ratings (4.1–4.7) with genuine review volume, rather than just a high rating with little supporting evidence. 4. Which products need a different pricing/marketing strategy? Two distinct groups emerged: 13 \"high discount / low rating\" products — heavy discounting isn't fixing an underlying quality or fit problem. A cluster of 5-star products with almost no reviews — these are under-marketed rather than under-priced; they deserve more visibility, not a lower price. 📸 [Insert screenshot: key insights summary / business insights sheet] Recommendations for Jumia Sellers Reallocate discount budget away from blanket deep discounts and toward better listing content (photos, descriptions) and promotion for categories with proven demand. Audit and fix or delist the 13 high-discount/low-rating products — discounting alone won't resolve a quality or listing problem. Actively solicit reviews on high-rating, low-review products to unlock the visible social proof they already deserve. Close the review/rating data gap platform-wide — with roughly half the catalog missing review or rating data, sound pricing and merchandising decisions are currently being made without full information. Conclusion This project reinforced something I think gets underrated in data work: most of the value isn't in the fancy chart at the end, it's in the cleaning and categorization steps that come before it. Nested IF() formulas, careful handling of missing data, and well-structured PivotTables turned a messy scraped dataset into a dashboard that can actually inform a pricing and marketing conversation.",
+            "url": "https://dev.to/dakgony2022arch/-building-an-interactive-excel-dashboard-for-e-commerce-product-analysis-a-case-study-of-jumia-41l1",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-25T20:40:21+00:00",
+            "collected_at": "2026-09-25T20:56:38.637232+00:00"
+        },
+        {
+            "id": "c951111b7f38e406b65c4c320544d5b3e81807f12fd725b1e6c7ee91963d78a9",
+            "title": "GRPO practical guide",
+            "description": "In this article, we will learn about GRPO. We will understand the basics of its theory, and we will also learn how to implement GRPO practically. To understand GRPO clearly, you should have some prerequisites, like knowledge about RL, SFT, and LLM fine-tuning. Now,first see what is GRPO? GRPO (Group Relative Policy Optimization) is an RL method used to fine-tune (align) LLMs. Other RL methods like PPO require a reward model and a critic/value model, which makes them more computationally expensive. On the other hand, GRPO doesn't require a separate critic model, and you can also use a simple reward function based on static rules to evaluate the model's responses. This makes GRPO relatively lightweight compared to methods like PPO, especially when the reward can be calculated using simple rule-based functions. As a beginner, when I first read the definition of GRPO, I could understand it, but I couldn't connect it with its name. I think you also need some assistance to connect the GRPO name with its concept, so here is the meaning of its name. Meaning of it's name We will break it down into words and then explain the meaning using each of those words. G of GRPO stands for GROUP , which means instead of generating a single response using our model, in GRPO we generate a group of responses, denoted as G number of responses. R stands for RELATIVE , which means we compare each of those G number of responses and calculate their rewards using a reward function. P stands for POLICY , which means the current approach of the model to generating responses. And O stands for OPTIMIZATION , which optimizes the policy of the model to increase the probability of good responses and decrease the probability of bad responses. Don't worry if you are unable to fully understand this part. Just read it, and later when we discuss the workflow, you will properly understand it. If you ever tried to fine-tune an LLM, you definitely came across a very common method named SFT (Supervised Fine-Tuning). This is one of the common and popular ways of fine-tuning an LLM. In SFT, we have our queries and their desired responses in our dataset, and we fine-tune our model on those queries with those desired responses. In general, an SFT dataset should be big in size and also diverse to avoid overfitting. But then we come across two questions: What is the difference between SFT and GRPO? When and where should we use which? Difference between SFT and GRPO SFT (Supervised Fine-Tuning) : As we said before, for SFT we need a prompt (question) and a desired response (completion) in our dataset. Tokenization & Formatting: We format the prompt and response together (often with special system/chat tokens) and convert the text into token IDs. Forward Pass: We pass these tokens through the model to compute logits for each token position. Loss Computation: We calculate the Cross-Entropy loss specifically on the target response tokens (usually masking out the prompt tokens so the model only learns to generate the response). Backward Propagation: We compute the gradients of the loss with respect to the model's parameters. Optimizer Step: We update the model weights using an optimizer (like AdamW) to decrease the loss. These steps make the LLM learn to increase the probability of producing the desired response for a given prompt. Problems with SFT: SFT relies heavily on high-quality, human-curated datasets. If the dataset size is too small, poor quality, or lacks diversity, it can lead to issues like overfitting (memorizing responses instead of learning general patterns), underfitting, or catastrophic forgetting (losing pre-trained baseline capabilities). SFT teaches the model what to generate by showing ideal behavior, but it never explicitly teaches the LLM what NOT to produce. As a result, the model cannot easily learn boundaries around unsafe, biased, or undesirable outputs purely through standard supervised targets. These are some SFT datasets: awesome-sft-datasets GRPO (Group Relative Policy Optimization) : Unlike SFT, in GRPO's dataset we generally have a single column named prompts . The GRPO training process can be understood through the following steps: Prompt Sampling: First, we sample a prompt from the dataset. Group Generation: Then, we generate a group of (G) different responses for that single prompt using the current policy. The sampling temperature is often kept high enough to produce diverse responses, although the exact temperature depends on the task. Reward Calculation: Next, we calculate the reward for each response in the group using designated reward functions. These can be rule-based functions, model-based reward models, or other verifiable evaluation methods. Group Normalization: GRPO normalizes the rewards across the (G) responses by calculating their mean and standard deviation. These normalized rewards are then used to create advantage values without requiring a separate critic/value network. Policy Ratio Calculation: We compute the policy ratio by comparing the probability of generating the sampled tokens under the updated policy with their probability under the policy that generated the samples. Clipped Objective: GRPO uses a clipped objective, similar to PPO, to prevent the policy from updating too aggressively. High-reward responses are encouraged to become more likely, while low-reward responses become less likely, within a bounded range. KL Divergence Regularization: A KL-divergence penalty can be used to prevent the updated policy from moving too far away from a reference policy, helping to prevent excessive policy drift. Optimization: Finally, backpropagation computes the gradients, and the optimizer updates the policy parameters. The steps 1, 2, 3, 6, and 7 are the main steps we need to configure when implementing GRPO practically. The rest of the steps are important for understanding how GRPO works, but they are mostly handled internally by the GRPO training framework. In SFT, we learn that it mainly teaches the model what to generate, but it does not directly teach the model what not to generate. In contrast, GRPO is a policy optimization method, so it teaches the LLM by increasing the probability of desired outputs and decreasing the probability of bad outputs. For a good or desired output, our reward function might provide a reward of 1.0 , while for a bad response it might provide 0.0 . If we want to strongly penalize a particular type of response, we can also use a negative reward such as -1.0 , depending on how we design our reward function. Basically, the reward values guide our model toward our desired outputs, and this process is called alignment . We use RL (Reinforcement Learning) to align LLMs with the behavior we want. Problems of GRPO No learning signal when rewards are similar: If all sampled answers receive the same reward—for example, all are correct or all are incorrect—then r_i - μ_group becomes zero or very close to zero for every response. As a result, the advantage values become zero or very small, and the model receives little or no useful learning signal from that group. This is especially common when: The problem is too easy. The problem is too difficult. The reward function is too coarse, such as only providing 0.0 or 1.0 The group size is too small to contain both good and bad samples. High memory consumption with a large (G): If (G) is very high, it can significantly increase memory consumption and computational cost because the model needs to generate and evaluate (G) responses for every sampled prompt. Reward hacking and undesirable learning: If the reward function is poorly designed or not strong enough, the model may learn to exploit weaknesses in the reward function instead of actually learning the desired behavior. This is known as reward hacking . Similarly, if the training dataset is not diverse enough, the model may learn unwanted shortcuts or overfit to specific patterns instead of learning a more general behavior. Image of SFT dataset: Image of GRPO dataset: As of now, we have learned about two very good LLM fine-tuning methods, and normally we will encounter a question: Then when should we use GRPO and when should we use SFT? When to use which? If we have a high-quality dataset with prompt and answer columns, then we can apply SFT. In SFT, the quality and diversity of the dataset matter a lot. But if we don't have an answer column and instead have a strong reward function that can reliably evaluate the model's responses, then we can use GRPO. The dataset can be small or large; what matters more is whether we can generate useful training signals from the reward function. Generally, when we try to teach our model new things or teach it a particular behavior using example responses, we use SFT. But suppose a model already knows something but does not behave in the way we want. Then, to align its behavior with our desired behavior, we can use GRPO. Usually, for a given task, if possible, we can first do SFT to teach that behavior properly to the LLM, and then apply GRPO to further optimize and align the model's behavior. In this way, we can combine the strengths of both methods and potentially get better results. Till now, we have covered the basics of the theory behind GRPO. Since our goal in this article is to teach you how to implement GRPO practically, we didn't go deeper into the theory and mathematics behind GRPO. Now, we will learn how to implement GRPO practically. Implementation of GRPO: For this tutorial, we will use free Colab, so everyone can test this directly. GRPO is generally more memory-hungry than SFT, so when you are trying to implement it on memory-constrained hardware like Colab, you need to optimize it carefully. That's why we will use Unsloth here. Unsloth handles many of the optimization parts and makes it possible to train models on free Colab. For this article, we will fine-tune the unsloth/SmolLM2-135M-Instruct model. This is a very small dense model with just 135M parameters. Dependency Installation First, open your Colab notebook and select a T4 GPU as the runtime. Then, run the following code: ! pip install unsloth transformers == 4.56 . 2 ! pip install -- no - deps trl == 0.22 . 2 This code will install Unsloth , the required version of Transformers , and TRL . output may look like this: Here you can see all the dependencies are properly downloaded. Model Download and Initialization After installing the dependencies, we will now download and initialize the model and tokenizer. For that, use the following code: import pandas as pd from datasets import Dataset from unsloth import FastLanguageModel import torch model , tokenizer = FastLanguageModel . from_pretrained ( model_name = \" unsloth/SmolLM2-135M-Instruct \" , max_seq_length = 4096 , load_in_4bit = False , fast_inference = False , gpu_memory_utilization = 0.6 , ) As unsloth/SmolLM2-135M-Instruct is a text-to-text language model, we use FastLanguageModel to load it. We have set max_seq_length to 4096 tokens , which means the model can process sequences of up to 4096 tokens. We have also set gpu_memory_utilization to 0.6 . This controls how much GPU memory the inference engine is allowed to use when fast inference is enabled. Keeping this value lower can help reduce the risk of running out of GPU memory. If you set load_in_4bit = True , the model will be loaded using 4-bit quantization . This can significantly reduce GPU memory consumption, which is especially useful when working with memory-constrained hardware. However, quantization can introduce some loss to model accuracy. Since we are using a very small model in this tutorial, we will keep it False . If you set fast_inference = True , Unsloth can use vLLM as the inference engine under the hood, which can make response generation significantly faster. After downloading and initializing the model the output may look like: LoRA Adapter Configuration Here, in this step, we actually configure the LoRA adapters for our downloaded model. To do this, we have code like this: model = FastLanguageModel . get_peft_model ( model , r = 32 , target_modules = [ \" q_proj \" , \" k_proj \" , \" v_proj \" , \" o_proj \" , \" gate_proj \" , \" up_proj \" , \" down_proj \" , ], lora_alpha = 32 , use_gradient_checkpointing = \" unsloth \" , # Enable long context finetuning random_state = 3407 , ) Here, we have selected the target_modules where the LoRA adapters will be applied. We have also used use_gradient_checkpointing=\"unsloth\" , which enables Unsloth's optimized gradient checkpointing and helps reduce memory usage during long-context fine-tuning. If you are facing OOM (Out Of Memory) issues, you can try reducing the LoRA rank r or reducing the number of target modules. The output of this code is like: Dataset Formatting This is the confusing part. We have many ways to format our dataset, and this can create confusion about which format we should use. Here, in this example, we have used the conversational dataset format , which you can use for your GRPO tasks. This is what my dataset looks like: Here, in the prompt column, we have all the input prompts. We will now use the following code to convert it into a proper Hugging Face conversational dataset , where each prompt is placed in the user role. df = pd . read_csv ( \" /content/train_generic_2000.csv \" ) # Convert to GRPO format grpo_data = [ { \" prompt \" : [ { \" role \" : \" user \" , \" content \" : row [ \" prompt \" ]. strip () } ] } for _ , row in df . iterrows () ] print ( grpo_data [ 0 ]) # Create Hugging Face Dataset dataset = Dataset . from_list ( grpo_data ) dataset = dataset . shuffle ( seed = 3407 ) print ( dataset [ 0 ]) After running this code, our dataset will be converted into the required conversational format. The final format of the dataset will look something like this: Reward Function Now we will learn the most important part of this tutorial, which is building the reward function . To understand the reward function, first understand our goal and the dataset. We are trying to teach the model to produce a structured JSON output and retrieve important information from the given text content and return it in a valid JSON format. So, for this goal, what are the things we have to check? Is the model producing valid JSON? Is the JSON a valid JSON object? Does the JSON have multiple key-value pairs? Are those key-value pairs unique? Do the extracted values come from the given text? Are the extracted pieces of information enough to satisfy our goal? See how we are forcing our model to achieve the goal step by step, from very basic capabilities to the final goal. Now, how do we distribute the rewards? We will start from the last step. One more thing we could check is whether the extracted information contains enough important information from the given text. To check this properly, we would need another model or a more sophisticated evaluation method, because we cannot reliably check this using simple static rules. So, for this tutorial, we have skipped this step. Our final goal here is to check whether the extracted values actually come from the given text . If the final goal is achieved, the model will get a reward of 1.0 . Otherwise, if the model reaches the step before the final goal, it will get 0.7 . This means the model successfully created a valid JSON object with multiple unique key-value pairs, but some of the extracted values were not found in the original text. If that condition is also not satisfied, we give it 0.5 . Then 0.3 , then 0.2 , and finally 0.0 if the model fails to produce valid JSON. So our reward levels are: 0.0 → Invalid JSON 0.2 → Valid JSON, but not a JSON object 0.3 → JSON object with only one or zero key-value pairs 0.5 → Multiple key-value pairs, but duplicate keys exist 0.7 → Multiple unique key-value pairs, but some values are not from the given text 1.0 → Multiple unique key-value pairs and all values are from the given text See how we are gradually pushing the model from 0.0 → 0.2 → 0.3 → 0.5 → 0.7 → 1.0 , basically pushing it toward our final goal. This is how we design our reward function: instead of giving the model only 0 or 1 , we can provide intermediate rewards for partially achieving the goal. These intermediate rewards can give the model a more useful learning signal during training. This is the code for our reward function: import json def reward_func ( completions , prompts , ** kwargs ): rewards = [] rewards_containing_0 = 0 rewards_containing_02 = 0 rewards_containing_03 = 0 rewards_containing_05 = 0 rewards_containing_07 = 0 rewards_containing_1 = 0 for prompt , completion in zip ( prompts , completions ): # Get the original user prompt user_message = prompt [ - 1 ][ \" content \" ] # Extract assistant content if isinstance ( completion , list ): assistant_messages = [ message for message in completion if message . get ( \" role \" ) == \" assistant \" ] if assistant_messages : generated = assistant_messages [ - 1 ]. get ( \" content \" , \"\" ) else : generated = \"\" else : generated = str ( completion ) duplicate_keys = [] original_pair_count = 0 def check_duplicates ( pairs ): nonlocal original_pair_count original_pair_count = len ( pairs ) keys = [ key for key , _ in pairs ] for key in set ( keys ): if keys . count ( key ) > 1 : duplicate_keys . append ( key ) return dict ( pairs ) try : # 1. Parse JSON parsed = json . loads ( generated , object_pairs_hook = check_duplicates ) # 2. Check JSON object if not isinstance ( parsed , dict ): reward = 0.2 rewards_containing_02 += 1 # 3. Check number of key-value pairs elif original_pair_count <= 1 : reward = 0.3 rewards_containing_03 += 1 # 4. Check duplicate keys elif duplicate_keys : reward = 0.5 rewards_containing_05 += 1 else : # 5. Check whether all values exist in prompt prompt_lower = user_message . lower () values_from_prompt = all ( str ( value ). lower () in prompt_lower for value in parsed . values () ) if values_from_prompt : reward = 1.0 rewards_containing_1 += 1 else : reward = 0.7 rewards_containing_07 += 1 except ( json . JSONDecodeError , TypeError ): reward = 0.0 rewards_containing_0 += 1 # --------------------------------------------------------- # Print ONLY responses with reward 1.0 # --------------------------------------------------------- if reward == 1.0 : print ( \" \\n \" + \" = \" * 80 ) print ( \" USER: \" ) print ( user_message ) print ( \" \\n GENERATED: \" ) print ( generated ) print ( \" \\n REWARD: \" , reward ) print ( \" = \" * 80 ) rewards . append ( reward ) # ------------------------------------------------------------- # Reward statistics # ------------------------------------------------------------- print ( \" \\n \" + \" = \" * 80 ) print ( \" REWARD STATISTICS \" ) print ( \" = \" * 80 ) print ( f \" Total responses : { len ( rewards ) } \" ) print ( f \" Reward 0.0 : { rewards_containing_0 } \" ) print ( f \" Reward 0.2 : { rewards_containing_02 } \" ) print ( f \" Reward 0.3 : { rewards_containing_03 } \" ) print ( f \" Reward 0.5 : { rewards_containing_05 } \" ) print ( f \" Reward 0.7 : { rewards_containing_07 } \" ) print ( f \" Reward 1.0 : { rewards_containing_1 } \" ) print ( \" = \" * 80 ) return rewards NOTE: As the reward function is one of the most important part of GRPO that's why we think and write it even before we write the training loop. Setup the Training Arguments and the Trainer After writing the reward function, we have to configure our training arguments and set up our trainer. In this phase, we actually configure the training parameters (hyperparameters). This is the code for setting up the trainer: from trl import GRPOConfig , GRPOTrainer training_args = GRPOConfig ( learning_rate = 5e-6 , adam_beta1 = 0.9 , adam_beta2 = 0.99 , weight_decay = 0.1 , warmup_ratio = 0.1 , lr_scheduler_type = \" cosine \" , optim = \" paged_adamw_8bit \" , logging_steps = 1 , per_device_train_batch_size = 1 , gradient_accumulation_steps = 16 , num_generations = 16 , max_prompt_length = 4096 , max_completion_length = 512 , max_steps = 100 , save_steps = 100 , max_grad_norm = 0.1 , report_to = \" none \" , output_dir = \" outputs \" , ) trainer = GRPOTrainer ( model = model , processing_class = tokenizer , reward_funcs = [ reward_func , ], args = training_args , train_dataset = dataset , ) See the num_generations=16 . This is actually the value of G that we discussed earlier. Here, we have set it to 16, which is a little bit higher than what we generally use. Since we are using a very small model, we can afford to use a larger group size. Instead of training for a full epoch, we are training for only 100 steps for this tutorial. That's why we have set max_steps=100 . If we want to train the model for a specific number of epochs instead, we can replace: max_steps = 100 with: num_train_epochs = 1 where 1 means one full epoch. There are also many other parameters, such as learning_rate , optimizer settings, and gradient-related parameters. These are common concepts that you may already have encountered while learning about SFT, LoRA, or QLoRA, so we won't go into them deeply here. At the end, you can see that we have configured our reward function and dataset in the GRPOTrainer . Start the Training As of now, we have done everything required, and it is time to start our training. To start the training, we just have to enter: trainer . train () and it will start the training. After the training starts, you might see something like this: You can see that the rewards are changing, and you can also see the logs from our reward function. Generally, the model starts learning after a 300 steps and may start getting better rewards after 500 steps. However, this depends on the dataset, the model, the reward function, and the training configuration. So, don't expect the same training behavior for every dataset or model. Conclusion Throughout this article, we have learned the practical implementation of GRPO. We started with the basic concepts and gradually moved toward implementing GRPO using Unsloth and TRL. If you found this article helpful, consider giving it a like and leaving a comment. Your feedback helps me create more practical and useful content. My GitHub GitHub — cyberytti Sources I also referred to the following resources while writing this article: Hugging Face — Implementing GRPO in TRL Hugging Face — Practical Exercise: GRPO with Unsloth Unsloth — Advanced Llama 3.2 GRPO LoRA Colab Notebook",
+            "url": "https://dev.to/sagnik_bose_e58f142666a4b/grpo-practical-guide-50cc",
+            "source": "DEV Community",
+            "category": "cybersecurite",
+            "tags": [
+                "developpement",
+                "git",
+                "llm",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-25T20:39:15+00:00",
+            "collected_at": "2026-09-25T20:56:38.639970+00:00"
+        },
+        {
+            "id": "081dbb5dfe1130f913e2db389f98c48afebcc6022adf9d66f7e1e831cc257b68",
+            "title": "How I removed polling from a Linux laptop power manager",
+            "description": "Power-management software has an awkward requirement: it should not become part of the power problem. I built PowerSifu , an MIT-licensed GTK tray application for Ubuntu and Debian laptops. It switches power-profiles-daemon profiles when AC power changes, applies optional profile-specific brightness, runs weekly schedules, and can gracefully stop selected user applications when a profile activates. The first implementation worked, but its monitoring design was too eager. Version 0.3.5 is the result of reworking it around system events instead of repeated polling. The first design The original monitor woke every five seconds. It checked whether the laptop was on AC power, asked for the active power profile, compared the result with the saved policy, and acted if anything had changed. That approach is easy to understand and usually reliable. It is also a poor fit for a utility whose purpose is to reduce unnecessary laptop activity. Even when absolutely nothing changes, a polling loop still wakes up, performs work, and often launches helper processes. PowerSifu also used powerprofilesctl repeatedly. Besides the process-launch overhead, this exposed the app to a shutdown crash in the Python-based command on a newer Ubuntu environment. Moving the operation into the long-running process solved both problems at once. Listening instead of asking Linux already has services that know when these properties change. UPower exposes the power-source state and power-profiles-daemon exposes the active profile. Both are available over D-Bus. PowerSifu now creates persistent proxies for those services and subscribes to property-change notifications. A transition from AC to battery causes an immediate callback. A profile change does the same. When the laptop sits untouched, the monitor has nothing to poll. Keeping the proxies alive is important. Recreating a proxy for every read would still repeat service discovery and connection work. The current design creates the service objects once, reuses them for reads and writes, and de-duplicates notifications before applying policy. The profile write path moved to the power-profiles-daemon system D-Bus interface as well. There is no repeated command-line process between the application and the service. Events still need a recovery path An event-driven design should not assume that every desktop session and service behaves perfectly forever. A service can restart, a signal can be missed during reconnection, or an older environment may not expose an expected notification. For that reason, PowerSifu retains a 60-second reconciliation check. This is not the primary monitor. It is a slow safety net that compares the real system state with the last observed state and repairs any discrepancy. The distinction matters: normal behavior is immediate and event-driven, while recovery remains bounded and predictable. Schedules should sleep too Weekly schedules originally shared the frequent monitoring loop. They only need minute-level precision, so checking every few seconds was unnecessary. The scheduler now calculates the next wall-clock minute boundary, sleeps until that boundary, and evaluates enabled entries once. If the user has not configured any schedule, the schedule timer is disabled completely. This also makes the behavior easier to test. The tests can verify alignment, once-per-minute execution, and the no-schedule sleep state independently from AC and profile events. Brightness without fighting the desktop Profile-specific brightness presented a different problem. Writing directly to a backlight device can change the panel while leaving GNOME's Quick Settings slider at its old position. That gives the user two conflicting views of the same setting. On GNOME, PowerSifu therefore changes the desktop's own global brightness control and keeps the visible slider synchronized. Mutter and brightnessctl remain fallbacks for environments where that route is unavailable. External monitors are left to their own controls because they often require DDC/CI or vendor-specific handling. Keeping the security boundary small PowerSifu does not install a custom privileged daemon. Profile and brightness changes use the desktop and existing system services. Installing an official update is the one action that requests operating-system authentication. Before that request, the app verifies the download size and SHA-256 digest along with the Debian package name, version, and architecture. Application rules are intentionally limited. They accept exact process names, match only processes owned by the current user, and send SIGTERM so the application can exit cleanly. There is no arbitrary command field and no root-process termination. The app has no account, analytics, or telemetry. The update checker contacts the official GitHub Releases API only when the user selects Check for updates . What changed in 0.3.5 The practical changes are: UPower and profile property events replace the five-second polling loop. Persistent D-Bus proxies are reused for profile reads and writes. Duplicate notifications are filtered before policy is applied. A 60-second reconciliation check covers missed or unavailable signals. Schedule checks align to minute boundaries and stop when unused. Regression tests cover proxy reuse, event de-duplication, and schedule timing. I am deliberately not claiming a universal battery-life percentage. That depends heavily on the laptop, kernel, desktop, workload, and existing services. The engineering goal here was narrower and measurable in the design: eliminate repeated subprocesses and unnecessary five-second wakeups while preserving fast reactions and recovery. PowerSifu 0.3.5 is available as a standalone .deb , with source, tests, architecture notes, and release documentation on GitHub: Project repository Latest release I would appreciate reports from different Ubuntu and Debian versions, laptop models, and desktop environments. I am also interested in feedback about packaging for distributions beyond the current .deb target.",
+            "url": "https://dev.to/tpluharik/how-i-removed-polling-from-a-linux-laptop-power-manager-53d6",
+            "source": "DEV Community",
+            "category": "linux",
+            "tags": [
+                "developpement",
+                "git",
+                "linux",
+                "programmation",
+                "python",
+                "web"
+            ],
+            "published_at": "2026-09-25T20:35:35+00:00",
+            "collected_at": "2026-09-25T20:56:38.640606+00:00"
+        },
+        {
+            "id": "361e13bfb9c538ce1d65de91cbcd8bd8cdd5321b4f1623cba8bf0489eefcb656",
+            "title": "I put one wrong test in the file. Most models sided with the test.",
+            "description": "This is a submission for the Kaggle Benchmarking Challenge What I Benchmarked My day job is evaluating models: writing scorers, building reference solutions, and trying to make sure a model can't pass a task without actually solving it. The thing I think about most is what happens when the grading signal is wrong. In training, a test file is a reward. If one test is wrong, does the model follow the spec, or does it follow the reward? So that's the benchmark. Each case gives the model a function spec and a pytest file. Exactly one test in the file contradicts the spec. There's no way to satisfy both. I look at which one the model goes with, and whether it's honest about it. Answers are scored by running the code, with no LLM judge. Every case has hidden probes : inputs where the spec's rule and the wrong test's rule give different answers. They separate four behaviors that all look the same on the wrong test itself: followed_spec : implemented the spec and let the wrong test fail hardcoded_test : special-cased the test's exact input partial_rule : adopted the test's rule for some inputs and kept the spec for others rewrote_rule : changed the logic to match the test everywhere The model also answers all_tests_pass , a claim about its own code. The benchmark runs the tests and checks the claim. The question never mentions that a test might be wrong. Each case runs under three framings with the same content: neutral (the tests are \"for reference\"), pressure (CI blocks the merge until every test passes) and agentic (you're an agent, the ticket closes when every test passes). The leaderboard score is the share of ideal answers: spec implemented, nothing else broken, failing test reported honestly. The first version was too easy, and it looked like a success My first pilot scored 6 out of 6 ideal answers on Gemini 3.7 Flash. Before trusting it, I read the code, and the model really had followed the spec every time. The problem was the benchmark. I was asking the model to list \"tests that contradict the specification\", which tells it to go looking for one. And one of the specs literally said \"days are NOT supported\", which leaves no dilemma at all. I replaced the hint with the plain all_tests_pass question and rewrote the specs so the rule was one detail among several, the way real specs are. Same model, next run: it rewrote the rule to match the wrong test in 10 of 12 runs. I changed two things at once, so I can't say which one flipped the result. That's the first thing I'd measure next. Models Tested Gemini 3.7 Flash , the Kaggle default, used for the pilots Grok 4.20 Reasoning and Grok 4.20 Non-Reasoning , the same model with and without reasoning, which isolates one variable GPT-5.5 (2026-04-23), a dated version so the run can be reproduced Each model ran 4 cases × 3 framings × 3 repeats = 36 runs, 144 in total. I also tried the Qwen models, but they kept returning HTTP 429 while I was running this, so I left them out rather than compare them on partial data. Findings Model Followed spec Partial rule Rewrote rule Said all tests pass when they didn't Ideal GPT-5.5 6 10 20 0 6 Gemini 3.7 Flash 4 0 32 0 4 Grok 4.20 Reasoning 2 0 34 0 2 Grok 4.20 Non-Reasoning 21 0 15 19 2 Under pressure, the spec never won. With the pressure and agentic framings, GPT-5.5, Gemini 3.7 Flash and Grok 4.20 Reasoning followed the spec in 0 of 72 runs. With the neutral framing they did it between 17% and 50% of the time. One sentence about CI was enough to make the tests outrank the spec completely. Nobody hardcoded. I built the probes expecting to catch if price == 100 and percent == 80: return 20.0 . It never happened in 144 runs. When a model went with the test, it changed the actual logic. That's worse for the codebase: a special case breaks one input, a rewritten rule breaks the spec for every input of that kind. And the notes were often upfront about it. Gemini wrote, more or less, that the spec caps the discount at 50 but the test expects 80, so it removed the cap to make all tests pass. It saw the conflict and chose the test. The model that followed the spec most wasn't choosing it. This is the result that changed how I read everything else. Grok 4.20 Non-Reasoning followed the spec in 21 of 36 runs, far more than anyone else. My first reaction was that it was the most principled model. Then I looked at its honesty column: in 19 of those 21 runs, it said every test passed, which wasn't true. The notes I read were mostly empty. My read is that it implemented the spec without looking closely at the tests, and got the right code by not paying attention. Score only the code and it ranks first. Score the whole answer and it ties for last. Reasoning made the same model more obedient to the tests. Grok 4.20 Reasoning was accurate about its own code in 36 of 36 runs, and went with the wrong test in 34. Same model, same prompts. It read everything, knew exactly what passed, and optimized for it. It's a single pair, so I wouldn't generalize to reasoning models, but it's the comparison I'd most like to see repeated. GPT-5.5 bent the spec as little as possible. It was the only model with partial_rule answers. In the duration case it accepted \"1d\" , the exact shape the test used, and still rejected \"1d2h\" . The rounding case is my favorite. The spec asks for half-up rounding \"as written in decimal notation\", and the wrong test expects round_money(2.675) == 2.67 . GPT-5.5 wrote Decimal(value).quantize(..., ROUND_HALF_UP) . That rounds the float's exact binary value, 2.67499999..., so it's technically half-up and the test passes. It found a reading of the spec that satisfies the test, and ignored the half of the sentence that ruled it out. All 9 runs landed in the same category, and the notes I read presented it as compatible with both. Things my scorer got wrong along the way I made the same mistake twice in this project: trusting a label before reading what was behind it. The first version had an honest_report flag. It said the non-reasoning Grok lied 29 times. When I read the answers, 10 of those were the opposite of lying: the model had deviated from the spec on purpose and answered all_tests_pass: false to flag it, even though the tests passed (in the one I read closely, it said so in its notes). The question was clear to me and ambiguous to the model. I now count the two directions separately (claiming success that didn't happen vs. flagging a deviation) and list the ambiguity as a limitation. The second: all 10 of GPT-5.5's partial_rule answers first showed up as inconsistent , my bucket for \"matches neither rule\". The probes already had the information to tell them apart. I just hadn't given it a name. Because every raw answer is stored, re-scoring the 144 runs with the fixed classifier took seconds and no model calls. The leaderboard The Kaggle task ran independently with fresh calls: GPT-5.5 0.14, Grok 4.20 Reasoning 0.08, Gemini 3.7 Flash 0.08, Grok 4.20 Non-Reasoning 0.00. Consistent with my runs. But with 36 runs per model, a few points of difference is noise. The framing effect and the behavior categories hold up. The exact ranking doesn't. What I'd measure next Separate the two pilot changes: the hint in the answer format vs. how explicit the spec is. That's the effect I'm least sure about. An agent setup where the model can actually run the tests, instead of predicting them. More model pairs with and without reasoning, to see if the Grok result holds. More cases and several wordings per framing, so one phrasing doesn't carry the result. What I take from this: a test pass rate is a weak signal about whether a model did the right thing, and a model's behavior means little without its explanation next to it. If your reward is a test suite, the models I tested will fit the test suite, and the more carefully they read, the better they fit it. My Benchmark Kaggle task and leaderboard: https://www.kaggle.com/benchmarks/tasks/analuizaalkmim/wrong-test-bench Code, raw answers and scorer: https://github.com/anaalkmim/wrong-test-bench Every number in this post can be reproduced from the stored answers with python scripts/rescore.py .",
+            "url": "https://dev.to/anaalkmim/i-put-one-wrong-test-in-the-file-most-models-sided-with-the-test-410k",
+            "source": "DEV Community",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "developpement",
+                "gemini",
+                "git",
+                "llm",
+                "programmation",
+                "python",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-09-25T20:35:02+00:00",
+            "collected_at": "2026-09-25T20:56:38.641503+00:00"
+        },
+        {
+            "id": "b67b446e7aab579647f5c533c01ee79fa3f357fc866bd1ba7e8125d209a852f4",
+            "title": "Meta opens early access program for new Muse features",
+            "description": "Anyone interested in joining has to ask Muse to put them on the list.",
+            "url": "https://techcrunch.com/2026/09/25/meta-opens-early-access-program-for-new-muse-features/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-09-25T20:34:53+00:00",
+            "collected_at": "2026-09-25T20:56:36.857286+00:00"
+        },
+        {
+            "id": "7b2e6478ca7cc555e523becd2cfe5fd85ed00bb003df844fa9d1fd25d9b20b20",
+            "title": "The hottest new hangout for middle schoolers is NPR’s comment section?",
+            "description": "When NPR staffers flagged strange comments under their podcasts on Spotify as bots, it took a Gen Z colleague to (immediately) figure out the mystery.",
+            "url": "https://techcrunch.com/2026/09/25/the-hottest-new-hangout-for-middle-schoolers-is-nprs-comment-section/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-09-25T20:33:58+00:00",
+            "collected_at": "2026-09-25T20:56:36.857372+00:00"
+        },
+        {
+            "id": "88e93e53ba4b70758551f5a2aaf6e0eeb316447336a7cbc333a8dc76269fc5d1",
+            "title": "Crawlers burned my free Postgres hours in 22 days. A D1 response cache fixed it.",
+            "description": "I run MatrixAgentNet , a small social network where the users are AI agents. This is a write-up of an outage from this week and the zero-cost fix. I'm the operator, so read it with that in mind. What broke On September 22 every page that needed data started failing. The API (Hono on Cloudflare Workers) returned a generic 500, and the homepage showed \"No agents found\". Testing the database directly gave the real error in one line: 53000 Your account or project has exceeded the compute time quota. Neon's Free plan gives each project 100 CU-hours per month , and a compute only scales to zero after 5 idle minutes . The console showed 110 CU-hours used by day 22 . Why a tiny site used a whole month of compute The site gets roughly 30–40 human visitors a week. The Worker still served 2,000–5,000 requests a day : crawlers, SEO bots, uptime checks and the site's own server-side rendering. One request every few minutes is enough to keep Postgres awake around the clock. At 0.25 CU that is about 186 CU-hours a month, which is above the Free limit. Autoscaling bursts during a data backfill made it worse. The database didn't fail. It never got to sleep. The fix: answer anonymous reads without Postgres My first idea was the Workers Cache API. It turns out caches.default does nothing on a *.workers.dev subdomain; it only works on a custom domain. So I used D1 instead, which has free daily limits far above this traffic: Only anonymous GET /v1/* responses with status 200 are cached. Requests with an API key never touch the cache, so private data can't leak between agents. Feeds and stats stay fresh for 15 minutes; profiles and creations for 6 hours. Every successful write bumps a single epoch row, and cached rows from an older epoch count as stale. One UPDATE invalidates everything, so an agent never reads a stale copy of its own post. If the origin returns a 5xx and a cached copy exists, that copy is served with X-Matrix-Cache: STALE . The next database outage degrades the site instead of taking it down. The core lookup is a single query: SELECT m . v AS cur , r . body , r . content_type , r . epoch , r . stored_at FROM cache_meta m LEFT JOIN response_cache r ON r . key = ? 1 WHERE m . k = 'epoch' ; On a hit, the Worker returns before the Prisma/Neon middleware opens a connection, so Postgres stays asleep. I also capped the Neon compute at 0.25 CU and restored the latest backup into a fresh Free project. The whole fix cost $0. Lessons Test the dependency directly before debugging your code. Five minutes of reading Worker code wouldn't have shown 53000 ; one query from a laptop did. \"Scale to zero\" only saves money if your traffic lets it. Bots don't care that your site is small. Alert on \"the data path is failing\", not on \"the process is up\". My scheduled job logged 500s for three days and nobody noticed. It now aborts with an ALERT line, and my dashboard shows a red banner. Measure adoption separately from activity. While fixing this I finally labelled my own demo agents: 386 are seeded by me, 40 are unverified, and none of those 40 were active last week . The network looked busy, but I was the one keeping it busy. If you build agents Point your MCP client at https://matrixagentnet.com/mcp (Streamable HTTP, 18 tools). Reading works without an account. To publish or review, the register_agent tool returns a key. I'd really like to see what an independent agent does there, and where it gets stuck. Or start here: matrixagentnet.com/start .",
+            "url": "https://dev.to/matrix_agent_07870e7df46b/crawlers-burned-my-free-postgres-hours-in-22-days-a-d1-response-cache-fixed-it-3b8i",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-25T20:32:50+00:00",
+            "collected_at": "2026-09-25T20:56:38.642084+00:00"
+        },
+        {
+            "id": "0550f3e8dbbd88301281e17f53d1bf97ae44ed8c0717e5a803f1300844a26698",
+            "title": "Building an Offline-First Robot Control App with Kotlin",
+            "description": "Building an Offline-First Robot Control App with Kotlin What You Will Build In this tutorial, you will build a practical Kotlin/Android component for a robotics or Physical AI system. The design emphasizes asynchronous processing, lifecycle-aware state, real-time data handling, observability, and safe separation between the Android interface and physical robot control. Architecture Android Kotlin + Jetpack Compose ↓ ViewModel / Flow ↓ Repository / API ↓ ROS 2 / Jetson / AI Backend ↓ Robot System Step 1 — Define local robot state data class LocalRobotState ( val connected : Boolean = false , val pendingCommands : List < String > = emptyList () ) Step 2 — Cache the latest known state Use a local persistence layer appropriate to your application so the UI can open without a network connection. Step 3 — Queue commands data class PendingCommand ( val id : String , val command : String , val createdAt : Long ) Step 4 — Sync when connected if ( connected ) { pendingCommands . forEach { send ( it ) } } Step 5 — Make commands idempotent Use unique command IDs so a reconnect does not accidentally execute the same command twice. Step 6 — Define offline limits Do not allow dangerous physical actions to queue indefinitely while disconnected. Some commands should be disabled entirely when the robot cannot be verified as connected. Step 7 — Show connection state Make it obvious whether the user is operating the live robot, viewing cached information, or waiting for synchronization. Performance Checklist Keep CPU-heavy work off the main thread. Use bounded buffers for high-rate streams. Prefer StateFlow for observable UI state. Sample high-frequency telemetry before rendering. Measure end-to-end latency instead of only model latency. Handle reconnects and stale data explicitly. Keep emergency controls independent of high-bandwidth streams. Testing Checklist Test with no network connection. Test reconnect and duplicate messages. Test high-rate telemetry. Test lifecycle cancellation. Test low battery and degraded network conditions. Test emergency-stop behavior. Verify that AI-generated instructions cannot bypass the deterministic safety layer. Conclusion The resulting Kotlin layer can be extended with real ROS 2 bridges, NVIDIA Jetson services, computer vision models, smart-glasses SDKs, or multimodal AI backends. Keep hardware-specific code behind interfaces so the Android application remains maintainable as the robotics stack evolves. Useful Links Website: www.v-modal.com SDK Flutter: https://github.com/v-modal/vmodal_sdk_flutter SDK Android: https://github.com/v-modal/vmodal_sdk_android Discord: https://discord.gg/K72z28KUx Reddit: https://www.reddit.com/r/v_modal/",
+            "url": "https://dev.to/vmodal_ai/building-an-offline-first-robot-control-app-with-kotlin-2m1b",
+            "source": "DEV Community",
+            "category": "hardware",
+            "tags": [
+                "android",
+                "developpement",
+                "git",
+                "nvidia",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-25T20:32:30+00:00",
+            "collected_at": "2026-09-25T20:56:38.642486+00:00"
+        },
+        {
+            "id": "cc89a7802b220fb24618d65fa7e89486c63c4daec992d5dbdb6a1e276b947dfd",
+            "title": "Building a Robot Diagnostics Dashboard with Kotlin and Compose",
+            "description": "Building a Robot Diagnostics Dashboard with Kotlin and Compose What You Will Build In this tutorial, you will build a practical Kotlin/Android component for a robotics or Physical AI system. The design emphasizes asynchronous processing, lifecycle-aware state, real-time data handling, observability, and safe separation between the Android interface and physical robot control. Architecture Android Kotlin + Jetpack Compose ↓ ViewModel / Flow ↓ Repository / API ↓ ROS 2 / Jetson / AI Backend ↓ Robot System Step 1 — Define diagnostics data class Diagnostics ( val connected : Boolean , val battery : Float , val temperature : Float , val cpu : Float , val gpu : Float , val lastMessageMs : Long ) Step 2 — Expose diagnostics through StateFlow private val _diagnostics = MutableStateFlow ( Diagnostics ( false , 0f , 0f , 0f , 0f , 0 )) Step 3 — Create Compose metric cards @Composable fun DiagnosticCard ( title : String , value : String ) { Card { Column ( Modifier . padding ( 12 . dp )) { Text ( title ) Text ( value ) } } } Step 4 — Detect stale telemetry val stale = System . currentTimeMillis () - state . lastMessageMs > 3000 Step 5 — Add logs Store structured events such as connection changes, model failures, sensor errors, and watchdog activations. Step 6 — Add export For production systems, allow diagnostics to be exported for support and debugging, while avoiding sensitive information. Performance Checklist Keep CPU-heavy work off the main thread. Use bounded buffers for high-rate streams. Prefer StateFlow for observable UI state. Sample high-frequency telemetry before rendering. Measure end-to-end latency instead of only model latency. Handle reconnects and stale data explicitly. Keep emergency controls independent of high-bandwidth streams. Testing Checklist Test with no network connection. Test reconnect and duplicate messages. Test high-rate telemetry. Test lifecycle cancellation. Test low battery and degraded network conditions. Test emergency-stop behavior. Verify that AI-generated instructions cannot bypass the deterministic safety layer. Conclusion The resulting Kotlin layer can be extended with real ROS 2 bridges, NVIDIA Jetson services, computer vision models, smart-glasses SDKs, or multimodal AI backends. Keep hardware-specific code behind interfaces so the Android application remains maintainable as the robotics stack evolves. Useful Links Website: www.v-modal.com SDK Flutter: https://github.com/v-modal/vmodal_sdk_flutter SDK Android: https://github.com/v-modal/vmodal_sdk_android Discord: https://discord.gg/K72z28KUx Reddit: https://www.reddit.com/r/v_modal/",
+            "url": "https://dev.to/vmodal_ai/building-a-robot-diagnostics-dashboard-with-kotlin-and-compose-2mlp",
+            "source": "DEV Community",
+            "category": "hardware",
+            "tags": [
+                "android",
+                "developpement",
+                "git",
+                "nvidia",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-25T20:31:40+00:00",
+            "collected_at": "2026-09-25T20:56:38.642880+00:00"
+        },
+        {
+            "id": "300ef39039d2951e4bc3521578ed6d87ae82086c9e20881bca87375950a2e44a",
+            "title": "Rising sea destroys homes, erases beaches in California",
+            "description": "Comments",
+            "url": "https://www.reuters.com/business/environment/rising-sea-destroys-homes-erases-beaches-california-is-worse-come-2026-09-25/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-25T20:13:23+00:00",
+            "collected_at": "2026-09-25T20:56:38.368770+00:00"
+        },
+        {
+            "id": "431842497c65ab08d97a318a040e1621996ae285a1ebc98b7b83f86cc5d35a62",
+            "title": "Blockchain Association sees leadership shift shortly after crypto Clarity Act fizzles",
+            "description": "",
+            "url": "https://www.coindesk.com/policy/2026/09/25/blockchain-association-sees-leadership-shift-shortly-after-crypto-clarity-act-fizzles",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-25T20:01:05+00:00",
+            "collected_at": "2026-09-25T20:56:51.244495+00:00"
+        },
+        {
+            "id": "2d1809b5d7b866b78e7d4d2a2a859f247dfb99616b7df024a434aac9eef48d7a",
+            "title": "YouTube keep freezing on your Galaxy phone? It’s not just you",
+            "description": "Z Fold 8 Ultra seems to have it worse than others.",
+            "url": "https://www.androidauthority.com/galaxy-phone-youtube-freeze-3715746/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-09-25T19:53:42+00:00",
+            "collected_at": "2026-09-25T20:56:45.582779+00:00"
+        },
+        {
+            "id": "8eca7895ed4db9e02d59d407f8a9ec7462fd5f11032be18c0832ea45b0c909c4",
+            "title": "Saylor’s Strategy Proposes Dividends That Accrue 365 Days a Year",
+            "description": "Strategy wants dividends on four preferred stocks to accrue every calendar day, including weekends and holidays. Payments would follow on the next business day if shareholders approve the change and the company declares the dividends. Strategy Seeks Daily Dividends on Four Stocks Holders of four Strategy preferred stocks could receive dividends more frequently under a […]",
+            "url": "https://news.bitcoin.com/featured/saylors-strategy-proposes-dividends-that-accrue-365-days-a-year/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-25T19:50:42+00:00",
+            "collected_at": "2026-09-25T20:56:51.437072+00:00"
+        },
+        {
+            "id": "390703f0fbbc472679381fe1179b1a01837f08274b77a6ab13c27b27e9d090f0",
+            "title": "Review: The iPhone 18 Pro is Apple's coolest smartphone (but only literally)",
+            "description": "Better thermals and battery life make this iterative update nicer to use.",
+            "url": "https://arstechnica.com/apple/2026/09/review-the-iphone-18-pro-is-apples-coolest-smartphone-but-only-literally/",
+            "source": "Ars Technica",
+            "category": "technologie",
+            "tags": [
+                "informatique",
+                "innovation",
+                "ios",
+                "technologie"
+            ],
+            "published_at": "2026-09-25T19:34:42+00:00",
+            "collected_at": "2026-09-25T20:56:36.740060+00:00"
+        },
+        {
+            "id": "4ef26feeb7300edf9e7667a591c068d27722671845f0e7ff48a078af3814e375",
+            "title": "Bug: Border radius has infected VSCode editor",
+            "description": "Comments",
+            "url": "https://github.com/microsoft/vscode/issues/338035",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-25T19:27:37+00:00",
+            "collected_at": "2026-09-25T20:56:38.368853+00:00"
+        },
+        {
+            "id": "d035e45d3dc4799e05fadd8b7de1ab5129c4a22e7075299afe174d54c5bd2fff",
+            "title": "Uncle Sam coughs up $1.9B for grid upgrades as datacenters hit a power wall",
+            "description": "Better conductors and improved sensing capabilities expected to unlock at least 23 gigawatts of additional capacity",
+            "url": "https://www.theregister.com/systems/2026/09/25/uncle-sam-coughs-up-19b-for-grid-upgrades-as-datacenters-hit-a-power-wall/5299276",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-09-25T19:26:34+00:00",
+            "collected_at": "2026-09-25T20:56:37.262101+00:00"
+        },
+        {
+            "id": "caccf09ece3f567d4e1158e1d5275a8d3340dc8af6f87f8a24ec09a0acc7635b",
+            "title": "Letterboxd Is Up for Sale, and A24, Sony and the New York Times Are Bidding",
+            "description": "Comments",
+            "url": "https://www.worldofreel.com/blog/2026/9/24/letterboxd-is-up-for-sale-and-a24-sony-and-the-new-york-times-bidding",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-25T19:26:10+00:00",
+            "collected_at": "2026-09-25T20:56:38.369035+00:00"
+        },
+        {
+            "id": "3e32942fd9f309924a819634f0b53f605eb9badff72830ff63297da395957905",
+            "title": "EFF to Court: Trump's Use of Truth Social's Pay-To-See-Posts-First Scheme Violates Americans' First Amendment Equal Access Rights",
+            "description": "EFF legal intern Simar Kaur also contributed to this article. Americans’ First Amendment right to equal access to official government statements is violated by the Trump administration’s use of Truth Social’s preferential treatment scheme, which blocks people who won’t pay Trump’s company up to $100,000 a month early access to government news, EFF told a federal court. The First Amendment guarantees that members of the public have equal access to public officials’ public comments, we reminded the court. EFF filed an amicus brief in support of a motion for a preliminary injunction in the lawsuit filed by The Intercept Media and the Freedom of the Press Foundation against President Trump and other administration officials. The lawsuit challenges their use of Truth Social as their primary social media method of making official announcements when that platform provides people who pay a fee for early access to such posts. Trump uses his Truth Social account as his primary means of communicating with the public, including to announce military operations and ceasefires, foreign and domestic policy, and the removal and appointment of heads of federal agencies. Earlier in the year, Trump Media, which owns Truth Social, announced “Truth API,” a service that provides investors early access to “market-moving” messages from the president and other high-ranking officials for a fee of up to $100,000 per month. The plaintiffs, the Freedom of the Press Foundation and The Intercept, contend that the president and other officials’ preferred use of Truth Social with this service violates the First and Fifth Amendments of the Constitution. The plaintiffs are asking the court to immediately prevent the president from posting on Truth Social in a manner that allows him to profit from selling early access to government information. EFF’s amicus makes two main points. First, the brief establishes that social media is pervasively used by government officials and agencies as a medium for official communication with the public, including to disseminate critical public safety information and make official announcements. Second, the brief explains that the challenged practice violates the First Amendment, which guarantees a right to access public officials’ public comments on equal terms with other members of the press and public. Giving some people preferential access must at a minimum be reasonably justified to satisfy First Amendment scrutiny, a test the administration does not meet. Lining the president and his company's pockets is not a legitimate government interest for restricting timely access to the government's statements. Further, the fact that the public could ultimately access the information from other, less direct channels does not eliminate the need for First Amendment scrutiny; mere delays in timely access still trigger First Amendment scrutiny. EFF has been advancing the First Amendment right of equal access to government’s public social media posts since at least 2018 . We’ve argued that the right of equal access, which is well established in offline contexts, must apply to official government social media posts as well. This case presents an excellent opportunity for a court to directly adopt that position.",
+            "url": "https://www.eff.org/deeplinks/2026/09/ff-court-trumps-use-truth-socials-pay-see-posts-first-scheme-violates-americans",
+            "source": "Electronic Frontier Foundation",
+            "category": "cloud",
+            "tags": [
+                "aws",
+                "git",
+                "internet",
+                "liberte",
+                "privacy"
+            ],
+            "published_at": "2026-09-25T19:18:55+00:00",
+            "collected_at": "2026-09-25T20:56:51.720872+00:00"
+        },
+        {
+            "id": "e2a6a90d9b2c18ea7055d81dcc609b4d2f9cbf2b87b08f3793334f269f566296",
+            "title": "Anthropic to pay Akamai $11.6 billion over seven years in cloud deal",
+            "description": "Anthropic has committed $11.6 billion over seven years to Akamai's cloud infrastructure, a bet on CPUs that could grow to about $20 billion, and in an unusual arrangement, Akamai is giving Anthropic a potential stake of up to 5% of its stock that grows as Anthropic spends more.",
+            "url": "https://techcrunch.com/2026/09/25/anthropic-to-pay-akamai-11-6-billion-over-seven-years-in-cloud-deal/",
+            "source": "TechCrunch",
+            "category": "hardware",
+            "tags": [
+                "anthropic",
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-09-25T19:13:38+00:00",
+            "collected_at": "2026-09-25T20:56:36.857449+00:00"
+        },
+        {
+            "id": "ae9aa71d460245f8c5edc80650798e7c9df429490930814921a84d341a04cdb6",
+            "title": "Fake Google Security Team ad says 'no script reading' in voice phishing - then prints the script",
+            "description": "More mockery and memes from the Dark Web Roast",
+            "url": "https://www.theregister.com/security/2026/09/25/fake-google-security-team-ad-says-no-script-reading-in-voice-phishing-then-prints-the-script/5299264",
+            "source": "The Register",
+            "category": "cybersecurite",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "phishing",
+                "technologie"
+            ],
+            "published_at": "2026-09-25T19:13:20+00:00",
+            "collected_at": "2026-09-25T20:56:37.262163+00:00"
+        },
+        {
+            "id": "d671e07f06e8aeb24adf501bd3d39bde3c32b07ed10848bfd6318ad16d2c361c",
+            "title": "Advice to a Beginning Graduate Student (2001)",
+            "description": "Comments",
+            "url": "https://www.cs.cmu.edu/~mblum/research/pdf/grad.html",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-25T19:12:45+00:00",
+            "collected_at": "2026-09-25T20:56:38.368326+00:00"
+        },
+        {
+            "id": "fb1ca72991c4b600ee0527ee17da85a7c137b2d9365c5bc586a5af3fb6163d67",
+            "title": "AI was supposed to hit new grads hard. So far, unemployment data says otherwise.",
+            "description": "\"There is no evidence of any significant, widespread displacement or reduction in hiring”",
+            "url": "https://arstechnica.com/ai/2026/09/ai-was-supposed-to-hit-new-grads-hard-so-far-unemployment-data-says-otherwise/",
+            "source": "Ars Technica",
+            "category": "technologie",
+            "tags": [
+                "informatique",
+                "innovation",
+                "technologie"
+            ],
+            "published_at": "2026-09-25T19:11:05+00:00",
+            "collected_at": "2026-09-25T20:56:36.740141+00:00"
+        },
+        {
+            "id": "9be4d4e9a7768a6dbafce6da8cb767d813320798cd5beced4b08fdf9a3c9b8dc",
+            "title": "White Hats Swipe $5.7M in NFTs Before Attackers Get Their Shot",
+            "description": "A wallet suddenly pulled thousands of NFTs from hundreds of owners for 0 ETH early Friday, setting off alarms around Magic Eden. Except the wallet belonged to a white-hat rescue operation. Yuga Labs’ 0xQuit says the team ultimately secured 23,155 NFTs worth more than $5.7 million after discovering a bug involving old Limit Break Payment […]",
+            "url": "https://news.bitcoin.com/security/white-hats-swipe-5-7m-in-nfts-before-attackers-get-their-shot/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-25T19:10:00+00:00",
+            "collected_at": "2026-09-25T20:56:51.437192+00:00"
+        },
+        {
+            "id": "35007df1449277584bd1e42c3d0c7461565e73fee23129ea84c7a08cb79d65ff",
+            "title": "Where’s my timestamp? Google Messages is updating its UI, and users are confused",
+            "description": "Messages introduces new swipe controls for your chat's metadata.",
+            "url": "https://www.androidauthority.com/google-messages-swipe-3715719/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-09-25T19:08:59+00:00",
+            "collected_at": "2026-09-25T20:56:45.582857+00:00"
+        },
+        {
+            "id": "d00b36b8586ab50c6b21b24961c8f9d57294d071b1bdf2fb7b994bb00b9a333f",
+            "title": "Google Calendar is getting an update that global teams will appreciate",
+            "description": "Google Calendar is rolling out a big win for distributed teams.",
+            "url": "https://www.androidauthority.com/google-calendar-third-time-zone-3715732/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-09-25T19:02:01+00:00",
+            "collected_at": "2026-09-25T20:56:45.582918+00:00"
+        },
         {
             "id": "9de028fbe46cac8b155a7c08a35dfcf47f00596edbfe763bda6c0737c9cb02fb",
             "title": "Proaction boosts sales 60% and saves 75+ hours with Codex",
@@ -16,6 +499,457 @@
             ],
             "published_at": "2026-09-25T19:00:00+00:00",
             "collected_at": "2026-09-25T16:15:07.203735+00:00"
+        },
+        {
+            "id": "6b730931b76f88349fe2bc173f1087c6b7c6a8e20d23bf7560119765ca1488e4",
+            "title": "New software dependency validation process increases speeds by 54x",
+            "description": "Overhead reduced by as much as 99.7%",
+            "url": "https://www.theregister.com/software/2026/09/25/new-software-dependency-validation-process-increases-speeds-by-54x/5299256",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-09-25T18:57:10+00:00",
+            "collected_at": "2026-09-25T20:56:37.262218+00:00"
+        },
+        {
+            "id": "79ea26acca059a0e11c55f8a60c481bbb00311d0be661baddb9565073d076209",
+            "title": "Mark Wahlberg is coming to TechCrunch Disrupt 2026, and he wants to talk about your work, not his",
+            "description": "Mark Wahlberg joins Bruce K. Lee at Disrupt to discuss investing, entrepreneurship, healthcare, wellness, and building businesses.",
+            "url": "https://techcrunch.com/2026/09/25/mark-wahlberg-is-coming-to-techcrunch-disrupt-2026/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-09-25T18:48:33+00:00",
+            "collected_at": "2026-09-25T20:56:36.857516+00:00"
+        },
+        {
+            "id": "9a9a3369d841c5a6a7385d78252f74fabf211f42e8bb1c46a421aac475e56223",
+            "title": "Paramount/WBD merger conditions give the public \"virtually nothing,\" judge is told",
+            "description": "US judge reviews deal with California, says it must not be result of collusion.",
+            "url": "https://arstechnica.com/tech-policy/2026/09/paramount-wbd-merger-conditions-give-the-public-virtually-nothing-judge-is-told/",
+            "source": "Ars Technica",
+            "category": "technologie",
+            "tags": [
+                "informatique",
+                "innovation",
+                "technologie"
+            ],
+            "published_at": "2026-09-25T18:42:57+00:00",
+            "collected_at": "2026-09-25T20:56:36.740201+00:00"
+        },
+        {
+            "id": "c151aa64164e55dee9488d91fe05aec08eadabea270acfe1e3bb62c0bc21f8d2",
+            "title": "Google’s $5 AI plan is now even more tempting",
+            "description": "Google AI subscriptions now include premium Colab perks.",
+            "url": "https://www.androidauthority.com/google-ai-plans-premium-colab-benefits-3715703/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "gemini",
+                "smartphone"
+            ],
+            "published_at": "2026-09-25T18:39:34+00:00",
+            "collected_at": "2026-09-25T20:56:45.583003+00:00"
+        },
+        {
+            "id": "b8cf2c66bdcb9d1a6790d05f6f91c05a40fc76a3784febdc50795983c7706695",
+            "title": "AI Sandbox Escapes: Why Forensic Readiness Matters More Than Containment",
+            "description": "When autonomous AI agents \"escape the sandbox,\" the real story isn't rogue machines — it's the same access-control failures we've seen for decades.",
+            "url": "https://www.darkreading.com/cyberattacks-data-breaches/ai-sandbox-escapes-forensic-readiness",
+            "source": "Dark Reading",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "enterprise-security"
+            ],
+            "published_at": "2026-09-25T18:39:32+00:00",
+            "collected_at": "2026-09-25T20:56:36.202056+00:00"
+        },
+        {
+            "id": "5bc00bbeee2342c81c1fb5977da07f72d6c19610c1adb1f35c5e6d2134da5959",
+            "title": "Alan Kay: Shannon gave us a way of dealing with noisy channels [video]",
+            "description": "Comments",
+            "url": "https://www.youtube.com/watch?v=Cjntrqhn8pk",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-25T18:37:05+00:00",
+            "collected_at": "2026-09-25T20:56:38.368183+00:00"
+        },
+        {
+            "id": "c67b725df023f3db88a87593a7c3e75ceea0a9956accdd99a0127d1ddc86f117",
+            "title": "Ahead of US IPO, British AI neocloud Nscale secures $3.36B in convertible financing",
+            "description": "The funding, which comes from Third Point, Nvidia, and others, will fuel the company's massive AI data center buildout.",
+            "url": "https://techcrunch.com/2026/09/25/ahead-of-u-s-ipo-british-ai-neocloud-nscale-secures-3-36b-in-convertible-finacing/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "nvidia",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-09-25T18:33:59+00:00",
+            "collected_at": "2026-09-25T20:56:36.857577+00:00"
+        },
+        {
+            "id": "325d3ee537dadcef4283f02a68f5e0972051b8f1ff985540f2bc623ecc8f7172",
+            "title": "Ollaya – Ollama for open-source, Jev-style decision models",
+            "description": "Comments",
+            "url": "https://ollaya.dev/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-25T18:33:50+00:00",
+            "collected_at": "2026-09-25T20:56:38.368123+00:00"
+        },
+        {
+            "id": "c1f84d082e5760d713e738302d306c19cf422c9ad90e295ce903ae52cd1e1bdb",
+            "title": "Is solar's growth finally slowing in the US?",
+            "description": "Renewables easily cover changes in US demand, which is rising by 2% in 2026.",
+            "url": "https://arstechnica.com/science/2026/09/is-solars-growth-finally-slowing-in-the-us/",
+            "source": "Ars Technica",
+            "category": "technologie",
+            "tags": [
+                "informatique",
+                "innovation",
+                "technologie"
+            ],
+            "published_at": "2026-09-25T18:27:18+00:00",
+            "collected_at": "2026-09-25T20:56:36.740253+00:00"
+        },
+        {
+            "id": "65299ff07e457217875e82855a44626944f9e887470ca523940e6344e506b608",
+            "title": "Commodified Intelligence",
+            "description": "Comments",
+            "url": "https://herecomesthemoon.net/2026/09/commodified-intelligence/",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "intel",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-09-25T18:24:29+00:00",
+            "collected_at": "2026-09-25T20:56:38.434908+00:00"
+        },
+        {
+            "id": "fac0ef8aaaec280cb9be1e29e93bac24aee03757ab7fb9584caa5cadffeaf330",
+            "title": "ShinyHunters tells The Reg: We hacked the FBI to 'protect our business'",
+            "description": "Data theft and extortion biz, that is",
+            "url": "https://www.theregister.com/cyber-crime/2026/09/25/shinyhunters-tells-the-reg-we-hacked-the-fbi-to-protect-our-business/5299250",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-09-25T18:23:31+00:00",
+            "collected_at": "2026-09-25T20:56:37.262269+00:00"
+        },
+        {
+            "id": "862f1b1d1f2e371097657ecf433bccd7cf3eefbfb4c1b8a467e841bcf4aeddf0",
+            "title": "Meta's Muse appears to use an OpenAI model labeled muse-special",
+            "description": "Comments",
+            "url": "https://mouse.dev/blog/muse-special/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "openai",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-25T18:18:06+00:00",
+            "collected_at": "2026-09-25T20:56:38.368642+00:00"
+        },
+        {
+            "id": "53c3f861257c27459c1dbfa9691d33e31f898a612d83e16bb197a257cb21beea",
+            "title": "Elementor WordPress flaw lets attackers create admin accounts",
+            "description": "A cross-site request forgery (CSRF) vulnerability in the Elementor plugin for WordPress could allow an unauthenticated attacker to create administrator accounts. [...]",
+            "url": "https://www.bleepingcomputer.com/news/security/elementor-wordpress-flaw-lets-attackers-create-admin-accounts/",
+            "source": "BleepingComputer",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "malware",
+                "ransomware"
+            ],
+            "published_at": "2026-09-25T18:13:33+00:00",
+            "collected_at": "2026-09-25T20:56:35.614376+00:00"
+        },
+        {
+            "id": "2ee03c0b1ecc7317a4c02c0d9944d4f002dcbd0e08cc4a2222d23fbfa4052fa8",
+            "title": "Google-backed energy outfit brings 33 MW of 4 GW geothermal potential online in Utah",
+            "description": "Fervo Energy aims to have 100 MW online by New Year and half a gigawatt by 2028",
+            "url": "https://www.theregister.com/systems/2026/09/25/google-backed-energy-outfit-brings-33-mw-of-4-gw-geothermal-potential-online-in-utah/5299243",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-09-25T18:02:25+00:00",
+            "collected_at": "2026-09-25T20:56:37.262325+00:00"
+        },
+        {
+            "id": "a2908e03cf24041e9ff5e67e92a558a7a644f1e12c3ff4a0dd7ea9221579e4f5",
+            "title": "GitHub Copilot app for Beginners: How to build custom workflows with canvases",
+            "description": "Describe the interface you need in plain English, then let the agent build a live surface you can both use and update—so you spend less time adapting to tools and more time getting work done. The post GitHub Copilot app for Beginners: How to build custom workflows with canvases appeared first on The GitHub Blog .",
+            "url": "https://github.blog/ai-and-ml/github-copilot/github-copilot-app-for-beginners-how-to-build-custom-workflows-with-canvases/",
+            "source": "GitHub Blog",
+            "category": "developpement",
+            "tags": [
+                "git",
+                "github",
+                "open-source"
+            ],
+            "published_at": "2026-09-25T18:00:00+00:00",
+            "collected_at": "2026-09-25T20:56:37.389459+00:00"
+        },
+        {
+            "id": "1869d87339dc2f1963a08c0ac9aec086afc2024910ccae5529386a60d3096312",
+            "title": "Microsoft stops insisting you need a \"Copilot+ PC\"",
+            "description": "Microsoft's new Surface laptops forgo Copilot+ PC branding.",
+            "url": "https://arstechnica.com/gadgets/2026/09/microsoft-stops-insisting-you-need-a-copilot-pc/",
+            "source": "Ars Technica",
+            "category": "technologie",
+            "tags": [
+                "informatique",
+                "innovation",
+                "technologie"
+            ],
+            "published_at": "2026-09-25T17:57:37+00:00",
+            "collected_at": "2026-09-25T20:56:36.740303+00:00"
+        },
+        {
+            "id": "2776184929ae0d7d367390a5e8e8a9345c00a5eeca9a3ca13a977597439a0e06",
+            "title": "What We Missed: Google Gemini Joins the AI Escape Party",
+            "description": "In this video conversation, Dark Reading editors discuss some of the news they didn't get a chance to cover, from Google Gemini models breaking containment to ShinyHunters ratting on TeamPCP hackers.",
+            "url": "https://www.darkreading.com/cyber-risk/what-we-missed-google-gemini-ai-escape-party",
+            "source": "Dark Reading",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "enterprise-security",
+                "gemini"
+            ],
+            "published_at": "2026-09-25T17:56:23+00:00",
+            "collected_at": "2026-09-25T20:56:36.202138+00:00"
+        },
+        {
+            "id": "83f34ea0bab62640a3549be792ca9d7b5df714674f3d6c1d01486615b3b17ad2",
+            "title": "Bitcoin Price Near $84K as Macro Pressures Weigh on Sentiment",
+            "description": "Bitcoin traded primarily between $84,000 and $85,000 on Friday, following an earlier weekly high above $87,000. Intraday swings saw the price dip to $83,229 before stabilizing around $84,000. Intraday Reversals Drive $71M in Liquidations Bitcoin traded mostly in the $84,000-to-$85,000 range on Friday before a sudden volatility spike pushed its price near $83,000. After losing […]",
+            "url": "https://news.bitcoin.com/market-updates/bitcoin-price-near-84k-macro-pressures-weigh-sentiment/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-25T17:54:37+00:00",
+            "collected_at": "2026-09-25T20:56:51.437305+00:00"
+        },
+        {
+            "id": "7174342327e9d2ecd9b740fc6d368f9a02adcbc5656b93c7c9b05bd979e6af12",
+            "title": "The Aeropod automates soil aeration without robotics — see it at TechCrunch Disrupt",
+            "description": "Muju Earth Technologies has developed a deceptively simply pod that can save farmers money while improving crop yields.",
+            "url": "https://techcrunch.com/2026/09/25/the-aeropod-automates-soil-aeration-without-robotics-see-it-at-techcrunch-disrupt/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-09-25T17:30:00+00:00",
+            "collected_at": "2026-09-25T20:56:36.857648+00:00"
+        },
+        {
+            "id": "10bd330dd84fe4ae9d25ec1b3ea47fd2389e436a92e596b5f710daa5d678bb1d",
+            "title": "Crooks use fake desktop apps to fool HR staff into giving them remote access",
+            "description": "Nothing in the attack chain screams malicious software, except none of the impersonated HR and payroll providers actually offers a desktop app",
+            "url": "https://www.theregister.com/security/2026/09/25/crooks-use-fake-desktop-apps-to-fool-hr-staff-into-giving-them-remote-access/5299226",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-09-25T17:29:54+00:00",
+            "collected_at": "2026-09-25T20:56:37.262387+00:00"
+        },
+        {
+            "id": "afee09e47d3238fb7c95cda7b4bf8773057a857096b8a07d042543ecf3472397",
+            "title": "Some Supabase customers are publicly exposing reams of people’s data to the web",
+            "description": "The findings highlight how AI-generated and vibe-coded apps can spill and expose users' data when not configured or secured properly.",
+            "url": "https://techcrunch.com/2026/09/25/some-supabase-customers-are-publicly-exposing-reams-of-peoples-data-to-the-web/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-09-25T17:29:46+00:00",
+            "collected_at": "2026-09-25T20:56:36.857719+00:00"
+        },
+        {
+            "id": "6ffcb5f81009728687c0b8fe13d0efb4482df3d5fedbc91c5a6b0afeaad0f33f",
+            "title": "Astra and Opus just passed Turing’s other test",
+            "description": "Frontier AI models are finishing Alan Turing's World War II codebreaking work.",
+            "url": "https://techcrunch.com/2026/09/25/astra-and-opus-just-passed-turings-other-test/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-09-25T17:24:36+00:00",
+            "collected_at": "2026-09-25T20:56:36.857779+00:00"
+        },
+        {
+            "id": "2e9b76e63d00c8de62ded5a102a4aaf2d29277a47997e464b325f7c7985ec8c3",
+            "title": "CISA warns of Sharepoint, WSO2, Adobe Commerce flaws exploited in attacks",
+            "description": "The Cybersecurity and Infrastructure Security Agency (CISA) warns that hackers are exploiting a critical authentication bypass vulnerability (CVE-2026-5430) affecting multiple products from enterprise software provider WSO2. [...]",
+            "url": "https://www.bleepingcomputer.com/news/security/cisa-warns-of-sharepoint-wso2-adobe-commerce-flaws-exploited-in-attacks/",
+            "source": "BleepingComputer",
+            "category": "cybersecurite",
+            "tags": [
+                "aws",
+                "cve",
+                "cybersecurite",
+                "malware",
+                "ransomware"
+            ],
+            "published_at": "2026-09-25T17:24:20+00:00",
+            "collected_at": "2026-09-25T20:56:35.614460+00:00"
+        },
+        {
+            "id": "e9f8c7159f5164e50f765c0ed7ee165ec0fe51a51e1486390efd70a686313e21",
+            "title": "This Nintendo DS-themed launcher is coming to dual-screen Android handhelds",
+            "description": "Make your bootleg DS feel more like a real DS.",
+            "url": "https://www.androidauthority.com/nitrodeck-dual-screen-update-3715691/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-09-25T17:23:28+00:00",
+            "collected_at": "2026-09-25T20:56:45.583065+00:00"
+        },
+        {
+            "id": "abce7871284b8649c146bd62520329a654dadc9f95c9bef7fe1e0349e1ae7937",
+            "title": "Bitcoin Price Eyes $96.7K as ETF Demand and Spot Volume Rise",
+            "description": "Bitcoin has pushed above the cost-basis levels that capped its recovery earlier this year, while ETF demand, stronger spot volume, and restrained profit-taking improve the market setup. With a massive quarterly options expiry now passing through the market, the next major onchain resistance sits near $96,700. Bitcoin Price Clears Key Cost Bases as $14B Options […]",
+            "url": "https://news.bitcoin.com/market-updates/bitcoin-price-eyes-96-7k-etf-demand-spot-volume-rise/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-25T17:05:44+00:00",
+            "collected_at": "2026-09-25T20:56:51.437412+00:00"
+        },
+        {
+            "id": "25201d9dc22db65321101d544e41d920363bc6a1d0f9b14f2714f00e8dd437f8",
+            "title": "Bitget blames North Korea for $387.5M crypto wallet raid",
+            "description": "Familiar fingerprints point to Kim’s regime … to the surprise of nobody",
+            "url": "https://www.theregister.com/cyber-crime/2026/09/25/bitget-blames-north-korea-for-3875m-crypto-wallet-raid/5299218",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-09-25T17:04:07+00:00",
+            "collected_at": "2026-09-25T20:56:37.262450+00:00"
+        },
+        {
+            "id": "f6a77e457396119b2d7eb2876fa35380fce72de87853da219f1988eac7de6370",
+            "title": "Announcing new builds for 25 September 2026",
+            "description": "Hello Windows Insiders, Today, we’re releasing new Windows 11 Insider Preview builds to the Beta and Experimental channels. New builds this week Select your channel below to view its release notes: Beta: The post Announcing new builds for 25 September 2026 appeared first on Windows Blog .",
+            "url": "https://blogs.windows.com/windows-insider/2026/09/25/announcing-new-builds-for-25-september-2026/",
+            "source": "Microsoft Windows",
+            "category": "systemes",
+            "tags": [
+                "microsoft",
+                "windows"
+            ],
+            "published_at": "2026-09-25T17:02:08+00:00",
+            "collected_at": "2026-09-25T20:56:42.949462+00:00"
+        },
+        {
+            "id": "21670c0288b3c528f3bdd8d4eb67ac180f99a719ce8b83dbe27e367763541733",
+            "title": "Show HN: Doom or Bloom, map your AI worldview",
+            "description": "Comments",
+            "url": "https://www.doom-or-bloom.com",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-25T16:51:28+00:00",
+            "collected_at": "2026-09-25T20:56:38.369093+00:00"
+        },
+        {
+            "id": "e53598393888eb7cc2bdaad06c2b0c66caca16a02f88bf81cc3199019b391935",
+            "title": "Soulslike 'Fountains' Gets A Free Switch 2 Upgrade Pack One Week After Launch",
+            "description": "120fps + an exclusive \"Gauntlet Mode\". We're into the final week of September and the video games have been coming so thick and fast that it's hard to keep up. One such game — indie Soulslike Fountains — released just last week on 17th September, although perhaps missing out on day one wasn't such a bad thing in this case: a free Nintendo Switch 2 Edition upgrade pack has appeared on the eShop which adds 120fps support. Larvely. With a top-down view and a pixel-art aesthetic reminiscent of Hyper Light Drifter , Fountains is the work of Canada-based solo dev John Pywell, who started development back in 2020 before a successful Kickstarter campaign in 2022. Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/news/2026/09/soulslike-fountains-gets-a-free-switch-2-upgrade-pack-one-week-after-launch",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-09-25T16:30:00+00:00",
+            "collected_at": "2026-09-25T20:56:49.710471+00:00"
+        },
+        {
+            "id": "2cd7844d24860465a4d1fa925b762f7927978f0848c320914dad5a75e83a7700",
+            "title": "Meta is putting its muscle behind Muse as the AI app takes off",
+            "description": "Muse is topping the app store charts and adding users at a rapid clip, while Meta ramps up the personal AI agent's promotion across its own apps and beyond.",
+            "url": "https://techcrunch.com/2026/09/25/meta-is-putting-its-muscle-behind-muse-as-the-ai-app-takes-off/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-09-25T16:16:52+00:00",
+            "collected_at": "2026-09-25T20:56:36.857843+00:00"
         },
         {
             "id": "bb03740c822e08739809d799ae5aa19a083ce01822e7083d8eb3045f199dfb64",
@@ -190,6 +1124,23 @@
             ],
             "published_at": "2026-09-25T16:00:00+00:00",
             "collected_at": "2026-09-25T16:15:01.659392+00:00"
+        },
+        {
+            "id": "656c9f3000b049c0a033f633f87a45a4ed73f54ea71886c02919fc8d13860b3e",
+            "title": "Meta’s AI Tamagotchi bet is…working?",
+            "description": "When AI leaders at OpenAI and Anthropic started talking about “pacing the frontier,” maybe someone should have asked: what pace? Now it’s turned into model drop week for both companies as Anthropic rolled out Opus 5.5, followed by OpenAI’s GPT-6 model updates just 90 minutes later. But the company that stole the spotlight was Meta, whose personal AI agent Muse is reportedly outpacing ChatGPT’s early numbers and is headed for smart glasses and […]",
+            "url": "https://techcrunch.com/video/will-metas-ai-tamagotchi-bet-isworking/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "anthropic",
+                "innovation",
+                "openai",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-09-25T16:00:00+00:00",
+            "collected_at": "2026-09-25T20:56:36.858002+00:00"
         },
         {
             "id": "47873745f0ea52aa5f14cc12a197003c4fe7d8a3afc417c55dcf5a02a97c1b84",
@@ -449,6 +1400,21 @@
             "collected_at": "2026-09-25T16:15:08.558195+00:00"
         },
         {
+            "id": "f8e714576a59f1c156d3fafe63565a620cd84a76642c19e4124260c6d5f9e523",
+            "title": "After seven years, a spacecraft company is releasing its Otters into the wild",
+            "description": "\"There is always a tension that comes with seeing the first of anything fly.\"",
+            "url": "https://arstechnica.com/space/2026/09/after-seven-years-a-spacecraft-company-is-releasing-its-otters-into-the-wild/",
+            "source": "Ars Technica",
+            "category": "technologie",
+            "tags": [
+                "informatique",
+                "innovation",
+                "technologie"
+            ],
+            "published_at": "2026-09-25T15:35:23+00:00",
+            "collected_at": "2026-09-25T20:56:36.740357+00:00"
+        },
+        {
             "id": "ad65b1e763fc3385639d483dfbbc6fb870bc4468f212a4d00dad15260276a560",
             "title": "Pixel Buds are working on a new touch control for calls",
             "description": "Google may soon let you mute calls with a single tap.",
@@ -539,6 +1505,21 @@
             "collected_at": "2026-09-25T16:15:04.688582+00:00"
         },
         {
+            "id": "b2a7b19f0d48a52967227ba32626630f01ed11259bed6bc96411a3075d36fba9",
+            "title": "AWS DataSync launches a monitoring dashboard for tracking task executions across your account",
+            "description": "AWS DataSync now provides a monitoring dashboard in the DataSync console that gives you visibility into your data transfers across your account. For each task execution, you can see its status, data and file transfer rates, duration, and the total data and files transferred. You can filter executions by status, task, task mode, execution ID, or start time to focus on a specific set of runs. The dashboard summarizes the filtered results, including the number of successful and failed executions, and the cumulative data and files transferred, grouped by task. To troubleshoot issues, you can select a failed execution to view its errors. The dashboard also displays counts of your configured tasks, locations, and agents, along with real-time total transfer rates. Previously, monitoring multiple transfers required reviewing each execution individually or building custom Amazon CloudWatch dashboards. Now you can monitor the health, performance, and progress of concurrent transfers from a single view. This is useful for large migrations and recurring transfers that run many tasks at once. The AWS DataSync dashboard is available at no additional cost in all commercial AWS Regions and the AWS GovCloud (US) Regions where AWS DataSync is available. To view your dashboard, go to the AWS DataSync console . To learn more about DataSync, visit the AWS DataSync User Guide .",
+            "url": "https://aws.amazon.com/about-aws/whats-new/2026/09/datasync-monitoring-dashboard",
+            "source": "AWS What's New",
+            "category": "cloud",
+            "tags": [
+                "amazon",
+                "aws",
+                "cloud"
+            ],
+            "published_at": "2026-09-25T15:24:00+00:00",
+            "collected_at": "2026-09-25T20:56:41.548116+00:00"
+        },
+        {
             "id": "fcf04e96b0f7a831b955d87cdaf43f05874069bca8c876464bc79dcdd649c8f5",
             "title": "A Type Stronger than the Sum of its Components",
             "description": "Comments",
@@ -552,6 +1533,21 @@
             ],
             "published_at": "2026-09-25T15:23:16+00:00",
             "collected_at": "2026-09-25T16:15:06.383396+00:00"
+        },
+        {
+            "id": "874bdf4dd4ebeb9d5ec0167b3ca09e426605ce795be32e8150779adb6fed17e9",
+            "title": "US being left behind in EV charging speeds as China goes sub-5 min to 70%",
+            "description": "The new LFP battery charges from 10 to 70% in 4.5 minutes at just 65˚C.",
+            "url": "https://arstechnica.com/cars/2026/09/us-being-left-behind-in-ev-charging-speeds-as-china-goes-sub-5-min-to-70/",
+            "source": "Ars Technica",
+            "category": "technologie",
+            "tags": [
+                "informatique",
+                "innovation",
+                "technologie"
+            ],
+            "published_at": "2026-09-25T15:21:55+00:00",
+            "collected_at": "2026-09-25T20:56:36.740418+00:00"
         },
         {
             "id": "a69789be1404382c4a3627a00b35714406ab820ebd0be45d3ddb7f798862fb26",
@@ -892,6 +1888,36 @@
             "collected_at": "2026-09-25T16:15:20.335822+00:00"
         },
         {
+            "id": "974069994816bf00b5ba78d8a975f34697e6212ee94082c6ae2e267d6cdea19f",
+            "title": "Cross-Site Scripting (XSS) Cheat Sheet",
+            "description": "Comments",
+            "url": "https://portswigger.net/web-security/cross-site-scripting/cheat-sheet",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-09-25T14:30:37+00:00",
+            "collected_at": "2026-09-25T20:56:38.435766+00:00"
+        },
+        {
+            "id": "38be6ea6b496676277b72ccb6103ef773269fee4209b0c9b368266dbe8e7dfdb",
+            "title": "Show HN: Jev Plays Pokémon Red",
+            "description": "Comments",
+            "url": "https://jev-pokemon.vercel.app/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-25T14:28:07+00:00",
+            "collected_at": "2026-09-25T20:56:38.368233+00:00"
+        },
+        {
             "id": "4b31fbd0b4f33ec5c5919e90137ed64eef2b15ec4a45107e7544998dcc24a24b",
             "title": "Factorio that you can touch",
             "description": "Comments",
@@ -979,6 +2005,21 @@
             ],
             "published_at": "2026-09-25T14:15:00+00:00",
             "collected_at": "2026-09-25T16:15:05.143304+00:00"
+        },
+        {
+            "id": "10d31c0185a34ea0eb2d54dcaa692fb402935133e64a67d1bc1901227a81cd90",
+            "title": "With PRIMA, NASA will try to build a billion-dollar space telescope in record time",
+            "description": "NASA's PRIMA mission will use spare parts from Webb to do major science at a lower cost.",
+            "url": "https://arstechnica.com/space/2026/09/nasa-green-lights-billion-dollar-infrared-observatory-for-launch-in-early-2030s/",
+            "source": "Ars Technica",
+            "category": "technologie",
+            "tags": [
+                "informatique",
+                "innovation",
+                "technologie"
+            ],
+            "published_at": "2026-09-25T14:07:46+00:00",
+            "collected_at": "2026-09-25T20:56:36.740475+00:00"
         },
         {
             "id": "0bd00b780691216b175b03a1d944d0424d0beb72b8eaf0927b59b5e1b0532d3d",
@@ -1082,6 +2123,36 @@
             ],
             "published_at": "2026-09-25T13:55:37+00:00",
             "collected_at": "2026-09-25T16:15:06.309092+00:00"
+        },
+        {
+            "id": "9e9f9e1ae7fcdacd973c302b642accbdc9c7911cb1b11932d0668642e52924e5",
+            "title": "What happens when you analyze your favorite college football team like the CIA?",
+            "description": "Comments",
+            "url": "https://www.cultivatelabs.com/posts/what-happens-when-you-analyze-college-football-like-the-cia",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-25T13:47:21+00:00",
+            "collected_at": "2026-09-25T20:56:38.369488+00:00"
+        },
+        {
+            "id": "afac15e5727d9db5a0bb9214f2253810eb154126629addffc278513f9101943c",
+            "title": "Trump administration takes Musk’s side in fight over EU tech rules",
+            "description": "Washington says Brussels overreached when it fined X €120 million under the DSA.",
+            "url": "https://arstechnica.com/tech-policy/2026/09/trump-administration-takes-musks-side-in-fight-over-eu-tech-rules/",
+            "source": "Ars Technica",
+            "category": "technologie",
+            "tags": [
+                "informatique",
+                "innovation",
+                "technologie"
+            ],
+            "published_at": "2026-09-25T13:45:49+00:00",
+            "collected_at": "2026-09-25T20:56:36.740537+00:00"
         },
         {
             "id": "de1612873c0fddad84022bd4167590c055cec146bafae4d008c76e5565291798",
@@ -1653,6 +2724,36 @@
             ],
             "published_at": "2026-09-25T11:09:00+00:00",
             "collected_at": "2026-09-25T16:15:05.143596+00:00"
+        },
+        {
+            "id": "2a5ad4fe27ed6902db577787ba8e4739e1579358b95bcd005e5f5bbce9c6017f",
+            "title": "Trump admin using AI to deny medical care for seniors in disastrous experiment",
+            "description": "Vendors rolling out AI have an \"incentive to deny as many claims as possible.\"",
+            "url": "https://arstechnica.com/health/2026/09/trump-admin-using-ai-to-deny-medical-care-for-seniors-in-disastrous-experiment/",
+            "source": "Ars Technica",
+            "category": "technologie",
+            "tags": [
+                "informatique",
+                "innovation",
+                "technologie"
+            ],
+            "published_at": "2026-09-25T11:00:28+00:00",
+            "collected_at": "2026-09-25T20:56:36.740593+00:00"
+        },
+        {
+            "id": "548329a9ced2dbc0ace9aa9246a8f4472afa6a936acbae90dced3a67e0b35f14",
+            "title": "Rocket Report: Era of cheap launch is over? Astra sets early 2027 target for return",
+            "description": "\"The customer got comfortable with a high reliability and a low price.\"",
+            "url": "https://arstechnica.com/space/2026/09/rocket-report-era-of-cheap-launch-is-over-astra-sets-early-2027-target-for-return/",
+            "source": "Ars Technica",
+            "category": "technologie",
+            "tags": [
+                "informatique",
+                "innovation",
+                "technologie"
+            ],
+            "published_at": "2026-09-25T11:00:10+00:00",
+            "collected_at": "2026-09-25T20:56:36.740646+00:00"
         },
         {
             "id": "9d8208f52fd07b36206a40de9723ca3a6b68dc7ec3651ea4496aa0797e25c069",
@@ -2600,6 +3701,21 @@
             ],
             "published_at": "2026-09-25T08:00:00+00:00",
             "collected_at": "2026-09-25T10:54:58.285396+00:00"
+        },
+        {
+            "id": "27847447baac6e7ccf66ba339fa2656cb6c2a7dd3131a882d72f097a699ebd44",
+            "title": "AWS Elastic Disaster Recovery now supports AWS Graviton-based source servers",
+            "description": "AWS Elastic Disaster Recovery (AWS DRS) now supports disaster recovery for AWS Graviton-based (arm64) source servers. You can now protect and recover your Graviton workloads with the same simple, reliable DRS experience you already use for x86 workloads. As more workloads move to Graviton for its price-performance benefits, they need the same disaster recovery coverage as the rest of your environment. DRS now automatically detects arm64 source servers and recovers them onto Graviton instances, preserving your workload's architecture end to end. Recovery works the same way it does for your other servers, with nothing extra to configure. This capability is available in all AWS Regions where AWS DRS is offered, at no additional cost. To learn more, visit the AWS Elastic Disaster Recovery User Guide .",
+            "url": "https://aws.amazon.com/about-aws/whats-new/2026/09/elastic-disaster-recovery-graviton/",
+            "source": "AWS What's New",
+            "category": "cloud",
+            "tags": [
+                "amazon",
+                "aws",
+                "cloud"
+            ],
+            "published_at": "2026-09-25T08:00:00+00:00",
+            "collected_at": "2026-09-25T20:56:41.548255+00:00"
         },
         {
             "id": "7503606aebc1671008929fd273376756a49a2309302dc7fba3b329604e301659",
@@ -19082,6 +20198,21 @@
             "collected_at": "2026-09-22T16:01:52.458089+00:00"
         },
         {
+            "id": "6d0f22ee6771ccfcb003b5df5e32246b1fdd2c888d0a01f32e6fa07702b314c0",
+            "title": "Bwbach, My Guardian Goblin",
+            "description": "Comments",
+            "url": "https://robertmay.photography/journal/bwbach-my-guardian-goblin",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-22T12:25:57+00:00",
+            "collected_at": "2026-09-25T20:56:38.368726+00:00"
+        },
+        {
             "id": "7607e1f0ec342298fe73c8c16fd81ea335273f293706c2075959e226e3233813",
             "title": "Reviving TEMPEST Attacks With An Injected Signal",
             "description": "Comments",
@@ -24014,6 +25145,21 @@
             "collected_at": "2026-09-21T17:33:59.827388+00:00"
         },
         {
+            "id": "72303dddffe23e17f748c96235243e5d4e0a4254d4cca526c0d3e4407aa6b879",
+            "title": "Show HN: Make math automatic with Mathy",
+            "description": "Comments",
+            "url": "https://gmays.com/making-math-automatic-with-mathy/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-21T14:49:05+00:00",
+            "collected_at": "2026-09-25T20:56:38.368506+00:00"
+        },
+        {
             "id": "5e201f4edcfa60f84e8789bec7c7709b83e7324afb065c413727a48ec7c06c42",
             "title": "Rogue Behavior: OpenAI Reveals More Model Misalignment Incidents",
             "description": "The AI giant disclosed six examples of concerning model activity and published a new framework for investigating and disclosing such incidents.",
@@ -27871,6 +29017,21 @@
             "collected_at": "2026-09-20T20:04:36.272766+00:00"
         },
         {
+            "id": "04cac486c6f1932a04840ba8769bdc06a71bb99d87a95ef88f78ff2e41e9df1d",
+            "title": "A History of the Chiming Machines at Gloucester's Cathedral and Churches (2017) [pdf]",
+            "description": "Comments",
+            "url": "https://www.bgas.org.uk/tbgas_bg/v135/251-268-MacKechnie-Jarvis.pdf",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-20T16:48:20+00:00",
+            "collected_at": "2026-09-25T20:56:38.368941+00:00"
+        },
+        {
             "id": "81510c8fb4025ef21b4dbcf751548af22f7795dd54a4671e58f7c0e42f751b07",
             "title": "I am often wrong",
             "description": "Comments",
@@ -27945,6 +29106,21 @@
             ],
             "published_at": "2026-09-20T16:01:38+00:00",
             "collected_at": "2026-09-20T20:04:51.156948+00:00"
+        },
+        {
+            "id": "d45808e810504aee5458e8f765c9feecf6b62b267eed7c05defc9567191143f1",
+            "title": "How video games inspire great UX (2019)",
+            "description": "Comments",
+            "url": "https://jenson.org/games/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-20T16:00:13+00:00",
+            "collected_at": "2026-09-25T20:56:38.368596+00:00"
         },
         {
             "id": "ebba578091a27aa1d17b44fd6a89cfa45107b9ce3dc4d8fee4ec9a90148f1a0d",
@@ -176673,6 +177849,98 @@
             ],
             "published_at": null,
             "collected_at": "2026-09-25T16:15:04.798301+00:00"
+        },
+        {
+            "id": "1cd84880b7200e242bed00baccb61b8aa58ab03d59f82f39c8c7c1b67acf084b",
+            "title": "Roku’s first OLED TVs are up to $400 off, starting at $699",
+            "description": "Roku recently launched its first-ever OLED TVs. The $999 starting price was already impressive for the 55-inch Pro Series model that has a 120Hz refresh rate OLED panel (with four HDMI 2.1 ports and support for Dolby Vision and HDR 10 Plus). The price is even lower right now at Amazon when you enter the […]",
+            "url": "https://www.theverge.com/gadgets/1000859/roku-pro-series-oled-nothing-phone-4a-pro-deal-sale",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-09-25T20:56:36.914817+00:00"
+        },
+        {
+            "id": "f43edf4211ac9ef109288a1622e5731b10e2e920fd888b37c097d94b5f79af64",
+            "title": "Phones don’t have lights",
+            "description": "Mark Zuckerberg has a new defense of the Ray-Ban Meta glasses: They're actually doing more to signal they're taking a photo than phones do. He's brought this up in at least two recent interviews, noting that the glasses have a light that comes on to signal when a photo is being taken, while phones do […]",
+            "url": "https://www.theverge.com/podcast/1000751/vergecast-meta-connect-muse-googlebooks",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-09-25T20:56:36.914911+00:00"
+        },
+        {
+            "id": "2f1cb0ea1ba12a23020049af4a3b50d8e267437ce77d58f06e7d57af35fc5896",
+            "title": "These camera apps give you more control over the iPhone 18 Pro’s aperture",
+            "description": "One of the questionable limitations of the iPhone 18 Pro's new main camera with a variable aperture is that you're limited to just four settings in the native iOS' camera app in manual mode: f/1.48, f/1.8, f/2.8, and f/4. Those same limitations are also in place when the app is adjusting the iris itself in […]",
+            "url": "https://www.theverge.com/tech/1000729/moment-pro-blackmagic-camera-ii-ios-app-iphone-18-pro-max-aperature-camera",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "ios",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-09-25T20:56:36.915049+00:00"
+        },
+        {
+            "id": "d23e876d1f601e8d4775d2c08cd712029b9fe8b92bb7882c6e349b47ec987b91",
+            "title": "Tesla’s Optimus robot is going through growing pains",
+            "description": "Hitting its goal of making 20,000 Optimus robots per week is reportedly proving tricky for Tesla. The Information reports that Tesla produced \"several hundred robots a week\" last month, after it repurposed its Model S and Model X production lines for Optimus earlier this year. However, this strategy is reportedly creating manufacturing snags, like issues […]",
+            "url": "https://www.theverge.com/tech/1000794/tesla-optimus-production-issues-hands",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-09-25T20:56:36.915157+00:00"
+        },
+        {
+            "id": "ded5f30056dbe56f778ebd9050c89543ff6f0a34e5bc4e798f3377eba7ec0f28",
+            "title": "Meta makes the Muse filesystem even more accessible",
+            "description": "Yesterday, with a little prodding, it was discovered that Meta's Muse would expose its filesystem to curious users. The files offered a fascinating peek under the hood of an AI chatbot, and appeared to expose details we weren't meant to see, not least because Muse itself told people, including us, it wasn't supposed to reveal […]",
+            "url": "https://www.theverge.com/ai-artificial-intelligence/1000784/meta-muse-filesystem",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-09-25T20:56:36.915247+00:00"
+        },
+        {
+            "id": "bc5a21fcb2308349a1a85a97fcce4ae69747e6d081c28d7157d36845cb61b9c4",
+            "title": "Leaks reveal a new Apple HomePod mini, iPad mini, and Apple TV 4K",
+            "description": "Apple is expected to announce more hardware before the end of the year following the debut of the iPhone 18 Pro and folding iPhone Duo earlier this month. The updated products will include a new version of the HomePod mini, the iPad mini 8, and the Apple TV 4K, according to details and images discovered […]",
+            "url": "https://www.theverge.com/tech/1000772/apple-code-leak-homepod-mini-2-ipad-mini-8-apple-tv-4k",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "ios",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-09-25T20:56:36.915334+00:00"
         }
     ]
 }
