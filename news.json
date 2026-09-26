@@ -1,7 +1,733 @@
 {
-    "updated_at": "2026-09-26T10:35:22.724932+00:00",
-    "count": 11629,
+    "updated_at": "2026-09-26T15:28:39.571189+00:00",
+    "count": 11686,
     "articles": [
+        {
+            "id": "ea1239af9250adf0fb2226bb29da96bbfdfd8fa10026cc546f2707b265b21a10",
+            "title": "I Built a Telegram AI Agent That Can Actually Use Tools O.O",
+            "description": "I've been building Hexzie (HexTelegram) a Telegram-based AI assistant that goes beyond just sending text back and forth. The idea was simple: What if an AI assistant inside Telegram could actually use tools, inspect files, execute commands, search the web, and interact with Telegram itself? So I built it. HexZoNetwork / HexTelegram Hexzie HexTelegram (HTG) — AI Telegram bot by HexzoNetwork ⚠️ Project in active development , some features may still be in progress. Hexzie is a powerful and modern Telegram AI assistant built with: ✅ Telegraf + Node.js (bot framework) 📌 OpenAI-compatible API for chat + function-calling tools ( active development ) ✅ Go tool runner ( tools-go ) — shell, files, web, screenshots, sysinfo ✅ Full filesystem control from / — no workspace jail ✅ ChatGPT-style streaming replies with live progress labels Features 💬 Chat — streaming answers, auto-summary memory, per-chat history 💻 Shell + files — shell_exec (any command), file_read / file_write / file_list from / 🌐 Web — web_search (Bing), web_fetch , web_check (site recon), web_screenshot (chromium → PNG) ✉️ Telegram tools — send message/photo/document, inline buttons, edit, delete, forward, pin, chat actions, get_chat 🖼️ Vision + files — send photo/document, reply-to-file summarization, PDF text extraction 🔐 Access … View on GitHub What is Hexzie? Hexzie is an AI Telegram assistant built with Node.js + Telegraf , with a Go-based tool runner underneath. The AI communicates through an OpenAI compatible API , allowing the model to decide when it needs to call a tool. The architecture roughly looks like this: Telegram │ ▼ Telegraf │ ▼ Authentication │ ▼ Prompt / Context Builder │ ▼ Agent Loop │ ├──► AI API │ │ │ └── tool_calls │ ├──► Go Tool Runner │ ├── shell │ ├── files │ ├── web │ ├── screenshots │ ├── calculator │ └── system info │ └──► Telegram Tools ├── send / edit / delete ├── photo / document / buttons ├── forward / pin └── get_chat The important part is that the AI isn't limited to generating text. It can act . Why Node.js + Go? The Telegram side is written in Node.js using Telegraf . That makes handling Telegram updates, messages, callbacks, photos, documents, and streaming relatively straightforward. For the lower level tools, I used Go. The Go runner handles things like: shell_exec file_read file_write file_list web_fetch web_search web_check web_screenshot get_time calc sysinfo This gives the project a nice separation: Node.js └── AI + Telegram + agent orchestration Go └── System / filesystem / web tools The Agent Loop One of the most interesting parts is the agentic loop. A simplified version looks like: User message │ ▼ Build context │ ▼ Send messages + tools to model │ ▼ Does the model request a tool? │ ┌─┴─┐ YES NO │ │ ▼ ▼ Run Final tool answer │ ▼ Add tool result │ ▼ Ask model again Hexzie currently allows up to 8 agent rounds . For example, a request could theoretically become: User: \"Check this website and tell me what server it's running on.\" AI: → web_check() Tool: → returns HTTP/server/technology information AI: → analyzes result Telegram: → final response The model isn't just answering from its training data. It's interacting with the environment through structured tools. Progress Updates I also wanted the bot to feel less like a traditional Telegram bot. Instead of: User → wait → huge response Hexzie keeps a single progress message and edits it while the agent works. While the model streams its reasoning, the message shows the action, a status, and a live custom line plus rotating tips: > - 💭 Thinking |-> Reading request. | |-> - I should inspect the site's headers before summarizing. Tips: SSE: Super Speedy Edits. then, while a tool runs: > - 🔍 Checking site https://example.com |-> Running tool. | |-> - Comparing server headers to identify the stack. Tips: Punch trees, hug servers! and when it finishes, the same message is replaced with the actual answer. Tips rotate every ~5 seconds, and the custom line is based on the model's own streamed reasoning when available falling back to themed statuses when it isn't. This makes tool execution feel much more transparent. Stale Request Handling There's another problem with AI bots: What happens if a user sends another message while the previous request is still running? Instead of letting requests pile up indefinitely, Hexzie keeps track of the newest request per chat. Conceptually: Request A ────────────────X \\ Request B ──────────────────► active If request A becomes stale, it is aborted and its progress message is marked as skipped instead of eventually producing an outdated response. This matters quite a lot once an agent can perform slow operations like web requests or multiple tool calls. Multi-API Failover Hexzie also supports an API pool. Instead of depending on a single endpoint: API #1 API #2 API #3 API #4 The bot can rotate endpoints when network errors or server-side failures occur. For certain HTTP failures (like 502/503/504), it also retries with backoff before falling back to a non-streaming request. APIs can be added and live-tested from Telegram itself with /addapi <url> <key> . This is useful for self-hosted or multi-provider OpenAI-compatible setups where availability can vary. Memory The bot has two layers of conversation context. First, it keeps recent conversation turns in memory. Then, when the conversation gets large, older context is summarized by the model. Conceptually: Recent messages │ ├── keep directly (~12 turns) │ Older messages │ ▼ AI summary │ ▼ memory.json This keeps the context from growing indefinitely while preserving useful information. Telegram-Native Tools Because Hexzie lives inside Telegram, I didn't want the AI to only have generic computer tools. It also has Telegram-specific operations. For example: tg_send_message tg_send_buttons tg_send_photo tg_send_document tg_edit_message tg_delete_message tg_forward tg_chat_action tg_get_chat tg_pin tg_unpin That means the model can reason about Telegram as an environment instead of treating it as just a chat interface. Group Chat Support Hexzie can also operate in groups without responding to every single message. You can trigger it with: /talk explain this or: /t explain this It also supports prefixes such as: =explain this ~explain this |explain this and mentions: @Hexzie explain this Replying directly to the bot also works. This makes it possible to have the AI participate in a group without turning the chat into an AI-generated message flood. Security This is probably the most important part of the project. Hexzie can execute shell commands and access files. That is extremely powerful and also extremely dangerous . Access is controlled by user ID: { \"telegramToken\" : \"PASTE_FROM_BOTFATHER\" , \"ownerUserId\" : 123456789 , \"allowedUserIds\" : [], \"baseURL\" : \"https://your-provider/v1\" , \"apiKey\" : \"sk-...\" , \"model\" : \"jmbot/mimo-v2.6-flash\" , \"systemPrompt\" : \"\" , \"temperature\" : 0.7 , \"maxTokens\" : 2048 } Only the owner and explicitly allowed user IDs can use the bot everyone else is silently ignored, even in groups. Owner only commands handle user and API management. Since shell/file tools run from / by default, you can also harden it with an optional sandbox: \"shell\" : { \"workDir\" : \"/home/you/sandbox\" , \"defaultTimeoutSec\" : 30 , \"maxOutputChars\" : 8000 , \"blockedPatterns\" : [ \"rm -rf /\" , \"mkfs\" , \":(){:|:&};:\" ] } Give the bot only the access you're comfortable with it acts with exactly the permissions you give it. Preview & Demo I need help about adding tools and secure the ai from becoming threat for system please check out my github and project and discuss at comment below!",
+            "url": "https://dev.to/hexzonetwork/i-built-a-telegram-ai-agent-that-can-actually-use-tools-oo-2cgc",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "git",
+                "javascript",
+                "openai",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-26T15:17:03+00:00",
+            "collected_at": "2026-09-26T15:28:23.105194+00:00"
+        },
+        {
+            "id": "9882dde59a4817896ad407c27b490643b85096d7d88f0382aa6076117ae780d9",
+            "title": "I Thought a Calendar Was Just a 7-Column Grid Until I Started Building One",
+            "description": "A calendar looks like one of the simplest interfaces on the web. Seven columns. A few rows. Some numbers. Maybe a previous and next button. That was roughly how I thought about calendars too. Then I started looking more closely at how calendar interfaces actually work, and the \"simple grid\" turned into a surprisingly interesting engineering problem. Dates are not always timestamps. Weeks don't start on the same day everywhere. Months aren't the same length. Printing has completely different constraints from screens. Accessibility changes how the structure should be built. And then there are time zones. Here are the things that surprised me most. 1. A calendar date is not necessarily a timestamp Consider this: const date = new Date ( \" 2027-01-01 \" ); console . log ( date ); At first glance, this seems perfectly reasonable. We want January 1, 2027. But JavaScript's Date represents a point on a timeline. A calendar date and an instant in time are not always the same concept. Think about a birthday. If someone says: My birthday is January 1. They usually don't mean: My birthday occurs at exactly midnight UTC. They mean a date on a calendar. That difference matters. A simple calendar date is conceptually closer to: year: 2027 month: January day: 1 No hour. No minute. No timezone. This distinction becomes especially important when the same interface needs to work across locations. For date-only data, adding a timezone too early can create problems instead of solving them. 2. Separate calendar math from presentation Another thing I learned quickly: don't make one function responsible for everything. It is tempting to start with something like: function renderMonth ( year , month ) { // calculate dates // generate HTML // format labels // decide week start // create CSS classes // handle empty cells } That can work for the first version. Then you want a yearly layout. Then a printable version. Then another locale. Then Monday-first weeks. Suddenly the function knows far too much. A cleaner model is: DATE CALCULATIONS ↓ MONTH MODEL ↓ PRESENTATION ↓ WEB / MOBILE / PRINT For example, the date layer can remain very small: function getMonthData ( year , month ) { const firstDay = new Date ( Date . UTC ( year , month - 1 , 1 ) ); const daysInMonth = new Date ( Date . UTC ( year , month , 0 ) ). getUTCDate (); return { year , month , firstWeekday : firstDay . getUTCDay (), daysInMonth }; } That function doesn't care how the month will eventually look. It can feed: a desktop calendar a mobile calendar a yearly overview a printable page a PDF generator The boring architecture turned out to be the useful architecture. 3. A month grid is mostly an offset problem At the UI level, one of the most important questions is: Which cell should contain day 1? Imagine a Sunday-first calendar where the first day of the month is Friday: SUN MON TUE WED THU FRI SAT 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 The month is basically: leading empty cells + actual dates + trailing empty cells A reusable grid generator can look like this: function buildMonthGrid ( year , month , weekStartsOn = 0 ) { const firstDay = new Date ( Date . UTC ( year , month - 1 , 1 ) ); const daysInMonth = new Date ( Date . UTC ( year , month , 0 ) ). getUTCDate (); const offset = ( firstDay . getUTCDay () - weekStartsOn + 7 ) % 7 ; return Array . from ({ length : 42 }, ( _ , index ) => { const day = index - offset + 1 ; return day >= 1 && day <= daysInMonth ? day : null ; }); } Why 42? 7 columns × 6 rows = 42 cells Not every month needs six rows, but some do. A fixed grid can also prevent the interface from jumping vertically when someone moves from one month to another. Small detail, better experience. 4. Sunday-first and Monday-first should be configuration This: SUN MON TUE WED THU FRI SAT and this: MON TUE WED THU FRI SAT SUN should not require two calendar engines. They are simply different configurations. buildMonthGrid ( 2027 , 1 , 0 ); // Sunday-first buildMonthGrid ( 2027 , 1 , 1 ); // Monday-first The rendering layer doesn't need to understand why the week begins on a particular day. It only needs to support the choice. That led me to a broader rule I like: Regional behavior should usually be configuration, not architecture. 5. Don't hard-code what the platform already knows Month names are another easy example. You could write: const months = [ \" January \" , \" February \" , \" March \" , \" April \" , \" May \" , \" June \" , \" July \" , \" August \" , \" September \" , \" October \" , \" November \" , \" December \" ]; Nothing is inherently wrong with that for a tiny English-only project. But the browser already has internationalization tools: const formatter = new Intl . DateTimeFormat ( \" en-US \" , { month : \" long \" , timeZone : \" UTC \" } ); const monthName = formatter . format ( new Date ( Date . UTC ( 2027 , 0 , 1 )) ); console . log ( monthName ); // January Now localization belongs to the presentation layer rather than the calendar engine. That separation becomes increasingly valuable as the project grows. 6. CSS Grid makes the visual part surprisingly straightforward Once the data model is correct, the basic seven-column interface is almost boring: .calendar-grid { display : grid ; grid-template-columns : repeat ( 7 , 1 fr ); gap : 1px ; } .calendar-cell { min-height : 7rem ; padding : 0.75rem ; border : 1px solid #ddd ; } Seven columns. Done. You can then adapt the presentation without changing the underlying dates: @media ( max-width : 700px ) { .calendar-cell { min-height : 5rem ; padding : 0.4rem ; } } Or reuse the same month model inside a yearly layout: .year-grid { display : grid ; grid-template-columns : repeat ( auto-fit , minmax ( 260px , 1 fr )); gap : 2rem ; } This is where the separation starts paying off. The data does not know whether it is being displayed in one column or twelve. 7. Print is a completely different medium This has been one of the more interesting problems for me while working with calendar resources at JW Calendar . Responsive web design asks: How should this adapt to the viewport? Printable design asks: How do I make this fit correctly onto a physical sheet of paper? Those are very different questions. Suddenly you care about millimeters. Margins. Orientation. Page boundaries. Browser scaling. Page breaks. Printer behavior. A simple print stylesheet might begin like this: @media print { @page { size : A4 landscape ; margin : 10mm ; } .toolbar , .navigation , .no-print { display : none !important ; } .calendar { width : 100% ; break-inside : avoid ; } body { print-color-adjust : exact ; -webkit-print-color-adjust : exact ; } } The same calendar now lives in two layout systems: SCREEN ├── viewport ├── responsive breakpoints ├── interaction └── dynamic resizing PRINT ├── physical page size ├── margins ├── orientation ├── page breaks └── printer/browser behavior A calendar can look perfect in a browser and terrible in print preview. So for printable interfaces, print CSS isn't just a finishing touch. It is another rendering environment. 8. Semantic HTML matters It is very easy to make a calendar out of anonymous <div> elements: <div class= \"calendar\" > <div> Sun </div> <div> Mon </div> <div> Tue </div> </div> Visually, that may look fine. But a calendar contains relationships. A date belongs to a weekday. A weekday belongs to a week. Weeks belong to months. For a static calendar, table semantics can sometimes express those relationships naturally: <table> <caption> January 2027 </caption> <thead> <tr> <th scope= \"col\" > Sunday </th> <th scope= \"col\" > Monday </th> <th scope= \"col\" > Tuesday </th> <th scope= \"col\" > Wednesday </th> <th scope= \"col\" > Thursday </th> <th scope= \"col\" > Friday </th> <th scope= \"col\" > Saturday </th> </tr> </thead> <tbody> <tr> <td></td> <td></td> <td></td> <td></td> <td></td> <td> <time datetime= \"2027-01-01\" > 1 </time> </td> <td> <time datetime= \"2027-01-02\" > 2 </time> </td> </tr> </tbody> </table> The point isn't that every calendar must use a table. The point is: Choose markup that preserves meaning. A visually correct grid isn't automatically an accessible grid. 9. Empty cells aren't really empty Look at this again: SUN MON TUE WED THU FRI SAT 1 2 The first cells contain no date. But they still communicate important information. They tell us that day 1 belongs under Friday. Remove those cells and you remove the spatial relationship. I like this as a general UI lesson: Sometimes absence is information. Sometimes \"nothing\" is data. 10. Leap years are actually one of the easier edge cases Leap years are probably the most famous calendar edge case. But if the number of days is derived rather than manually stored, they become almost boring: function daysInMonth ( year , month ) { return new Date ( Date . UTC ( year , month , 0 ) ). getUTCDate (); } Now: daysInMonth ( 2027 , 2 ); // 28 and: daysInMonth ( 2028 , 2 ); // 29 No February-specific branch. No separate lookup table. No duplicated knowledge. A useful rule appears again: Prefer deriving truth from reliable primitives when possible. 11. Test the boundaries If I were testing a calendar engine, I wouldn't spend most of my time on random dates in the middle of ordinary months. I'd test the edges: January → February February → March December → January February 28 February 29 Sunday-first layouts Monday-first layouts months requiring six rows year boundaries locale changes For example: console . assert ( daysInMonth ( 2028 , 2 ) === 29 ); console . assert ( daysInMonth ( 2027 , 2 ) === 28 ); console . assert ( daysInMonth ( 2027 , 4 ) === 30 ); console . assert ( daysInMonth ( 2027 , 1 ) === 31 ); The middle of a system is usually where our assumptions work. The edges are where those assumptions become visible. 12. Different date problems deserve different representations Consider these four pieces of information: Birthday: January 12 Meeting: January 12 at 14:00 in New York Server event: 2027-01-12T19:00:00Z Printed calendar cell: January 12 They may look similar on a screen. But they represent different concepts. A useful calendar system might therefore use: year/month/day data for calendar cells an instant for machine events timezone-aware data for scheduled meetings locale formatting only when rendering Trying to force every date-related concept into one representation can make the system harder to reason about. Final thought The most useful lesson I got from calendars has surprisingly little to do with calendars. Simple interfaces can hide complicated domain rules. Whenever something looks too easy, I now find it useful to ask: What assumptions am I making simply because the UI looks simple? Sometimes seven columns are just seven columns. And sometimes they're hiding date arithmetic, localization, accessibility, responsive design, printing, regional conventions, and time zones. I'd love to hear how other developers approach date-heavy interfaces. What's the strangest calendar, timezone, or date bug you've ever had to fix?",
+            "url": "https://dev.to/karecohen/i-thought-a-calendar-was-just-a-7-column-grid-until-i-started-building-one-5chi",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "java",
+                "javascript",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-26T15:16:01+00:00",
+            "collected_at": "2026-09-26T15:28:23.106666+00:00"
+        },
+        {
+            "id": "52908415dfa751c6da250d496be7f5747f2e15c45966fc50bf8be8455a5ca052",
+            "title": "Building the Capsize Audio Visualizer with C++ and Qt",
+            "description": "I keep coming back to the Capsize Audio Visualizer because it is small enough to finish. It is a C++ and Qt desktop application that turns live audio into shader-driven scenes, with controls for changing how the signal affects the picture. This week it picked up CRT presentation work, floating mode, cross-shader audio mappings and three releases. The project is written in C++ and Qt with a native audio path and a collection of shader-driven scenes. The visual identity is not a web-only skin. The same shader language and palette now appear across the desktop app, the public site and the other Capsize properties. Floating mode is a small feature with a large effect on how the application is used. The visualizer can sit beside another application instead of taking over the whole screen. Cross-shader mappings make the audio signal feel like one input to a set of related scenes rather than a separate toggle in every effect. Try the public build at av.capsizegames.com or see the desktop edition on itch.io . The full four-week overview is on capsize.online . A useful way to extend it Pick one audio feature and map it to one visual parameter. Keep the mapping visible in the shader or effect configuration. Then add a second effect that responds to the same signal in a different way. The result is easier to tune when the signal path is shared and the visual differences live at the edge. That is the balance I want from the project: a small program people can use tonight, with enough structure that the next visual idea has somewhere to go. The public build makes the idea easy to test. Start a track, put the window beside another application, change the mapping and watch the same signal move through a different scene. If the effect needs a paragraph before it makes sense, the effect probably needs another pass. The release work also keeps the boring edges in view: a local queued build, a repeatable package and a public page that explains what the download is. A visual tool gets better when the distance between changing a shader and trying the result stays short.",
+            "url": "https://dev.to/w4ffl35/building-the-capsize-audio-visualizer-with-c-and-qt-4lln",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "cpp",
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-26T15:15:01+00:00",
+            "collected_at": "2026-09-26T15:28:23.106919+00:00"
+        },
+        {
+            "id": "88f3e538d0ba246067b5b5c281599182ea365251a92b2de495d983fa8781baac",
+            "title": "A web shop without a database or payment provider: the ForgeCMS shop module",
+            "description": "Today the shop module for ForgeCMS went live. Your customers can pay in two ways: in June (Ğ1) , a free currency, or in euros by plain bank transfer . There's no database, no payment provider taking a cut, and no monthly fee. The money goes straight from the buyer to the seller. This afternoon I paid for my own test order with 1 Ğ1. Three minutes later the shop had marked the order as paid and sent me my download link. 👉 How it works for shop owners: https://crowdware.info/shop-module Some context: what ForgeCMS is ForgeCMS is a small CMS written in Go. It has no database and no build step. Pages are small SML files plus Markdown in a Git repo on Codeberg. The server fetches them at request time, caches them, and renders HTML. You edit a page in Git, and a minute later it's live. I wanted a shop that fits into this. It shouldn't need a database, it shouldn't need an account with a payment company, and it shouldn't hand buyers' data to anyone else. Why June (Ğ1)? Ğ1 is a libre currency that has been running since 2017. Every member creates a small share of new money each day, the universal dividend , so it works a bit like a basic income built into the currency. Since March 2026 it has been running on Duniter v2, a Substrate-based blockchain. It's not a speculative token, and people in the network use it to pay for goods and services. For a shop, what matters is that every transfer is public and carries a comment . The buyer puts the order number in the comment, and the shop can find the payment without any access to the seller's wallet. The catalogue is one text file Catalog { Product { id : \"honey-500\" title : \"Honey 500 g\" price : \"12.50\" priceEur : \"9.90\" image : \"honey.jpg\" text : \"From our own bees.\" } Product { id : \"ebook\" title : \"My e-book\" price : \"20\" type : \" digital \" text: \" PDF , 120 pages .\" } } price is the price in Ğ1, and priceEur the price in euros. A product with both prices lets the buyer choose. A product with only one price is sold only in that currency. On a page, Products { } renders the product cards with an Order button. The price always comes from the catalogue, never from the order form. How an order flows The buyer fills in a short form: quantity, name, email, and for physical goods a shipping address. Then they click Place order (payment required) . The server writes the order as a small SML file to disk, e.g. G1-7KQ2MXRA.sml , and sends two emails, one to the buyer and one to the seller. The buyer sees a payment page with the address, the exact amount and the order number. The buyer pays and puts the order number into the transfer comment. Detecting Ğ1 payments A watcher goroutine asks the public Duniter indexer once a minute for new transfers to the shop's address. The indexer has a GraphQL API: transfers(filter: { toId : { equalTo : $ wallet }, blockNumber : { greaterThan : $ from }} ) { nodes { id blockNumber amount fromId comment { remark } } } A transfer is matched to its order by the comment. The watcher waits 10 blocks of confirmations (about a minute) before it counts a payment. Split payments add up, and overpayments are recorded. A transfer without a matching order doesn't get lost: the seller gets an email and sorts it out by hand. The last processed block is stored in a small state file, so a restart doesn't skip or double-count anything. The server never holds a wallet key . It only reads public data. Euro payments: one click by the seller For euros the shop doesn't connect to any bank. There's no banking API and nobody else sees your account. The seller's order email contains a secret confirmation link. When the money is on the account, the seller clicks it, checks the amount on the confirmation page and confirms. From there everything runs the same way as with Ğ1. Digital delivery For downloads, the paid email contains a license key and a personal download link: The link is valid for 30 days and 5 downloads. The server stores only a SHA-256 hash of the link's token, never the token itself. The files don't live in the public content repo. They live in a data folder on the server, and the download handler rejects path traversal and symlinks. Before ordering a digital product, the buyer ticks a box saying delivery may start immediately. German and EU law require this so the right of withdrawal ends with the download. What it deliberately doesn't do no shopping cart: one product per order, any quantity no credit cards, PayPal or Stripe no stock management and no automatic invoices euro payments need one click from the seller For a small shop, a creator, a farm shop or a community project, that's usually enough. Every feature I left out is one less thing that can break. Tested for real Before going public, I ran the whole flow on the live site with a hidden test page: Euro: a transfer of 0.01 EUR, confirmed with the link. The order was marked as paid and the emails went out. Ğ1: 1 Ğ1 for a digital test product. It was detected after 10 confirmations, the order was marked as paid, and the download link arrived by email and worked. Then I removed the test page. Try it See how it works: https://crowdware.info/shop-module What is June? https://crowdware.info/june ForgeCMS source (GPLv3): https://codeberg.org/CrowdWare/ForgeCMS The shop module is a one-time €39 license, with no subscription. If you'd like a shop on your own website, whether you sell in June, in euros or both, get in touch . If you already use Ğ1, I'd love to hear how you currently sell things with it and what's missing.",
+            "url": "https://dev.to/artanidos/a-web-shop-without-a-database-or-payment-provider-the-forgecms-shop-module-5e3n",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "blockchain",
+                "developpement",
+                "git",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-26T15:14:42+00:00",
+            "collected_at": "2026-09-26T15:28:23.107592+00:00"
+        },
+        {
+            "id": "d1cedbc6f7944e87d4a26a7c3d6118e6a1eeae7ecc4e976cf519fa528631f3d1",
+            "title": "27-year-old GTA 2 gets full path tracing and 60 FPS frame generation via RTX Remix",
+            "description": "Modder releases GTA2 RTX Remix, a mod that adds path tracing and a dynamic time of day to the 27-year-old Grand Theft Auto 2.",
+            "url": "https://www.tomshardware.com/video-games/pc-gaming/27-year-old-gta-2-gets-full-path-tracing-and-60-fps-frame-generation-via-rtx-remix-custom-direct3d-9-wrapper-modernizes-classic-with-custom-direct3d-9-bridge-unlocks-dynamic-lighting",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "nvidia",
+                "pc"
+            ],
+            "published_at": "2026-09-26T15:10:00+00:00",
+            "collected_at": "2026-09-26T15:28:25.376419+00:00"
+        },
+        {
+            "id": "4c91932570121d6f60b5959fa9554742e2b5f85dc29dcda4f10088d61fa855bc",
+            "title": "The Graveyard of Good Ideas",
+            "description": "Comments",
+            "url": "https://www.youtube.com/watch?v=ovlQ81rBc-4",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-09-26T15:09:50+00:00",
+            "collected_at": "2026-09-26T15:28:22.802146+00:00"
+        },
+        {
+            "id": "c5c3dfe6dfc0c11c9caacd2c8400be657d4565fbb412d8debe7d41fb3934ab32",
+            "title": "Claude Code said \"Done.\" My tests said otherwise. Here's the 20-line fix.",
+            "description": "If you use Claude Code, you've seen this: claude: Done! Partial refunds are implemented. ✅ Then you run the tests yourself and four of them fail. Claude isn't lying. It stops when the work looks done, because it has no other signal. If nothing tells it the tests are red, \"looks done\" is all it has. So you become the test runner: you check, paste the errors back, wait, and check again. This post shows how to make Claude run that check itself, every time, before it's allowed to say it's finished. Why this is the highest-leverage fix Anthropic's best practices for Claude Code put this first: give Claude a way to verify its work, such as tests, a build, a linter or a script, anything that returns pass or fail. Boris Cherny, who created Claude Code, has said that this feedback loop improves the quality of the result 2–3×. There are three places you can put that check: Where How reliable In your prompt (\"run the tests after\") Works when you remember to type it In CLAUDE.md Advice. Claude usually follows it, sometimes not In a hook Runs every time. Claude can't skip it Hooks are scripts Claude Code runs at fixed points in its loop. The one we want is the Stop hook, which runs whenever Claude tries to end its turn. If a Stop hook exits with code 2 , Claude Code doesn't let the turn end. It sends whatever the hook printed to stderr back to Claude, and Claude keeps working. That's the whole trick. The 20-line version Save this as .claude/hooks/verify-gate.py in your project: #!/usr/bin/env python3 import json , os , subprocess , sys data = json . load ( sys . stdin ) project = os . environ . get ( \" CLAUDE_PROJECT_DIR \" , os . getcwd ()) config = os . path . join ( project , \" .claude \" , \" verify.txt \" ) if not os . path . exists ( config ): sys . exit ( 0 ) # no check configured: let Claude stop if data . get ( \" consecutive_blocks \" , 0 ) >= 4 : sys . exit ( 0 ) # blocked 4 times in a row: let Claude stop instead of looping command = open ( config ). read (). strip () result = subprocess . run ( command , shell = True , cwd = project , capture_output = True , text = True , timeout = 300 ) if result . returncode != 0 : tail = ( result . stdout + result . stderr ). strip (). splitlines ()[ - 40 :] print ( \" Verification failed: \\n \" + \" \\n \" . join ( tail ) + \" \\n Fix the failures above, then finish. Do not weaken or skip tests. \" , file = sys . stderr ) sys . exit ( 2 ) # exit 2 = block the stop; stderr is sent back to Claude Register it in .claude/settings.json : { \"hooks\" : { \"Stop\" : [ { \"hooks\" : [ { \"type\" : \"command\" , \"command\" : \"python3 \\\" ${CLAUDE_PROJECT_DIR}/.claude/hooks/verify-gate.py \\\" \" , \"timeout\" : 330 } ] } ] } } (On Windows, python instead of python3 .) Then put your check in .claude/verify.txt : npm test && npx tsc --noEmit Restart Claude Code. The next time it says \"Done\" with red tests, this is what happens: claude: Done. Partial refunds are implemented. Stop hook: Verification failed: ✗ refund.test.ts › partial refund rounds to cents Expected 12.35, received 12.349999 Fix the failures above, then finish. Do not weaken or skip tests. claude: The rounding is off. Fixing src/orders/refund.ts:42… claude: All 48 tests pass and types are clean. Done. You didn't paste anything. Claude found out it wasn't done, and fixed it. Writing a good check The hook is only as good as the command in verify.txt . A good one: Exits non-zero on failure. Every normal test runner already does. Runs without prompts. No watch mode, no \"press q to quit\". vitest needs vitest run , and jest needs --watchAll=false in some setups. Is fast enough to run on every stop. If your full suite takes 10 minutes, point it at the part you're working on: pytest tests/billing -q . Actually covers the feature. Typecheck plus the relevant tests beats either alone. Examples: npm test && npx tsc --noEmit pytest -q && ruff check . go test ./... && go vet ./... cargo test && cargo clippy -- -D warnings Windows gotcha: the command runs through cmd.exe , which doesn't treat single quotes as quotes. python -c 'exit(1)' silently passes there, because Python evaluates a string literal and exits 0. Use double quotes inside verify.txt . I found this out when my own README example \"passed\" a test that should have failed. Where the 20-line version falls short It works, but a real session exposes some edge cases: It runs even when nothing changed. Ask Claude a question, and your whole suite runs before it can answer. Better: skip when git status is clean, or when the tree hasn't changed since the last passing run. A hanging command wedges the turn. timeout=300 raises an exception but can leave child processes running (a dev server, a test watcher). Better: kill the whole process tree, and report the timeout as a failure with advice. consecutive_blocks may not always be there. Keep your own per-session counter as a backup. Crashes should never break a session. Any unexpected error should exit 0 and let Claude stop. I handled all four in a stdlib-only version that works on Windows, macOS and Linux. It's free and MIT licensed: verify-gate-hook on GitHub . Setup is the same three steps. Two habits that make it work better Write the check before the code. If you write verify.txt first and run it once, it should fail , because the feature doesn't exist yet. If it passes, it isn't testing the feature. Tighten it before you start. Watch for weakened tests. The hook's message tells Claude not to weaken or skip tests, and it usually listens. Still skim the diff for edited assertions. A gate is only as honest as the test it runs. Going further The gate answers \"is it done?\" The harder part is deciding what \"done\" means before Claude starts. I ended up building a full Claude Code setup around this loop: /lock-in has Claude ask you the hard questions, then write a spec with a single verification command. It writes that command to verify.txt , checks that it fails first, builds step by step against it, and finally has a fresh subagent review the diff against the spec. Hooks block rm -rf ~ , force-pushes to main , and reading .env before those commands ever run. /handoff → /clear → /pickup saves your progress to a file and resumes from it in a fresh session, so your context stays small and your usage limit lasts longer. That's the Locked In Kit : 18 skills, 6 subagents, 5 hooks, 8 CLAUDE.md templates and a playbook. The first 20 people get 30% off with code LAUNCH . The hook above is free and works fine on its own, though. Add it to one project today and see how often Claude \"finishes\" with failing tests. Independent project, not affiliated with Anthropic. Hook behavior is from the Claude Code hooks reference . If something behaves differently in your version, trust the docs.",
+            "url": "https://dev.to/elijahmanlockedin112/claude-code-said-done-my-tests-said-otherwise-heres-the-20-line-fix-jc",
+            "source": "DEV Community",
+            "category": "linux",
+            "tags": [
+                "anthropic",
+                "developpement",
+                "git",
+                "linux",
+                "macos",
+                "programmation",
+                "python",
+                "rust",
+                "web",
+                "windows"
+            ],
+            "published_at": "2026-09-26T15:08:37+00:00",
+            "collected_at": "2026-09-26T15:28:23.108397+00:00"
+        },
+        {
+            "id": "82e7443e6937fc230939f2f8c1d774e4db24d2816d0a005696baf82f3bf38575",
+            "title": "AI Cloned My Voice From a 3-Second Video. Here Is What My Parent Almost Did With It.",
+            "description": "` AI Cloned My Voice From a 3-Second Video. Here Is What My Parent Almost Did With It. This is not a hypothetical. A scammer lifted 15 seconds of audio from a family video posted on social media, ran it through a voice cloning tool, and called an elderly parent claiming to be their child in an emergency. The voice was exact. The panic was convincing. The money was almost sent. The FBI's 2025 Internet Crime Report recorded 352 million dollars in losses from adults over 60 tied to AI voice cloning scams. A McAfee survey found 77 percent of people who received a cloned voice call lost money. Average loss: between 500 and 15,000 dollars per victim. This is a developer community. We understand how this technology works better than most people do. Which means we also have a responsibility to help the people in our lives who do not. How the Attack Actually Works Current voice cloning tools need three to five seconds of clean audio. That is one short Instagram reel. One TikTok clip. One voicemail greeting left on an answering machine. The tool maps pitch, accent, pacing, and breathing patterns. Then it generates new speech in that voice in real time during a live call. The scammer speaks into a headset. The software translates their words into the cloned voice with near-zero latency. The person on the other end hears their child, their grandchild, their spouse. Caller ID is spoofed to show a real family member's number. The script is always the same: accident, arrest, medical emergency. Money needed immediately via gift card, crypto, or wire transfer. Do not tell anyone else. Act now. A 2026 study on synthetic voices in phone scenarios found participants performed below chance at distinguishing AI-generated from human voices. The \"robotic voice\" warning sign people have been told to listen for is no longer accurate. The 5-Step Checklist That Actually Stops This 1. Set a Family Code Word Today One phrase, agreed in advance, never posted online, never in a text message. If an emergency call comes and the caller cannot say it, hang up. An AI voice clone cannot guess a word it has never been trained on. This is the only defense that works regardless of how convincing the voice sounds. 2. Never Call Back on the Number That Just Called Caller ID spoofing takes seconds and costs almost nothing. A call showing your number on someone's screen does not mean you are calling. If something feels wrong, hang up and dial the number already saved in contacts. If no answer, call another family member. Never send money before reaching the person through a channel you already know. 3. Treat Urgency and Secrecy as Attack Vectors Every one of these scams uses two levers: artificial time pressure and isolation. The caller will say the situation needs resolving within minutes. The caller will say to keep it secret from other family members. Both are part of the attack. A real emergency does not require secrecy from family. The moment a caller says do not tell anyone, contact another family member immediately. 4. Lock Down Public Video Content Every public video featuring your family is raw material. Setting social media accounts to private, reviewing what is already publicly posted, and limiting long clips where family members speak directly to camera reduces the available audio before any targeting begins. This applies equally to content featuring elderly relatives and`",
+            "url": "https://dev.to/utilvance/ai-cloned-my-voice-from-a-3-second-video-here-is-what-my-parent-almost-did-with-it-205p",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "ios",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-26T15:08:12+00:00",
+            "collected_at": "2026-09-26T15:28:23.108768+00:00"
+        },
+        {
+            "id": "158a245be401ea57d67d461523482fce8d971aa555e45df513a506ae245b8e6b",
+            "title": "Your link previews are blank because og:image is missing. Here is a stdlib-only Python fix",
+            "description": "When you paste a link to your product, docs page or side project into Slack, Discord, X or LinkedIn, the platform builds a preview card from your page's Open Graph tags. If og:image is missing or points at a generic platform default, the preview is a grey box or a stock logo. That hurts clicks, and you usually don't notice because you never see your own link the way other people do. This post covers three things: A 10-second check for whether your pages have this problem A PNG generator in pure Python (standard library only: no Pillow, no ImageMagick) that makes a 1280x720 cover image How to wire the image into your page 1. Check your og:image in 10 seconds curl -s https://your-site.example/page | grep -io '<meta[^>]*og:image[^>]*>' Three things can come back: Nothing. You have no og:image , so every share is a blank card. A generic URL , such as your host's or storefront's default logo. Every page you share looks the same. A page-specific image. You're fine. To see what the scrapers see, also check og:title and og:description : curl -s https://your-site.example/page | grep -io '<meta[^>]*og:[a-z]*[^>]*>' 2. Generate a PNG with only the standard library A PNG file is an 8-byte signature followed by chunks. Each chunk is length + type + data + CRC32 . You need three chunks: IHDR : width, height, bit depth and color type IDAT : the zlib-compressed pixel rows, each row prefixed with a filter byte IEND : an empty end marker struct and zlib are enough to write all three: import struct import zlib def _chunk ( kind : bytes , data : bytes ) -> bytes : body = kind + data return ( struct . pack ( ' >I ' , len ( data )) + body + struct . pack ( ' >I ' , zlib . crc32 ( body ) & 0xFFFFFFFF )) def write_png ( path : str , width : int , height : int , rows : list ) -> None : \"\"\" rows: list of `height` bytes objects, each width*3 bytes (RGB). \"\"\" raw = b '' . join ( b ' \\x00 ' + r for r in rows ) # filter type 0 = None ihdr = struct . pack ( ' >IIBBBBB ' , width , height , 8 , 2 , 0 , 0 , 0 ) # 8-bit RGB png = ( b ' \\x89 PNG \\r\\n\\x1a\\n ' + _chunk ( b ' IHDR ' , ihdr ) + _chunk ( b ' IDAT ' , zlib . compress ( raw , 9 )) + _chunk ( b ' IEND ' , b '' )) with open ( path , ' wb ' ) as f : f . write ( png ) Now draw something. A diagonal two-color gradient with a solid accent bar already looks far more deliberate than a grey box: def lerp ( a , b , t ): return int ( a + ( b - a ) * t ) def cover ( path , w = 1280 , h = 720 , c1 = ( 24 , 32 , 72 ), c2 = ( 96 , 48 , 160 ), accent = ( 255 , 196 , 0 )): rows = [] for y in range ( h ): row = bytearray () for x in range ( w ): if h - 40 <= y < h - 24 and 64 <= x < 424 : row += bytes ( accent ) # accent bar near the bottom continue t = ( x / ( w - 1 ) + y / ( h - 1 )) / 2 # diagonal blend 0..1 row += bytes (( lerp ( c1 [ 0 ], c2 [ 0 ], t ), lerp ( c1 [ 1 ], c2 [ 1 ], t ), lerp ( c1 [ 2 ], c2 [ 2 ], t ))) rows . append ( bytes ( row )) write_png ( path , w , h , rows ) cover ( ' cover.png ' ) Notes: 1280x720 (16:9) crops cleanly on most platforms' large-card previews. For square thumbnails, run the same code at 600x600. Pure Python is slow per pixel , but a 1280x720 image still renders in a few seconds, which is fine for a build step. If you batch hundreds, run it once in CI and cache the output. Pick colors per product or per page (for example, hash the slug into a hue). Then every link gets a distinct card with no design work. 3. Wire it into the page <meta property= \"og:title\" content= \"Your page title\" /> <meta property= \"og:description\" content= \"One sentence on why to click.\" /> <meta property= \"og:image\" content= \"https://your-site.example/img/cover.png\" /> <meta property= \"og:image:width\" content= \"1280\" /> <meta property= \"og:image:height\" content= \"720\" /> <meta name= \"twitter:card\" content= \"summary_large_image\" /> Things that commonly go wrong: Use an absolute URL. Scrapers generally don't resolve relative paths in og:image . Previews are cached. After you fix the tag, platforms may keep showing the old card for a while. Most offer a debugger or re-scrape tool, or you can add a cache-busting query string to the image URL. Hosted storefronts (Gumroad, Notion pages and so on) usually set og:image from the cover image you upload. If you never uploaded one, you get the platform default. The fix there is to upload a cover, not to edit HTML. A ready-made version (free) I packaged this approach as a small free kit: a stdlib-only make_cards.py with a batch CSV mode that writes a 1280x720 cover and a 600x600 thumbnail for each row, plus a README and an example CSV. It's pay-what-you-want, and $0 is fine: 👉 https://renevibe76.gumroad.com/l/kflkqg If you'd rather not download anything, the snippets above are the whole core idea. Run the curl check on your own links today; odds are at least one of them is sharing a blank card.",
+            "url": "https://dev.to/renev3408/your-link-previews-are-blank-because-ogimage-is-missing-here-is-a-stdlib-only-python-fix-o1e",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "programmation",
+                "python",
+                "web"
+            ],
+            "published_at": "2026-09-26T15:07:11+00:00",
+            "collected_at": "2026-09-26T15:28:23.109446+00:00"
+        },
+        {
+            "id": "4b24c44f822e2a283ac7ac5dc0af9c45dfb45eb90ffd2bd5e414595c5eab7f0b",
+            "title": "Let's test dark mode and reduced motion",
+            "description": "Originally published on anton.qa . A browser can report dark mode while the page stays white. Checking the setting alone would miss that broken page. Let's build a check that catches it, then deliberately break the page. We will do the same for reduced motion, a request for less movement. This walkthrough uses Playwright, a browser testing tool, and a small practice page. The complete project includes the correct page, two broken versions and three tests. The result we want The practice page has a card and an animated notice. Its styling rules should respond to two browser preferences: Dark mode: use the expected dark background, light text and lighter border. Reduced motion: make the notice's visual change immediate. These are requirements for this example. Your page may need different colours or movement. We also keep a test for the normal light appearance. Otherwise, a page that always looks dark could pass the dark check. Here is the expected result across the three versions: Page version Light check Dark check Motion check Correct page Pass Pass Pass Missing dark styling rule Pass Fail Pass Missing reduced-motion rule Pass Pass Fail The two failures are intentional. Each shows that a test detects its target problem. Run the example first Use Node.js 24, Git and a terminal. Node runs JavaScript. Git downloads the project. npm installs its packages. The project pins Playwright to version 1.63.0. git clone https://github.com/antongulin/anton-qa-resources.git cd anton-qa-resources/posts/test-dark-mode-reduced-motion npm ci npx playwright install chromium npm run verify Chromium is the browser used for these checks. On Linux, browser installation may need system libraries too: npx playwright install --with-deps chromium The verifier starts the local practice server and checks all three versions. Its final output should include: Corrected app: baseline, dark colors, and reduced motion all pass. Broken colors: dark check failed with the light-rgb reason; motion check still passed. Broken motion: reduced-motion check failed with the 2s reason; dark check still passed. Light baseline stays green under both deliberately broken variants. Verification complete: 3 checks, 2 deliberate defects with correct independent failure reasons. Success here includes the expected failures on the broken pages. A browser startup error does not count as detecting a styling problem. The verifier checks the failure messages and the unaffected tests too. For a quick run against only the correct page, use npm test . Ask for dark mode, then check the card Setting a browser preference and checking a page's response are separate steps. page.emulateMedia makes the browser report a preference to the page. matchMedia lets us confirm that the browser reports it. Neither tells us which colours the page applied. For that, getComputedStyle reads the style values calculated by the browser. The following test comes from tests/theme.spec.ts : import { test , expect } from ' @playwright/test ' ; import { assertDarkTheme , variantPath } from ' ./helpers ' ; test ( ' rendered card colors follow the dark color scheme preference ' , async ({ page }) => { await page . emulateMedia ({ colorScheme : ' dark ' , media : ' screen ' }); await page . goto ( variantPath ()); // Confirm the emulation flag itself is active so a failure means the CSS did // not apply, not that the emulation was dropped. expect ( await page . evaluate (() => matchMedia ( ' (prefers-color-scheme: dark) ' ). matches )). toBe ( true ); const card = page . getByTestId ( ' card ' ); const surface = await card . evaluate ( node => getComputedStyle ( node ). backgroundColor ); const text = await card . evaluate ( node => getComputedStyle ( node ). color ); const accent = await card . evaluate ( node => getComputedStyle ( node ). borderTopColor ); // The rendered values must be the dark tokens, not just \"some dark color\". // Assert the reasoned color contract first so a failure names the defect and // the light value actually rendered. assertDarkTheme ( surface , text , accent ); expect ({ surface , text , accent }). toEqual ({ surface : ' rgb(16, 20, 24) ' , text : ' rgb(244, 246, 248) ' , accent : ' rgb(138, 180, 248) ' , }); }); The test checks three colours because the practice card has three relevant requirements. The background should be dark, the text light, and the border lighter than the background. The custom helper gives a readable failure message. The final comparison checks the exact expected colours. Both live in the linked project. You do not need to recreate the helper. These are browser style values, not sampled screenshot pixels. Check reduced motion separately The notice normally changes over two seconds. For this page, the reduced-motion rule removes that transition. transitionDuration tells us how long the visual change takes. The expected value here is zero seconds, plus the page's “reduced” marker. Here is tests/motion.spec.ts : import { test , expect } from ' @playwright/test ' ; import { assertReducedMotion , variantPath } from ' ./helpers ' ; test ( ' rendered transition honors the reduced-motion preference ' , async ({ page }) => { await page . emulateMedia ({ reducedMotion : ' reduce ' , media : ' screen ' }); await page . goto ( variantPath ()); expect ( await page . evaluate (() => matchMedia ( ' (prefers-reduced-motion: reduce) ' ). matches )). toBe ( true ); const banner = page . getByTestId ( ' banner ' ); const duration = await banner . evaluate ( node => parseFloat ( getComputedStyle ( node ). transitionDuration )); const flag = await page . getByTestId ( ' banner-flag ' ). evaluate ( node => getComputedStyle ( node , ' ::after ' ). content ); assertReducedMotion ( duration , flag . replace ( /\"/g , '' )); }); The helper checks the duration and marker together. It reports the actual duration when the page keeps moving. Zero seconds is this example's requirement, not a universal reduced-motion rule. For your application, agree on the expected behaviour before writing the assertion. An assertion is the comparison that decides whether the test passes. Remove one rule and watch the result CSS is the page styling language. The server can leave out one CSS rule at a time. The css-stuck version omits the dark-mode rule. The browser still reports dark mode, but the card stays white. The dark check fails with rgb(255, 255, 255) in its message. The motion-stuck version omits the reduced-motion rule. The browser still reports reduced motion, but the transition lasts two seconds. The motion check reports received 2s . Run either broken version yourself on macOS or Linux: APP_VARIANT = css-stuck npm test APP_VARIANT = motion-stuck npm test Each command should fail one test and exit unsuccessfully. The remaining checks should pass. On PowerShell, use this form and clear the variable afterward: $ env : APP_VARIANT = \"css-stuck\" npm test Remove-Item Env:APP_VARIANT Use motion-stuck as the value to try the other defect. Then run npm test without a variant to return to the correct page. Adapt one check to your application Start with a page whose expected appearance you understand. Choose one element, such as a settings card, and write down its expected dark colours. Set the preference before opening the page. Read the element's applied styles and compare them with those expected values. Keep a light-mode check beside it. For movement, choose the exact animation or transition your requirement covers. Check its expected behaviour under reduced motion and under the normal setting. Finally, remove the relevant styling rule in a safe local copy. Confirm that the intended check fails for the expected reason. Restore the rule and confirm that it passes again. You now have evidence that the check catches that specific defect. What this example does not establish The project checks one synthetic page in Chromium. It does not establish coverage across every browser or component. It does not compare screenshot pixels or measure accessible colour contrast. Browser emulation reports a preference. It does not change your operating system's setting. Screen-reader behaviour and other accessibility requirements need their own checks. The practice server runs locally, binds to 127.0.0.1 and writes no files. Its expected colours belong to this example, not your design system. About the author Anton Gulin is the AI QA Architect, the first person to claim this title on LinkedIn. He builds AI-powered test automation systems where AI agents and human engineers collaborate on quality. Former Apple SDET (Apple.com / Apple Card pre-release testing). Find him at anton.qa or on LinkedIn . Sources Playwright media emulation . Complete practice project , including helpers and the verifier. Exact tested revision .",
+            "url": "https://dev.to/aiwithanton/lets-test-dark-mode-and-reduced-motion-532p",
+            "source": "DEV Community",
+            "category": "linux",
+            "tags": [
+                "developpement",
+                "git",
+                "java",
+                "javascript",
+                "linux",
+                "macos",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-26T15:01:01+00:00",
+            "collected_at": "2026-09-26T15:28:23.110451+00:00"
+        },
+        {
+            "id": "925188b07b86910fa48c113d3409d993305749e1896fa96bc40e0340fb1a20c2",
+            "title": "Three timestamp bugs worth catching before they reach your API",
+            "description": "A timestamp can be a perfectly valid number and still produce the wrong date. The useful questions are: what unit does it use, how is it displayed, and what precision must survive the conversion? Here are three small checks you can reproduce in JavaScript. The examples use Date because it is common in existing API integrations. 1. Passing Unix seconds to a millisecond constructor Start with this value: const unixSeconds = 1711972800 ; console . log ( new Date ( unixSeconds ). toISOString ()); // 1970-01-20T19:32:52.800Z console . log ( new Date ( unixSeconds * 1000 ). toISOString ()); // 2024-04-01T12:00:00.000Z JavaScript's numeric Date constructor expects milliseconds. Both calls produce valid dates, so an Invalid Date check alone will not catch the first mistake. See the Date reference . For an API you control, put the unit in the contract. A field such as createdAtMs is easier to review than time . If clients can send more than one unit, require a separate unit field. This helper intentionally accepts only integer seconds or milliseconds: function epochToDate ( value , unit ) { if ( ! Number . isSafeInteger ( value )) { throw new TypeError ( ' Expected a safe integer ' ); } if ( unit !== ' s ' && unit !== ' ms ' ) { throw new TypeError ( ' Expected unit s or ms ' ); } const ms = unit === ' s ' ? value * 1000 : value ; if ( ! Number . isSafeInteger ( ms ) || Math . abs ( ms ) > 8.64e15 ) { throw new RangeError ( ' Outside the supported Date range ' ); } return new Date ( ms ); } That is a deliberately narrow contract, not a universal timestamp parser. Fractional seconds need a different contract, and input from query strings needs validation before this function. Counting digits can help a person inspect a value, but it should not silently decide an API's contract. Small millisecond values and dates before 1970 make that heuristic unreliable. 2. Treating different offsets as different instants These two strings describe the same instant: const utc = Date . parse ( ' 2024-04-01T12:00:00Z ' ); const withOffset = Date . parse ( ' 2024-04-01T14:00:00+02:00 ' ); console . log ( utc === withOffset ); // true console . log ( new Date ( withOffset ). toISOString ()); // 2024-04-01T12:00:00.000Z When investigating a two-hour discrepancy, compare the numeric timestamps before changing the stored value. The difference may be in presentation. An offset-free date-time such as 2024-04-01T12:00:00 is interpreted in the host's local time zone by Date.parse . A server and a laptop may therefore read it differently. See Date.parse . For an event that represents an instant, require an explicit offset or UTC in string inputs. Scheduling “09:00 every Monday in Paris” is a separate problem: preserve the named time zone and the scheduling rule instead of storing a fixed offset forever. 3. Losing nanoseconds before conversion even starts A large timestamp can lose precision as soon as it becomes a JavaScript Number : const text = ' 1711972800123456789 ' ; const exact = BigInt ( text ); const rounded = BigInt ( Number ( text )); console . log ( exact === rounded ); // false If the source uses nanoseconds, transport the value as a decimal string and parse it with BigInt . Converting a rounded Number to BigInt later cannot recover the missing digits. For display with Date , reduce the precision explicitly. This example handles non-negative values only: const nanoseconds = BigInt ( ' 1711972800123456789 ' ); const milliseconds = nanoseconds / 1 _000_000n ; const remainder = nanoseconds % 1 _000_000n ; console . log ( new Date ( Number ( milliseconds )). toISOString ()); // 2024-04-01T12:00:00.123Z console . log ( remainder . toString ()); // 456789 Keep the original value if the submillisecond fraction matters. For arbitrary input, validate the range before converting to Number . Negative values also need an explicit rounding policy: BigInt division truncates toward zero, which is different from rounding down. A small regression checklist For a conversion endpoint, include examples with: Explicit seconds and milliseconds representing the same instant. Zero and a date before 1970. An offset-bearing string crossing midnight in UTC. An unsupported unit and an out-of-range value. A nanosecond string whose precision must be retained. These checks make useful code-review questions even if your date library handles the actual conversion. An interactive companion Disclosure: this article is published on behalf of Timestampinfo. Its timestamp tools let you inspect UTC, local display, and explicit units; the batch converter also accepts up to 1,000 lines and exports CSV. Conversion inputs are processed in the browser. The site separately uses Matomo for page-view measurement, with details and an opt-out on its privacy page. The tools and guides are available in English, French, Spanish, and Italian, without an account. Editorial note: this article was drafted by an AI assistant for Timestampinfo. The JavaScript examples were executed and their outputs checked before publication.",
+            "url": "https://dev.to/timestampinfo/three-timestamp-bugs-worth-catching-before-they-reach-your-api-53m5",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "git",
+                "java",
+                "javascript",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-26T14:57:42+00:00",
+            "collected_at": "2026-09-26T15:28:23.111112+00:00"
+        },
+        {
+            "id": "66e771287ec2073f57ed5d70ebf805b07a22e6c0e4b02e769a125c862f4d4c28",
+            "title": "How to Come Up With the Raft Consensus Algorithm Yourself",
+            "description": "If someone asks you to explain Raft, you might hear a list of terms like: Leader election Terms RequestVote AppendEntries Log replication Commit index Quorum nextIndex matchIndex It can feel like a lot of unrelated rules. But what if we didn't start with Raft? What if we started with a problem and tried to design the system ourselves? That's what we're going to do. We will start with three completely ordinary servers and gradually add rules whenever something breaks. By the end, we'll discover that we've recreated most of Raft's core ideas. The Problem Suppose we have three servers: ┌───────┐ │ A │ └───────┘ ┌───────┐ │ B │ └───────┘ ┌───────┐ │ C │ └───────┘ A client sends commands to our system: SET x = 10 SET x = 20 SET x = 30 We want all three servers to eventually execute these commands in exactly this order. Why? Because if A executes: x = 10 x = 20 x = 30 while B executes: x = 10 x = 30 x = 20 our replicated system is no longer consistent. So our first requirement is simple: Every server must agree on the same sequence of commands. How would you design this? 1. Let's Start With a Leader The first problem is coordination. If every server can independently decide what command comes next, we're going to have a difficult time making them agree. So let's simplify: what if one server is responsible for deciding the order? Let's make A the leader: Client │ ▼ ┌───────┐ │ A │ │ Leader│ └───┬───┘ / \\ / \\ ▼ ▼ ┌─────┐ ┌─────┐ │ B │ │ C │ └─────┘ └─────┘ Now the client sends: SET x = 10 to A. A decides that this command should be the first entry in the log: A: [SET x = 10] Much simpler. But we immediately have a problem. 2. What If the Leader Dies Before Replicating? Suppose A writes the command to its own log and immediately tells the client SUCCESS — and then crashes. A: [SET x = 10] 💀 B: [] C: [] The client believes the operation succeeded. But the other servers know nothing about it. If A never comes back, we've lost a successful write. So: A local write isn't enough. The leader needs to replicate the entry to other servers before acknowledging success. 3. Do We Need Every Server? Let's modify the process. The client sends: SET x = 10 A writes it locally: A: [10] B: [] C: [] A now sends the entry to B and C: A ── 10 ──> B A ── 10 ──> C Suppose B receives it: A: [10] B: [10] C: [] Do we need to wait for C? Not necessarily — with three servers, two already make a majority: A + B = 2/3 If A and B have the entry, we've got a quorum. So here's our first important rule: A write becomes committed once it has been replicated to a majority of servers. Now the leader can safely tell the client: SUCCESS C can catch up later. There's a subtlety worth calling out here: Committed does not mean every server has the entry. It means enough servers have it that the system can preserve it across failures. 4. What If the Acknowledgement Gets Lost? Our system works, but distributed systems have another annoying property: messages can disappear. Suppose A sends an entry to B: A ── SET x=20 ──> B B successfully stores it: B: [10, 20] and sends an acknowledgement: B ── ACK ──> A But the network drops the ACK. A never receives it. From A's perspective: \"Did B receive the entry?\" It doesn't know. So A retries: A ── SET x=20 ──> B We obviously don't want B to end up with: [10, 20, 20] The operation needs to be safe to retry. So B should recognize: \"I already have this entry.\" and simply acknowledge it again. Which gets us to the next rule: Replication must be safe to retry. 5. We Need a Way to Replace a Dead Leader So far, A is the leader. But machines crash. Suppose: A = Leader and then: A 💀 We still have: B C Our system needs another leader. But who gets to decide? What if both B and C say: \"I'm the leader!\" Now we've recreated the problem we were trying to solve. We need an election . 6. Let's Hold an Election Suppose B decides to become leader. It asks the other servers for votes: B ── RequestVote ──> C B votes for itself. C votes for B. Now B has: B + C = 2/3 A majority. Therefore: B = Leader Put differently, here's the rule: A server can become leader only after receiving votes from a majority. But there's another problem. What's stopping a server from voting for B and then changing its mind and voting for C? We need: A server can vote only once during an election. 7. How Do We Know Which Election Is Newer? Imagine A was leader before it crashed. Later B becomes leader. Then A comes back: A: \"I'm still the leader!\" But B is already leading the cluster. We need some notion of leadership generations. So let's introduce an election number: Election 1 Election 2 Election 3 ... Let's call it a term . Now: A = Leader, Term 1 After A dies: B = Leader, Term 2 When A comes back and discovers: Term 2 > Term 1 it knows its leadership is stale. It must become a follower. In other words: A higher term represents a newer leadership generation. 8. But What About the Data? Now we're getting somewhere. Suppose A was leader in Term 1: A: [10(t1), 20(t1), 30(t1)] B: [10(t1), 20(t1)] C: [10(t1), 20(t1)] A crashes. B wants to become leader. But what if B's log is missing something that was already committed? We cannot simply say: \"Whoever asks for votes first becomes leader.\" The candidate's log matters. So when B asks for a vote, a node should also look at B's log. A candidate with a stale log should not be able to become leader and overwrite committed history. This leaves us with one more rule: A server should only vote for a candidate whose log is sufficiently up-to-date. But how do we determine whether one log is more up-to-date than another? 9. Index Isn't Enough Consider: A: [10(t1), 20(t1), 30(t2)] B: [10(t1), 20(t1), 40(t3)] Both logs have three entries. So their last index is the same: index = 3 But their histories are different. We need more information. Every log entry already has an associated term: index command term 1 10 1 2 20 1 3 30 2 Now we can compare the last entries using: (index, term) The term tells us which leadership generation created the entry. When comparing logs: Compare the term of the last entry . If the terms are equal, compare the index . So: A: last = (3, t2) B: last = (3, t3) B's log is considered more up-to-date. And here's the deeper point: Terms don't just identify elections. They also become part of the log's identity. 10. How Do We Detect Conflicting Logs? Now suppose B becomes leader. B has: [10(t1), 20(t1), 40(t3), 50(t3)] A reconnects with: [10(t1), 20(t1), 30(t2), 35(t2)] They agree here: 10(t1) 20(t1) But at index 3: B: 40(t3) A: 30(t2) ↑ conflict B needs a way to tell A: \"Your history doesn't match mine here.\" So instead of blindly sending new entries, B sends information about the previous entry: prevLogIndex = 2 prevLogTerm = 1 entries = [40(t3), 50(t3)] A checks: Do I have index 2 with term 1? If yes, their histories match up to that point. A can replace everything after index 2: Before: [10(t1), 20(t1), 30(t2), 35(t2)] After: [10(t1), 20(t1), 40(t3), 50(t3)] We've now arrived at the basic idea behind Raft's AppendEntries . 11. We Need to Track What Each Follower Has There is one final practical problem. Suppose: Leader B: [10, 20, 30, 40, 50] Follower C: [10, 20] B shouldn't resend the entire log every time. It needs to know where C's log currently matches. So the leader tracks two pieces of information for each follower. matchIndex The highest log index that the leader knows the follower has replicated. For example: C.matchIndex = 2 means: \"I know C has entries through index 2.\" nextIndex The next log index the leader should try sending to that follower. C.nextIndex = 3 So the leader can send: entry 3 entry 4 entry 5 rather than starting from the beginning. If the follower rejects the request because the histories don't match, the leader moves backward and tries again. And this is how our earlier idea of: \"Find the last matching point and send the suffix.\" turns into an actual implementation mechanism. 12. And Suddenly We Have Raft Look at what happened. We didn't start with Raft. We started with: \"Three servers need to agree on the order of commands.\" Then every failure forced another piece: Need one ordering authority ↓ Leader ↓ Leader can crash ↓ Replication ↓ Don't need everyone ↓ Majority ↓ Need to replace dead leader ↓ Election ↓ Need to distinguish elections ↓ Terms ↓ Need to protect committed history ↓ Log freshness ↓ Need to detect conflicting history ↓ Index + Term ↓ Need efficient replication ↓ nextIndex + matchIndex What initially looked like a complicated collection of Raft rules is actually a chain of solutions to very natural problems. If you enjoyed this kind of first-principles breakdown, I write more like it at vishalshukla.in .",
+            "url": "https://dev.to/vishaaxl/how-to-come-up-with-the-raft-consensus-algorithm-yourself-22f3",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-26T14:52:33+00:00",
+            "collected_at": "2026-09-26T15:28:23.112294+00:00"
+        },
+        {
+            "id": "abe42e4b0b6ae5998703357db434c43dd439d6645010ef067af978cb6d7d687f",
+            "title": "Cutting Speed Explained: What Is Vc and How Do You Select It for CNC Machining?",
+            "description": "In my previous article, we discussed how to calculate CNC spindle speed using: n = (1000 × Vc) / (π × D) The calculation itself is simple. But there is one important question that comes before calculating RPM: Where does the cutting speed — Vc — come from? If you enter the wrong cutting speed, you can calculate the RPM perfectly and still end up with an unsuitable machining parameter. That is why understanding cutting speed is more important than simply memorizing the spindle speed formula. This article is part of my CNC & Manufacturing Engineering knowledge base — a growing collection of practical CNC machining guides, engineering tools, and programming resources. In this article, we will look at: What cutting speed actually means Cutting speed vs. spindle speed How cutting speed is calculated Why diameter matters Why different materials require different cutting speeds How cutting tool material and coating affect Vc Milling vs. turning What happens when cutting speed is too high or too low How to choose a practical starting cutting speed Why manufacturer data and process validation matter Let's start with the fundamentals. 1. What Is Cutting Speed? Cutting speed describes the relative surface speed between the cutting edge and the workpiece at the cutting point. In the metric system, cutting speed is normally expressed as: Vc = meters per minute (m/min) In the imperial system, you will commonly see: SFM = Surface Feet per Minute Cutting speed is sometimes also called: Surface Speed This is different from spindle speed. Spindle speed tells us how many revolutions occur every minute. Cutting speed tells us how fast the cutting edge is moving across the material surface. That difference is fundamental. 2. Cutting Speed vs. Spindle Speed Consider two cutting tools: Tool A = Ø10 mm Tool B = Ø100 mm Suppose both tools rotate at: 1,000 RPM They have exactly the same spindle speed. But do they have the same cutting speed? No. The Ø100 mm tool has a much larger circumference. During each revolution, a point on its outside diameter travels much farther than a point on the Ø10 mm tool. Therefore: Same RPM does not mean same cutting speed. This is why diameter is part of the relationship between RPM and Vc. 3. Cutting Speed Formula For metric machining calculations: Vc = (π × D × n) / 1000 Where: Symbol Meaning Unit Vc Cutting Speed m/min D Cutting Diameter mm n Spindle Speed RPM π Pi ≈ 3.14159 This is the reverse relationship of the spindle speed formula: n = (1000 × Vc) / (π × D) The two equations describe the same physical relationship. 4. Where Does the Formula Come From? The idea starts with the circumference of a circle: C = π × D Imagine a 50 mm diameter cutter. Its circumference is: π × 50 ≈ 157.08 mm That means a point on the outside diameter travels approximately: 157.08 mm per revolution Now suppose the cutter rotates at: 1,000 RPM In one minute, that point travels: 157.08 × 1,000 which equals: 157,080 mm/min Convert millimeters into meters: 157,080 / 1000 = 157.08 m/min Therefore: Vc ≈ 157 m/min And that gives us: Vc = (π × D × n) / 1000 The formula is simply describing how far the cutting surface travels every minute. 5. Practical Example Let's calculate the cutting speed for: Tool Diameter = 20 mm Spindle Speed = 2,000 RPM Using: Vc = (π × D × n) / 1000 we get: Vc = (π × 20 × 2000) / 1000 Therefore: Vc ≈ 125.7 m/min So the cutting speed is approximately: 126 m/min You can also calculate this using my free CNC Machining Calculator . Select the Cutting Speed calculator and enter: Diameter = 20 mm Spindle Speed = 2000 RPM The result will be approximately: 125.66 m/min 6. Why Is Cutting Speed So Important? Cutting speed directly influences what is happening at the cutting edge. During metal cutting, the tool is: Shearing material Generating heat Experiencing friction Carrying mechanical load Producing and evacuating chips Changing cutting speed changes the conditions at the cutting zone. That can influence: Tool life Cutting temperature Tool wear Surface finish Productivity Process stability This is why Vc should not be treated as just another number in a CNC program. 7. Why Different Materials Use Different Cutting Speeds Now we arrive at one of the most important parts. Why can't we simply use: Vc = 200 m/min for every material? Because materials behave differently during machining. Consider: Aluminum Mild steel Stainless steel Cast iron Titanium alloys Nickel-based superalloys They have different combinations of: Hardness Strength Thermal properties Work-hardening behavior Abrasiveness Chip formation characteristics As a result, the same cutting speed is not suitable for every material. For example, many aluminum machining applications can use relatively high cutting speeds. Heat-resistant alloys may require much more conservative cutting conditions. But there is an important warning here: Do not select cutting speed based only on the material name. \"Stainless steel\" alone is not enough information. Neither is \"aluminum.\" The complete machining condition matters. 8. Tool Material Changes the Cutting Speed Now imagine machining exactly the same workpiece material using: HSS Tool Carbide Tool Should they automatically use the same cutting speed? No. Cutting tool materials have different: Hot hardness Wear resistance Toughness Thermal behavior Strength A cutting speed appropriate for one tool material may be inappropriate for another. This is one reason why searching: \"What cutting speed should I use for steel?\" is not specific enough. A better question is: \"What cutting speed should I use for this material, with this cutting tool, in this operation?\" That is much closer to how machining parameters should actually be selected. 9. Tool Coating Also Matters Even when two tools are both carbide, they may not perform the same way. For example, cutting tools may use different: Coatings Substrates Edge preparations Geometries Grades These differences can significantly change the recommended cutting conditions. That is why cutting tool manufacturers normally provide specific machining recommendations for their own products. When reliable manufacturer data is available, it should usually be one of your primary references when establishing a new machining process. 10. Milling and Turning Use the Same Principle The cutting-speed relationship applies to both milling and turning: Vc = (π × D × n) / 1000 But the meaning of D changes. Milling For milling, D generally relates to the effective cutting diameter of the rotating tool. For example: Ø20 mm End Mill The relevant diameter is related to the cutter. Turning For turning, the workpiece rotates. Therefore, D relates to the workpiece diameter at the cutting location. This difference becomes very important when the turning diameter changes. 11. Cutting Speed in Turning Suppose we are turning a workpiece at: 1,000 RPM At a diameter of: 100 mm the cutting speed is: Vc = (π × 100 × 1000) / 1000 Vc ≈ 314 m/min Now continue machining until the diameter becomes: 50 mm while keeping the same: 1,000 RPM The cutting speed becomes: Vc ≈ 157 m/min The RPM has not changed. But the cutting speed has been reduced by half because the diameter has been reduced by half. This is why constant surface speed is so useful in CNC turning. 12. Constant Surface Speed — G96 Many CNC lathes provide: G96 — Constant Surface Speed Instead of commanding one fixed RPM, the control adjusts spindle speed as the cutting diameter changes. Conceptually: Diameter decreases → RPM increases → Vc remains approximately constant This can help maintain more consistent cutting conditions across changing diameters. The opposite mode is commonly: G97 — Constant RPM With G97, spindle RPM remains fixed unless another spindle command changes it. Constant surface speed is a very useful subject, but it also introduces important considerations such as maximum spindle speed limits. I will cover G96 and G97 separately in a future CNC programming article. 13. What Happens If Cutting Speed Is Too High? It is tempting to think: Higher cutting speed = faster production = better But machining does not work that way. If Vc is too high for the specific tool/material/application combination, possible problems may include: Excessive cutting temperature Accelerated tool wear Reduced tool life Edge failure Poor surface condition Unstable machining Increasing cutting speed can improve productivity only while the cutting process remains technically and economically acceptable. There is always a practical operating window. 14. What Happens If Cutting Speed Is Too Low? Then should we simply use a very low cutting speed to protect the tool? Again, not necessarily. An unnecessarily low cutting speed can also create disadvantages: Lower productivity Longer machining time Inefficient machine utilization Potentially unfavorable cutting behavior in some applications The objective is not: Maximum possible Vc and it is not: Minimum possible Vc The objective is to establish an appropriate cutting condition for the complete machining system. 15. There Is No Universal Cutting Speed This is one of the most important points in this article. There is no single cutting speed for: Steel Stainless Steel Aluminum that is correct for every machining operation. The practical cutting speed depends on a combination of factors: Workpiece Material Material Condition / Hardness Tool Material Tool Grade Coating Tool Geometry Machining Operation Cutting Engagement Coolant Strategy Machine Capability Setup Conditions That is why generic online cutting-speed charts should be treated carefully. They can help with understanding or provide a rough reference. But they should not automatically replace application-specific tooling data or validated process knowledge. 16. So How Should I Select Cutting Speed? For someone learning CNC machining, I recommend thinking about the process in this order. Step 1 — Identify the Workpiece Material Be as specific as possible. Don't stop at: Steel if you actually know the material grade and condition. Step 2 — Identify the Cutting Tool Determine: Tool type Tool material Insert or cutter grade Coating Geometry Step 3 — Identify the Operation For example: Face milling Shoulder milling Slotting Turning Facing Grooving Drilling Roughing Finishing Different operations can require different parameter strategies. Step 4 — Check the Tool Manufacturer's Recommendation If the manufacturer provides cutting data for your exact tool and material group, this is a strong starting point. Do not ignore the recommended operating range. Step 5 — Calculate the Required RPM Once you have selected an appropriate starting Vc: n = (1000 × Vc) / (π × D) Now Vc becomes a machine setting through the RPM calculation. Step 6 — Check the Machine Ask: Can the spindle reach the calculated RPM? Is sufficient power available? Is the setup rigid? Is the tool overhang reasonable? Is the workholding suitable? Step 7 — Run and Observe Real machining provides information that the formula cannot. Observe: Tool wear Chip formation Cutting sound Vibration Surface finish Temperature Process stability Step 8 — Optimize and Validate If the process is stable, parameters can be optimized within appropriate limits. The final production parameter should come from a combination of: Calculation + Manufacturer Data + Machine Capability + Process Observation + Validation 17. Engineer's Note When I look at machining parameters, I don't like treating Vc, RPM, feed, and depth of cut as completely independent numbers. They belong to the same machining system. For example: Changing Vc changes RPM. Changing RPM changes table feed if feed per tooth is maintained. Changing engagement can change cutting forces. Changing tool overhang can change stability. This is why troubleshooting becomes much easier when you understand the relationships between machining parameters rather than simply copying numbers from an existing program. A good CNC programmer should know the parameter. A good manufacturing engineer should understand why that parameter is there. 18. Cutting Speed and Spindle Speed Work Together Let's connect the first two articles in this series. We now have: Cutting Speed Vc = (π × D × n) / 1000 and: Spindle Speed n = (1000 × Vc) / (π × D) So: Cutting Speed + Diameter → Spindle Speed And: Spindle Speed + Diameter → Cutting Speed These are not two unrelated calculations. They describe the same physical relationship from two different directions. 19. Try the CNC Machining Calculator I built a free online CNC Machining Calculator to make these common calculations easier. The current version includes: Spindle Speed Feed Rate Feed per Tooth Drilling Parameters Cutting Speed Material Removal Rate (MRR) For example: Enter: Diameter = 20 mm Spindle Speed = 2,000 RPM into the Cutting Speed calculator. The result is approximately: 125.66 m/min The project is part of my ongoing Li Lu | CNC & Manufacturing Engineering platform. 20. Final Takeaway If you remember only one thing from this article, remember this: Cutting speed is not simply a number you type into a formula. It represents the surface speed at the cutting zone and is closely connected to the interaction between: Tool + Material + Machine + Operation + Cutting Conditions The formula: Vc = (π × D × n) / 1000 is easy. Selecting an appropriate Vc is the engineering part. Start with reliable cutting-tool data. Understand the workpiece material. Understand your tooling. Check the machine and setup. Then observe and validate the real machining process. That is much more valuable than memorizing a table of cutting speeds. What's Next? So far, we have connected: Cutting Speed (Vc) → Spindle Speed (n) But knowing how fast the tool rotates is still not enough. The next question is: How fast should the cutting tool move through the material? That brings us to: Feed Rate And before we can properly understand feed rate, we need to understand another important parameter: Feed per Tooth — fz In the next article, I will explain: Feed per Tooth (fz): What It Means, Why It Matters, and How It Connects RPM to CNC Feed Rate Then we can connect: Vc → RPM → Feed per Tooth → Feed Rate and start seeing machining parameters as one complete system rather than separate formulas. CNC Machining Calculator 👉 https://lilu1626.github.io/cnc-machining-calculator/ About the Author / Li Lu | CNC & Manufacturing Engineering Li Lu is a Machining Development Engineer at GE Vernova Advanced Manufacturing & Repair Technology (AMRT) in Singapore, with 10+ years in CNC machining, process development, and machine tool integration. Engineering Knowledge Base: https://lilu1626.github.io/cnc-manufacturing-engineering/ CNC Machining Calculator: https://lilu1626.github.io/cnc-machining-calculator/ GitHub: https://github.com/LiLu1626 LinkedIn: https://www.linkedin.com/in/lu-li-29b464163/",
+            "url": "https://dev.to/lilu1626/cutting-speed-explained-what-is-vc-and-how-do-you-select-it-for-cnc-machining-1h73",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "git",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-26T14:52:29+00:00",
+            "collected_at": "2026-09-26T15:28:23.114193+00:00"
+        },
+        {
+            "id": "3ee4439a41f12ce7decd5e490e4f097d21cf27c54150d31796221c89431b906e",
+            "title": "Multilingual Ghost CMS Blog: 0. Why I Chose Ghost",
+            "description": "💡 I wanted to run my English blog and Korean blog in one place Why I Chose Ghost The requirements I wanted were as follows. It had to have a CMS. GitHub Pages was far too cumbersome for writing and editing posts. It had to be easy to back up in case I moved the blog later. It had to be customizable to some extent according to my preferences. It had to support multiple languages. I wanted to post in both Korean and English. There were several candidates, such as Naver Blog, Tistory, and Velog, but the only one that satisfied all of these was Ghost CMS . With Ghost, you can either host it yourself or use a managed hosting service. In the case of self-hosting, I confirmed that it runs well even at $5/month. For managed hosting, the price varies by service, but it is around $10/month and convenient. In fact, this is my third Ghost blog. First. I wanted to use it for free, so I tried deploying it on the fly.io free tier. Since the storage was 1GB, it was not sustainable. If it is for a profile or landing page, this method might still be fine. If you want to try deploying on fly.io, this post explains the process in detail. Second. I self-hosted it on a Vultr $5/month instance. Self-hosting itself is not difficult. If you use DigitalOcean 's Official Ghost Droplet , you can deploy it right away even if you do not know anything. Self-hosting was not difficult, but to use the newsletter feature I had to configure Mailgun myself, and various small issues kept coming up, such as certificate expiration. None of it was particularly hard, and I could deal with it, but a lot of my time was wasted on these minor things. Third. This blog. In the end, I paid for a managed hosting service. Why do I run a blog? To write. So the key is to focus on writing, and for that, a managed hosting service was the best option. Money talks After learning a bit of coding, I planned to host everything myself and try attaching all sorts of plugins, but the resources required for operations were greater than I expected, and for me, a managed service was the right answer. Building a Multilingual Ghost Blog However, Ghost itself does not natively support multilingual features. I bought several paid themes that claimed to support multiple languages, but they only offered half-baked functionality. Their approach was to create two Ghost blogs, set each one to a different language, and then tie them together under a single domain (in other words, making a separate English blog and Korean blog and combining them under one domain). But then you have to use two CMSs as well, right? I really did not like that approach. In the end, I decided to build it myself. It is not particularly difficult. The approach I chose is as follows. I solve everything in the theme without touching Ghost Core. In other words, it can be applied even if you are not self-hosting. You only need one Ghost blog. This is not a method that uses multiple Ghost blogs. I figured someone out there might have the same needs as me, so I decided to organize the trial-and-error process I went through. Next post Multilingual Ghost CMS Blog: 1. Making Posts and Pages Multilingual Ghost can create a Collection of specific posts. Let's create tags for each language we want to support and make a Collection for each one to build a multilingual blog. Originally published by Sanghun Kang on Sanghun's Blog .",
+            "url": "https://dev.to/sanghunkang/multilingual-ghost-cms-blog-0-why-i-chose-ghost-4o84",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "git",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-26T14:51:34+00:00",
+            "collected_at": "2026-09-26T15:28:23.114614+00:00"
+        },
+        {
+            "id": "7bb7e41e1e162e27d07c1afc94ed7cad572021f6617a0a56a824c24b87152dd1",
+            "title": "Earth is tearing apart beneath the Pacific Northwest",
+            "description": "Comments",
+            "url": "https://www.sciencedaily.com/releases/2026/09/260924231343.htm",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-26T14:33:11+00:00",
+            "collected_at": "2026-09-26T15:28:22.601518+00:00"
+        },
+        {
+            "id": "559eb5f23ca378c736d3622086af87afe2b26edf0abd207d35f36fb837a79aae",
+            "title": "Russia bombs Ukrainian data centers in latest escalation",
+            "description": "Russia has begun targeting data centers and internet infrastructure in its latest attacks, disrupting critical services for Ukrainian civilians. The attacks have left 100,000 households in the area without an internet connection, although a senior government official claimed that the country's internet network is highly decentralized.",
+            "url": "https://www.tomshardware.com/tech-industry/data-centers/russia-bombs-ukrainian-data-centers-in-latest-escalation-100-000-households-lose-connectivity-as-firms-migrate-data-abroad-zelensky-says-ordinary-life-is-simply-a-target",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "pc"
+            ],
+            "published_at": "2026-09-26T14:30:59+00:00",
+            "collected_at": "2026-09-26T15:28:25.376497+00:00"
+        },
+        {
+            "id": "4d669aa306053621e49ca4989313755a14c20af12083e3566073ff21e3ea3cb1",
+            "title": "Ethereum, Solana and Zcash Face Wild Year-End Price Predictions",
+            "description": "Three cryptocurrencies, three very different bets and millions of dollars riding on what happens before New Year’s Day. Prediction markets on Polymarket and Kalshi are pricing a 69% chance that ethereum touches $3,000, a 60% chance that solana reaches $140 and a 41% chance that zcash hits $2,000. But traders are considerably less certain these […]",
+            "url": "https://news.bitcoin.com/price-predictions/ethereum-solana-and-zcash-face-wild-year-end-price-predictions/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto",
+                "ethereum"
+            ],
+            "published_at": "2026-09-26T14:30:56+00:00",
+            "collected_at": "2026-09-26T15:28:37.859329+00:00"
+        },
+        {
+            "id": "fa5c037c6dc25b42b20556a5acbd04029010d0ee0dfabcba0dba28108eff3efe",
+            "title": "GitHub Actions re-enabled with Mini Shai-Hulud payload still active",
+            "description": "Two third-party GitHub Actions previously compromised in a Mini Shai-Hulud campaign were re-enabled by their maintainer and remained accessible for more than a week despite still pointing to malicious code. [...]",
+            "url": "https://www.bleepingcomputer.com/news/security/github-actions-re-enabled-with-mini-shai-hulud-payload-still-active/",
+            "source": "BleepingComputer",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "git",
+                "malware",
+                "ransomware"
+            ],
+            "published_at": "2026-09-26T14:19:46+00:00",
+            "collected_at": "2026-09-26T15:28:18.507033+00:00"
+        },
+        {
+            "id": "feac97c0d0c1b334bc45522cff78e1f74db62fb24af36894ac172cafa04b5945",
+            "title": "I created an interactive digital avatar of myself — and you can talk to it",
+            "description": "After obtaining an interactive avatar and training it to discuss venture fraud, I have mixed feelings about making AI clones of ourselves.",
+            "url": "https://techcrunch.com/2026/09/26/i-created-an-interactive-digital-avatar-of-myself-and-you-can-talk-to-it/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "git",
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-09-26T14:00:00+00:00",
+            "collected_at": "2026-09-26T15:28:20.138647+00:00"
+        },
+        {
+            "id": "61ae10f69a1bb4be62b3b834839921e7405889a5b5cf965b7e776b65247d64aa",
+            "title": "Microsoft quietly drops Copilot+ branding from new laptops",
+            "description": "Microsoft's latest Surface laptops dropped the Copilot+ PC branding despite hitting the minimum requirements. Even high-end AI devices like the Nvidia RTX Spark and Microsoft's own Project Zenith are noticeably missing the label.",
+            "url": "https://www.tomshardware.com/tablets/microsoft-surface/microsoft-quietly-drops-copilot-branding-from-its-new-laptops-surface-cvp-confirms-new-devices-meet-hardware-requirements-but-lack-controversial-branding",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "nvidia",
+                "pc"
+            ],
+            "published_at": "2026-09-26T14:00:00+00:00",
+            "collected_at": "2026-09-26T15:28:25.376550+00:00"
+        },
+        {
+            "id": "0a4de4f0cfbaa3926b598c982e6c02e6473d03be03c58b631380d88d9e2f6c48",
+            "title": "Interview: \"We're Not Making A Party Game Now, It's More Of An Evening Thing\" - Ghost Town Is Moving On From Overcooked",
+            "description": "\"I absolutely love Luigi's Mansion!\". We've all experienced a game-induced argument over the years, and for most of us here at Nintendo Life Towers, Ghost Town Games is to thank. This is the developer that brought us Overcooked and subsequently awakened a Michelin-star chef in each of us, barking out orders at our friends and significant others as if Anton Ego himself was waiting at the door, demanding to be fed. Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/features/interview-were-not-making-a-party-game-now-its-more-of-an-evening-thing-ghost-town-is-moving-on-from-overcooked",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-09-26T14:00:00+00:00",
+            "collected_at": "2026-09-26T15:28:35.639370+00:00"
+        },
+        {
+            "id": "e9dfc735dd12c943db63c76b913fd0afa56858cf81c6cf38368e2e45379d8ff7",
+            "title": "Kraken’s parent Payward is betting billions on becoming financial infrastructure, not just a crypto exchange",
+            "description": "",
+            "url": "https://www.coindesk.com/business/2026/09/26/kraken-s-parent-payward-is-betting-billions-on-becoming-financial-infrastructure-not-just-a-crypto-exchange",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-26T14:00:00+00:00",
+            "collected_at": "2026-09-26T15:28:37.562333+00:00"
+        },
+        {
+            "id": "a4b01168711dce0a33c392cc7c39a540fc91d65bd74ae6b6eb8ed81c16b3497e",
+            "title": "Open-source AnyPS5 dumps emulation to run PlayStation 5 console games natively on PC",
+            "description": "Traditional PS5 emulators attempt to recreate the console's hardware and software environment, but AnyPS5 is experimenting with a compatibility layer that translates PlayStation 5 executables into formats that can run on Windows and Linux.",
+            "url": "https://www.tomshardware.com/video-games/playstation/open-source-anyps5-dumps-emulation-to-run-playstation-5-console-games-natively-on-pc-amd-zen-2-architecture-enables-proton-like-binary-translation-for-windows-and-linux",
+            "source": "Tom's Hardware",
+            "category": "linux",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "linux",
+                "pc",
+                "windows"
+            ],
+            "published_at": "2026-09-26T13:59:04+00:00",
+            "collected_at": "2026-09-26T15:28:25.376605+00:00"
+        },
+        {
+            "id": "b4d639ab5f8c106a65b37141b6f9ab1213ea17606ebc60e75b37235719374017",
+            "title": "Infecting the Steam Link with NixOS",
+            "description": "Comments",
+            "url": "https://feyor.sh/blog/infecting-the-steam-link-with-nixos/",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-09-26T13:45:59+00:00",
+            "collected_at": "2026-09-26T15:28:22.801705+00:00"
+        },
+        {
+            "id": "bbb47b3e60c08e6cfc94b63cfb2adc020ef1df463e7018d8c35cdd2e62a1af9d",
+            "title": "Understanding the Impact of LLM Watermarking on AI Agent Behavior",
+            "description": "Comments",
+            "url": "https://www.lasso.security/blog/the-provenance-tax-understanding-the-impact-of-llm-watermarking-on-ai-agent-behavior",
+            "source": "Hacker News",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "llm",
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-26T13:05:36+00:00",
+            "collected_at": "2026-09-26T15:28:22.601639+00:00"
+        },
+        {
+            "id": "17059695d83d375940e8d574b7273fbb2c932b5aee85eae34deacc51f5268b11",
+            "title": "Bitcoin Price Still 33% Below Its Peak High as Bulls Plot a Comeback",
+            "description": "At 8:30 a.m. Eastern time, bitcoin’s price stood at $84,162 on Saturday, Sept. 26, 2026, down 0.51% over 24 hours, as the leading crypto asset continued consolidating following its retreat from $87,374. The daily technical picture remains positive, supported by 13 bullish moving average (MA) readings, although declining trading volume and a neutral oscillator profile […]",
+            "url": "https://news.bitcoin.com/market-updates/bitcoin-price-still-33-below-its-peak-high-as-bulls-plot-a-comeback/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-26T13:00:10+00:00",
+            "collected_at": "2026-09-26T15:28:37.859422+00:00"
+        },
+        {
+            "id": "66e658fccc2740d8c8a770facac88c284fff3fc6470dde5e1a9ca934ec617e4f",
+            "title": "Nvidia patents AI chatbot to streamline PC game optimization",
+            "description": "An Nvidia patent suggests the company could push developers to use a new chatbot as a way to get guidance on how to optimize their new games before release.",
+            "url": "https://www.tomshardware.com/video-games/pc-gaming/an-nvidia-chatbot-could-one-day-help-developers-better-optimize-their-games-patent-filing-show-requests-can-be-made-in-plain-english",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "nvidia",
+                "pc"
+            ],
+            "published_at": "2026-09-26T13:00:00+00:00",
+            "collected_at": "2026-09-26T15:28:25.376653+00:00"
+        },
+        {
+            "id": "cd0d3f23a3ab0d5d6054377622ba64576c5c659fa6f95eab12bc1db783fb1c39",
+            "title": "Sandisk Optimus GX Pro 850P 2TB SSD review: A PS5 SSD you recognize at a price you don’t",
+            "description": "The Sandisk Optimus GX Pro 850P is a WD Black SN850P by another name. It’s a great PS5 SSD with good performance in a mature package, but with a stiff premium.",
+            "url": "https://www.tomshardware.com/pc-components/ssds/sandisk-optimus-gx-pro-850p-2tb-ssd-review",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "pc"
+            ],
+            "published_at": "2026-09-26T13:00:00+00:00",
+            "collected_at": "2026-09-26T15:28:25.376714+00:00"
+        },
+        {
+            "id": "a509e3788f12847d18fc0a4245d139d4ca3b65e24d0309abbc32b7fd51c540dc",
+            "title": "Binance deal gives Circle a boost in stablecoin race with Tether, analysts say",
+            "description": "",
+            "url": "https://www.coindesk.com/business/2026/09/26/binance-deal-gives-circle-a-boost-in-stablecoin-race-with-tether-analysts-say",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-26T13:00:00+00:00",
+            "collected_at": "2026-09-26T15:28:37.562381+00:00"
+        },
+        {
+            "id": "5cc509bc9af4f334a4c443432aaca25ab9d578b8af35a3384d28d1e73afcf699",
+            "title": "Bitget hacker moves $83 million in stolen XRP that Ripple cannot freeze",
+            "description": "",
+            "url": "https://www.coindesk.com/markets/2026/09/26/bitget-hacker-moves-usd83-million-in-stolen-xrp-that-ripple-cannot-freeze",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-26T12:56:41+00:00",
+            "collected_at": "2026-09-26T15:28:37.562415+00:00"
+        },
+        {
+            "id": "2d1998b253e83872baa6995e49ea76d54838a232e76895f42462ede5e27cedc7",
+            "title": "Nvidia’s RTX Mega Geometry 2.0 streams ray-tracing geometry into VRAM on demand",
+            "description": "Nvidia’s RTX Mega Geometry 2.0 SDK arrives alongside RTX Kit 2026.3 with on-demand ray-tracing geometry streaming.",
+            "url": "https://www.tomshardware.com/pc-components/gpus/nvidias-rtx-mega-geometry-2-0-streams-ray-tracing-geometry-into-vram-on-demand-nanite-inspired-design-drops-detail-instead-of-dropping-out",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "nvidia",
+                "pc"
+            ],
+            "published_at": "2026-09-26T12:30:00+00:00",
+            "collected_at": "2026-09-26T15:28:25.376775+00:00"
+        },
+        {
+            "id": "17579509bdfc5756113dafecfa4f780f1622023770180fffaed90667fc5280ca",
+            "title": "OpenAI's AI agents accidentally uploaded user-provided images to third-party sites",
+            "description": "OpenAI says its AI agents uploaded user-provided images to third-party image-hosting services while carrying out research and evaluation tasks. [...]",
+            "url": "https://www.bleepingcomputer.com/news/artificial-intelligence/openais-ai-agents-accidentally-uploaded-user-provided-images-to-third-party-sites/",
+            "source": "BleepingComputer",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "malware",
+                "openai",
+                "ransomware"
+            ],
+            "published_at": "2026-09-26T12:28:41+00:00",
+            "collected_at": "2026-09-26T15:28:18.507101+00:00"
+        },
+        {
+            "id": "d556f1ce2ab954a8bda7e6a805ce415bb11930d476bfb8bace878ec26c72cb33",
+            "title": "Go concurrency distilled",
+            "description": "Comments",
+            "url": "https://antonz.org/go-concurrency-distilled/",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-09-26T12:14:01+00:00",
+            "collected_at": "2026-09-26T15:28:22.801675+00:00"
+        },
+        {
+            "id": "7a65511edec98d14caf1da176feb9936356ed0bcd417fc4036354d3db22dc085",
+            "title": "New x47.c Windows Botnet Weaponizes xAI Grok, AI API Draining",
+            "description": "The Windows botnet relies on AI to maintain persistence, using xAI Grok to choose from predefined actions. The post New x47.c Windows Botnet Weaponizes xAI Grok, AI API Draining appeared first on SecurityWeek .",
+            "url": "https://www.securityweek.com/new-x47-c-windows-botnet-weaponizes-xai-grok-ai-api-draining/",
+            "source": "SecurityWeek",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "security",
+                "vulnerabilites",
+                "windows"
+            ],
+            "published_at": "2026-09-26T12:00:00+00:00",
+            "collected_at": "2026-09-26T15:28:19.468763+00:00"
+        },
+        {
+            "id": "1a890ad6d92029a824296d03d7b42ac003254fb9aa6ecd2f6cae484d5c4de6ca",
+            "title": "Novel attack slashes computing power needed to crack textbook RSA cryptography",
+            "description": "Not very practical yet, but could serve as the basis for future improvements.",
+            "url": "https://www.tomshardware.com/tech-industry/cyber-security/novel-attack-on-rsa-cryptography-might-bring-computation-requirements-for-cracking-down-to-manageable-levels",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "pc"
+            ],
+            "published_at": "2026-09-26T12:00:00+00:00",
+            "collected_at": "2026-09-26T15:28:25.376820+00:00"
+        },
+        {
+            "id": "aefb515c5f6602afb43ba86927ffbe964e517e4598dec0ff391ac868fa001595",
+            "title": "Bitcoin could soon get Zcash-style 'shielded' privacy without changing its rules",
+            "description": "",
+            "url": "https://www.coindesk.com/tech/2026/09/25/bitcoin-could-soon-get-zcash-style-shielded-privacy-without-changing-its-rules",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-26T12:00:00+00:00",
+            "collected_at": "2026-09-26T15:28:37.562449+00:00"
+        },
+        {
+            "id": "dae3d53b7cb6ad39213ba06883be74710fc3a2a041b56ca295f43640ae081115",
+            "title": "Tuning a Server for Benchmarking",
+            "description": "Comments",
+            "url": "https://david.alvarezrosa.com/posts/tuning-a-server-for-benchmarking/",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-09-26T11:48:40+00:00",
+            "collected_at": "2026-09-26T15:28:22.801931+00:00"
+        },
+        {
+            "id": "124ca5b2bbe434fe47a02f4a37c34f078e07c17b83a8c8337611fcbbcef512c3",
+            "title": "Attackers Bypass WAFs to Exploit Oracle PeopleSoft Flaw and Deploy Web Shells",
+            "description": "Google is warning of renewed mass exploitation of a known security vulnerability in Oracle PeopleSoft as part of a campaign targeting multiple sectors globally. The ShinyHunters-linked activity involves the weaponization of CVE-2026-35273 (CVSS score: 9.8), a critical security flaw that could result in unauthenticated remote code execution. The vulnerability was first exploited as a zero-day",
+            "url": "https://thehackernews.com/2026/09/attackers-bypass-wafs-to-exploit-oracle.html",
+            "source": "The Hacker News",
+            "category": "cybersecurite",
+            "tags": [
+                "cve",
+                "cybersecurite",
+                "hacking",
+                "vulnerabilites",
+                "zero_day"
+            ],
+            "published_at": "2026-09-26T11:46:40+00:00",
+            "collected_at": "2026-09-26T15:28:18.667868+00:00"
+        },
+        {
+            "id": "26af6bb38dc8dfc5a5c1e119b639fa0e977bd3387542b9cef876a1e8dc708926",
+            "title": "Musk’s Grok Is Out-Trading ChatGPT 40 to 1 Among Coinbase AI Agents",
+            "description": "Elon Musk’s Grok placed 59.5% of all AI agent trading volume on Coinbase in the week leading up to Sept. 21, nearly 40 times ChatGPT’s meager 1.5% share. The Scoreboard Coinbase doesn’t usually publish which chatbots its customers trade through, but this week it made a seeming exception. The exchange’s developer account shared a chart […]",
+            "url": "https://news.bitcoin.com/exchanges/grok-coinbase-agentic-trading-chatgpt-share/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto",
+                "openai"
+            ],
+            "published_at": "2026-09-26T11:30:48+00:00",
+            "collected_at": "2026-09-26T15:28:37.859506+00:00"
+        },
+        {
+            "id": "8c4d2932c0d81fdfb319526d62258487d4f00de84d07789d2e9a29e54239f7a7",
+            "title": "PNY allegedly refuses to cover melted RTX 5090 powered by native power supply cable",
+            "description": "A user's GeForce RTX 5090 died when his 12V-2x6 connector melted, and then PNY denied his warranty claim based on technicalities that aren't even present in the warranty policy.",
+            "url": "https://www.tomshardware.com/pc-components/gpus/pny-allegedly-refuses-to-cover-melted-rtx-5090-powered-by-native-power-supply-cable-company-closes-users-ticket-when-questioned-on-policy",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "nvidia",
+                "pc"
+            ],
+            "published_at": "2026-09-26T11:30:00+00:00",
+            "collected_at": "2026-09-26T15:28:25.376865+00:00"
+        },
+        {
+            "id": "5ec033dfd8f0290e709104f59373e5ebc03fd2c05bf0d2f693d1f57de47b5714",
+            "title": "Guide: Best Castlevania Games, Ranked - Switch & Nintendo Consoles",
+            "description": "Far from a miserable pile. To celebrate the 40th anniversary of the series , we're republishing this ranked list of every Castlevania game to appear on Nintendo systems. Enjoy! The Castlevania series has a rich history on Nintendo consoles ever since the original game came first to the Japanese Famicom Disk System way back in 1986, and then to the NES a year later. There may be a significant release or two from Konami's vampire-killing catalogue still missing from Nintendo platforms (we're looking at you, Symphony of the Night ), but the vast majority of the series can be found on Nintendo consoles. Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/guides/best-castlevania-games-ranked-switch-and-nintendo-consoles",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-09-26T11:05:00+00:00",
+            "collected_at": "2026-09-26T15:28:35.639483+00:00"
+        },
+        {
+            "id": "150123896cddcf1d0d489c7c9279c5fee4e6212dc6ca2a3c152efc5191f9f322",
+            "title": "If we do not stop to help each other, what do we become?",
+            "description": "Comments",
+            "url": "https://blog.codinghorror.com/if-we-do-not-stop-to-help-each-other-what-do-we-become/",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-09-26T11:02:48+00:00",
+            "collected_at": "2026-09-26T15:28:22.801582+00:00"
+        },
+        {
+            "id": "b7de59d4e45e22c10fc80d27fde2023749f1928d220c2948be9c08cf52c5624d",
+            "title": "9 excellent iOS apps I wish would come to Android (but probably never will)",
+            "description": "I can keep dreaming.",
+            "url": "https://www.androidauthority.com/ios-apps-i-want-on-android-2026-3713705/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "ios",
+                "smartphone"
+            ],
+            "published_at": "2026-09-26T11:00:45+00:00",
+            "collected_at": "2026-09-26T15:28:30.546861+00:00"
+        },
+        {
+            "id": "a89e5676c57fbd89be6b9c5e2e1258c567e50484263ae7039a3573b650b44cf3",
+            "title": "Enthusiast cooled iPhone 18 Pro with cold can of La Croix sparkling water; benchmarks show 25% higher sustained performance",
+            "description": "Matt Birchler put a cold drink can on the back of an iPhone 18 Pro to see how much performance uplift it would get in a prolonged benchmarking session. The results showed up to 25% higher sustained performance from the cold drink, showing the effectiveness of 'liquid cooling.'",
+            "url": "https://www.tomshardware.com/pc-components/liquid-cooling/enthusiast-cooled-iphone-18-pro-with-cold-can-of-la-croix-sparkling-water-benchmarks-show-25-percent-higher-sustained-performance-liquid-cooling-surprisingly-reduced-thermal-throttling",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "ios",
+                "pc"
+            ],
+            "published_at": "2026-09-26T11:00:00+00:00",
+            "collected_at": "2026-09-26T15:28:25.376927+00:00"
+        },
+        {
+            "id": "53acdf72b8596ff50a7e02c52d33456b11edc3e16fe164cd19a2488c38c14bb3",
+            "title": "Anniversary: Castlevania Changed The Shape Of Gaming 40 Years Ago",
+            "description": "What is a man?! Gaming franchises really don't get much more iconic than Castlevania . First launched as Akumajō Dracula for the humble NES on 26th September 1986 , the series has now turned 40 years old. And despite a few ups and downs (it really felt like it was dead and buried for a while there, huh?), it seems Konami is once again determined to bring it back into the spotlight with the upcoming Castlevania: Belmont's Curse on 15th October 2026 . Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/features/anniversary-castlevania-changed-the-shape-of-gaming-40-years-ago",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-09-26T11:00:00+00:00",
+            "collected_at": "2026-09-26T15:28:35.639592+00:00"
+        },
         {
             "id": "15d0ac752a7bf0de8677938ded8a4b2f0fc4925b8dd8cc0b83d2256ac03f3854",
             "title": "Testers Community Alternative: PeerPlay Comparison",
@@ -19,6 +745,20 @@
             "collected_at": "2026-09-26T10:35:07.279811+00:00"
         },
         {
+            "id": "67f311f2476951e2521595683f73caba03464a5bc578a959e5eee98d708506bd",
+            "title": "The Motorola Signature 27 has one huge advantage over other Samsung rivals",
+            "description": "It's time for a new challenger.",
+            "url": "https://www.androidauthority.com/motorola-signature-27-advantage-over-other-samsung-rivals-3714695/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-09-26T10:30:40+00:00",
+            "collected_at": "2026-09-26T15:28:30.546908+00:00"
+        },
+        {
             "id": "32b1ca9b5f4c8fd0116029b3638bc5638c9bf89e1f7efede2c55197548ea6996",
             "title": "Federal bill would force VPN providers, ISPs, and DNS services to block foreign piracy sites",
             "description": "Proposed federal bill would force ISPs, DNS services, and VPN providers to block foreign piracy sites — yet the definition of \"from the United states\" gets murky",
@@ -33,6 +773,23 @@
             ],
             "published_at": "2026-09-26T10:30:00+00:00",
             "collected_at": "2026-09-26T10:35:09.422739+00:00"
+        },
+        {
+            "id": "3c874b7b99d0057a93894065fb5152652871ac5d2bbf01d630027a1a9a2b5055",
+            "title": "Zero Trust for AI Agents Starts With Fixing Zero Visibility",
+            "description": "The way we talk about AI agents is shifting, and the way we implement them requires an even more fundamental shift. While earlier discourse focused on how quickly organizations could stand up agents and how much productivity they could promise, a string of recent incidents, including a widely discussed intrusion at Hugging Face during an evaluation of OpenAI agents, has spurred organizations to",
+            "url": "https://thehackernews.com/2026/09/zero-trust-for-ai-agents-starts-with.html",
+            "source": "The Hacker News",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "hacking",
+                "openai",
+                "rust",
+                "vulnerabilites"
+            ],
+            "published_at": "2026-09-26T10:30:00+00:00",
+            "collected_at": "2026-09-26T15:28:18.667951+00:00"
         },
         {
             "id": "347f7c534675a4d9c4483a3459069b9b287d7aaf1e20bb6533e0001c3471ef19",
@@ -133,6 +890,21 @@
             ],
             "published_at": "2026-09-26T10:15:20+00:00",
             "collected_at": "2026-09-26T10:35:15.240345+00:00"
+        },
+        {
+            "id": "f51481a21ed3a4fa62a41192f6986dce27200e8ab7fc2072276eaabfe2e0d974",
+            "title": "One Month Without AI",
+            "description": "Comments",
+            "url": "https://blog.bustikiller.com/2026/09/25/one-month-without-ai.html",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-26T10:08:21+00:00",
+            "collected_at": "2026-09-26T15:28:22.602131+00:00"
         },
         {
             "id": "2df0114b2ad7cc0eb58f0e8944f20fde96806826774010a5236f1a3ea88188f8",
@@ -299,6 +1071,21 @@
             ],
             "published_at": "2026-09-26T10:00:00+00:00",
             "collected_at": "2026-09-26T10:35:09.422814+00:00"
+        },
+        {
+            "id": "f428104ad2768df6fa4e99f174a65cd56cf00c3d2001649a2d773081d9829b57",
+            "title": "The Copilot+ PC brand is dead",
+            "description": "Comments",
+            "url": "https://www.windowscentral.com/microsoft/windows-11/the-copilot-pc-brand-is-dead-microsoft-and-pc-makers-quietly-pull-back-on-tarnished-windows-11-ai-pc-branding",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-26T09:55:38+00:00",
+            "collected_at": "2026-09-26T15:28:22.602076+00:00"
         },
         {
             "id": "087d84aa6c29cc3476c4ebd5d79a361ac2aae1083f04b35ef77834b4dd657b93",
@@ -1519,6 +2306,21 @@
             ],
             "published_at": "2026-09-25T20:55:00+00:00",
             "collected_at": "2026-09-26T02:50:03.202625+00:00"
+        },
+        {
+            "id": "c18095a3053a7dc4adfc6a9989688c5ddf1ab182343ee67c0434a4c7248360bd",
+            "title": "Analyzing Frontier Model Progress with My Favourite Game: Prince of Persia",
+            "description": "Comments",
+            "url": "https://blog.priyan.in/2026/09/analyzing-frontier-model-progress-with.html",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-25T20:53:54+00:00",
+            "collected_at": "2026-09-26T15:28:22.601428+00:00"
         },
         {
             "id": "c3b38d9074fa6a38ead51dd06b141263f399000dae5b7439488ba0a100c11f8e",
@@ -10214,6 +11016,21 @@
             "collected_at": "2026-09-24T16:14:59.177969+00:00"
         },
         {
+            "id": "d925ee46a4d0054b8af9e58f2ed5f426bc7608ecc72f2642d81614b11a59d225",
+            "title": "Modern Object Pascal Introduction for Programmers – Castle Game Engine",
+            "description": "Comments",
+            "url": "https://castle-engine.io/modern_pascal",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-24T11:33:56+00:00",
+            "collected_at": "2026-09-26T15:28:22.601393+00:00"
+        },
+        {
             "id": "26e14a18c3a7a65f0bcc566887f0025661b1eccac10cfc6b300c89c77c4eb854",
             "title": "Bitcoin Price Drops Below $85K as PlanB Maps October Path to $100K",
             "description": "Bitcoin’s recovery above $80,000 is reviving six-figure price scenarios, with PlanB outlining a possible move to $100,000 in October and a new record before Christmas. Glassnode data adds support to the bullish case, showing a shallower drawdown, restrained profit-taking, and BTC back above its 365-day moving average. Bitcoin Reclaims 365-Day Average Bitcoin is back near […]",
@@ -12338,6 +13155,21 @@
             "collected_at": "2026-09-24T02:30:06.445012+00:00"
         },
         {
+            "id": "2b9db464c7b58a7c8cde17edeb44364993cc3e354b39b100a96d4dfa6ff8ef5e",
+            "title": "Calculating atmospheric drag on satellites for a Cubesat [pdf]",
+            "description": "Comments",
+            "url": "https://www.osti.gov/servlets/purl/1124870",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-24T00:34:11+00:00",
+            "collected_at": "2026-09-26T15:28:22.601835+00:00"
+        },
+        {
             "id": "fb804ade2424d78890dcef808d68088791ebbc4184a22f85e904beaa2571fcf5",
             "title": "iPhone Crypto App Hides Malicious Code as Attacker Wallet Nets $580K",
             "description": "An iPhone app promoted as a read-only crypto monitoring tool carried code capable of accessing other apps and sensitive wallet data, a new analysis found. A wallet identified as the attacker’s received nearly $580,000 in crypto. How FomoPeek Reached the App Store With Malicious Code People who installed FomoPeek to monitor crypto wallets may have […]",
@@ -12695,6 +13527,21 @@
             ],
             "published_at": "2026-09-23T22:45:49+00:00",
             "collected_at": "2026-09-24T02:30:06.444897+00:00"
+        },
+        {
+            "id": "1203de6f456993e08857fd89ea9f7a14c90c945330e729d2cb1c59dfb131cc23",
+            "title": "ASML currently sells no chipmaking machines in Europe, executive says",
+            "description": "Comments",
+            "url": "https://nltimes.nl/2026/09/22/asml-currently-sells-chipmaking-machines-europe-executive-says",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-23T22:42:13+00:00",
+            "collected_at": "2026-09-26T15:28:22.602047+00:00"
         },
         {
             "id": "3336633e70bcfc638778b58cf5ee15cbab244db728e773d64679e793d00713ab",
@@ -15158,6 +16005,21 @@
             ],
             "published_at": "2026-09-23T14:44:39+00:00",
             "collected_at": "2026-09-23T15:52:33.977714+00:00"
+        },
+        {
+            "id": "f7d9a05adf4958763f5995857831662cf051768d061b185c1b7f29ca1fcbcf4e",
+            "title": "Reflections on 1,000 Days of Math",
+            "description": "Comments",
+            "url": "https://gmays.com/reflections-on-1000-days-of-math/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-23T14:40:34+00:00",
+            "collected_at": "2026-09-26T15:28:22.601488+00:00"
         },
         {
             "id": "452970b6ed9f3525373407bfa45d4add9d3e981f65336ad4a7dd88218d395720",
@@ -179857,6 +180719,51 @@
             ],
             "published_at": null,
             "collected_at": "2026-09-26T10:35:05.580921+00:00"
+        },
+        {
+            "id": "89f9618650b31d06afa5d0a9427c6caefcf8b3efbe8d133083970ab88df7f03d",
+            "title": "Can Cloudflare CEO Matthew Prince save the web from AI?",
+            "description": "Today, I’m talking with Matthew Prince, who is CEO of Cloudflare. This episode is part of a two-part series on the future of business. Matthew last joined us on the show about two and a half years ago, at what we thought then was a wild pivot point for the internet — and now it […]",
+            "url": "https://www.theverge.com/podcast/1000344/cloudflare-matthew-prince-google-zero-ai-web-advertising",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-09-26T15:28:20.316648+00:00"
+        },
+        {
+            "id": "4dd83f4a38c69318caf9d1fc505c0785eb13006cd71207ef343cc05fb5e7e121",
+            "title": "Control Resonant is a great game — it’s even better when you read everything",
+            "description": "In Control Resonant, the entire world is at stake. But that didn't stop the diligent employees of the Federal Bureau of Control from filing reams of paperwork, and it didn't stop me from reading everything I could find, either. Reading is often optional in Resonant, but it's where some of the game's best details - […]",
+            "url": "https://www.theverge.com/games/1000818/control-resonant-reading-collectibles-documents-logs",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-09-26T15:28:20.316764+00:00"
+        },
+        {
+            "id": "84dd219b9dbd645c8a1856f308cbe32d7baf588b682e42f58896831154fe65c8",
+            "title": "Pokémon card resellers have turned collecting into an online blood sport",
+            "description": "Earlier this month, Pokémon card content creator Natalie Roush posted a video to her YouTube and Instagram pages that enraged the larger collection community. In the now-deleted video, Roush shows off two premium boxes of cards that had not yet been officially released, and implores viewers not to be mad. But they were; other creators […]",
+            "url": "https://www.theverge.com/games/1001002/pokemon-30th-celebration-scalping-resellers",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-09-26T15:28:20.316845+00:00"
         }
     ]
 }
