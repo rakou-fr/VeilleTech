@@ -1,7 +1,771 @@
 {
-    "updated_at": "2026-09-25T20:56:52.377867+00:00",
-    "count": 11507,
+    "updated_at": "2026-09-26T02:52:34.873156+00:00",
+    "count": 11573,
     "articles": [
+        {
+            "id": "72eeba68804dc1286a58a21b0745372854fda6b5b3ddd6c5e24e3a7af7b9e1e6",
+            "title": "Galaxy Digital Puts $100M of sUSDS Into Corporate Treasury",
+            "description": "Galaxy Digital has allocated $100 million of Sky Protocol’s yield-bearing sUSDS to its corporate treasury, making the token part of both its own balance sheet and its institutional lending operation. Galaxy Puts DeFi Yield on Its Balance Sheet Galaxy Digital is putting real treasury capital behind one of DeFi’s largest savings products. The Nasdaq-listed digital-asset […]",
+            "url": "https://news.bitcoin.com/defi/galaxy-digital-puts-100m-of-susds-into-corporate-treasury/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto",
+                "git"
+            ],
+            "published_at": "2026-09-26T02:40:15+00:00",
+            "collected_at": "2026-09-26T02:52:33.528702+00:00"
+        },
+        {
+            "id": "cf266e6c6ccf7320cc6e8fee23a62657b8e1f5c31531705e562098104ca432fe",
+            "title": "Android Paging 3 Failure Matrix",
+            "description": "Android Paging 3 Viewmodel Partial Success Refresh Failure Matrix becomes concrete in this setup: A phone, laptop, and checklist arranged for testing paged data through failure and recovery states. Is a happy-path scroll through a lazy list enough to guarantee production stability when using Android Paging 3? The short answer is no. Most applications fail not when the network responds with a clean page of items, but when the network drops mid-scroll, when a local database cache returns empty results, or when the operating system kills the host process to reclaim memory. Setup tutorials and standard documentation often focus on the happy path, showing how to connect a Retrofit data source to a Room database and render items in a LazyColumn. However, real-world users experience flaky cellular connections, server timeouts, database invalidation triggers, and abrupt process death. To build resilient mobile applications, developers must treat error states, loading transitions, and lifecycle events as Offline First Event Pipeline -class product requirements. This guide establishes a concrete failure matrix for Android Paging 3 screens. By mapping every possible failure state to its corresponding LoadState, UI visibility rule, and test strategy, you can prevent silent freezes, infinite loading spinners, and corrupted list states before your code reaches production. The Paging 3 Architecture and State Ownership Before diving into specific failure scenarios, it is crucial to understand how Paging 3 distributes state ownership between the library, the data source, and the UI layer. Paging 3 relies on the PagingData structure, which acts as an immutable stream of data updates. Underneath this stream, the PagingDataAdapter or LazyPagingItems in Jetpack Compose listens to load state updates and exposes them via the loadState property. State ownership in Paging 3 is divided into three distinct phases. First, the RemoteMediator or PagingSource owns the data fetching logic and reports errors upward by returning LoadResult.Error. Second, the Pager object catches these results and wraps them into CombinedLoadStates, which contain separate LoadState instances for refresh, prepend, and append operations. Third, the UI layer is responsible for observing these states and translating them into user-visible cues, such as error banners, retry buttons, or empty state placeholders. Confusing these boundaries is the root cause of most pagination bugs. For instance, if an append operation fails, the initial refresh state remains unaffected. If the UI developer maps any error state to a full-screen error view, an append failure at the bottom of a long list will incorrectly wipe out all previously loaded items and present a jarring full-screen error dialog. Understanding that refresh, prepend, and append states operate independently is the foundation of robust error handling. Defining the Failure Matrix Scope To systematically verify a Paging 3 implementation, you need a structured testing matrix that covers the entire lifecycle of a paginated list. The matrix must account for network variability, local database caching behavior, configuration changes, and system-level process death. Below is the core failure matrix that every production-grade Android application should satisfy before release. Scenario Trigger Condition Expected LoadState UI Visibility Rule Minimum Test Verification Initial Refresh Failure Network unavailable on cold start with no local cache LoadState.Error (refresh) Full-screen error view with retry button Verify error state emitted and retry triggers new fetch Append Failure Network drops while scrolling to the next page LoadState.Error (append) Inline list item with retry button at bottom Verify existing items remain visible and retry appends Empty Success Query returns zero items and remote source is exhausted LoadState.NotLoading(endOfPaginationReached = true) Dedicated empty state placeholder view Verify empty view displays without triggering infinite loading Offline Stale Data Network offline, fallback to Room database cache LoadState.NotLoading (refresh), cached items present Normal list view with offline banner Verify cached items render correctly without network errors Database Invalidation Local table cleared while UI is active LoadState.Loading (refresh) Skeleton loaders or previous items until refresh completes Verify list clears or updates cleanly upon invalidation Configuration Change Screen rotation during active loading state Preserved LoadState matching current stream Seamless continuation without duplicate requests Verify scroll position and load state survive rotation Process Death OS kills app process in background; user returns Restored PagingData via SavedStateHandle Restored list items and scroll offset Verify state restoration completes without crashing Examining this matrix reveals that a successful pagination architecture requires different UI reactions depending on which load phase failed. The following sections explore each scenario in detail, explaining the underlying concepts and trade-offs. Initial Refresh Failure and Recovery The initial refresh represents the first time the Pager attempts to load data when the screen opens. If you are using a RemoteMediator with a local database cache, the refresh state behaves differently than a network-only PagingSource. In a network-only setup, an initial failure means the screen has zero data to display. In an offline-first setup with a Room database, the initial refresh might fail against the network, but the Room database may already contain stale cached data from a previous session. When no local cache exists and the network request fails, the refresh LoadState transitions to LoadState.Error. The UI must respond by displaying a full-screen error state that replaces the list container. This view should clearly communicate the failure and provide a prominent retry button. When the user taps the retry button, you do not need to manually reconstruct the Pager; instead, you simply call the retry() method on your PagingDataAdapter or LazyPagingItems instance. Paging 3 internally handles resetting the failed load operation and re-triggering the data source. The trade-off in this scenario involves deciding whether to show cached data immediately or wait for the network refresh. If your product requires fresh data on every launch, you must handle the loading spinner and potential error states gracefully. If your product prioritizes speed and offline availability, delegating the initial load to the local database via RemoteMediator ensures the user sees content instantly, relegating the network refresh failure to a subtle background banner rather than a blocking error screen. Append Failure and Granular Error Handling Append failures occur when the user has successfully scrolled through the initial pages of content, but a subsequent request for the next page fails due to a dropped connection or server timeout. A common mistake in handling append failures is treating them with the same UI severity as initial refresh failures. If an append operation fails, the user has already consumed dozens or hundreds of items. Wiping out the entire screen and replacing it with a full-screen error message is a severe anti-pattern that destroys user trust and disrupts navigation. Instead, append failures must be handled inline at the bottom of the list. Paging 3 emits a LoadState.Error specifically for the append operation, leaving the refresh state as LoadState.NotLoading. The adapter should render a specialized footer item when the append state is in error. This footer item displays a compact error message and a retry button. When the user taps this inline retry button, calling adapter.retry() prompts Paging 3 to resume appending from the last successful key. Implementing an inline retry footer requires careful configuration of your adapter. When using Jetpack Compose with LazyPagingItems, you can inspect loadState.append and conditionally render a footer item inside your lazy list scope. This ensures that the user can seamlessly resume scrolling without losing their place in the list or having to restart the application. Empty Success and End of Pagination Boundaries An empty success is a subtle edge case that often trips up developers. This occurs when a network query or database search executes successfully, returning zero items, and the pagination mechanism determines that endOfPaginationReached is true. From the perspective of Paging 3, this is not an error state; it is a successful load that yielded no data. If the UI layer only checks whether items are present in the adapter and fails to check the load state, an empty success can result in an ambiguous UI where the screen remains blank with a continuous loading spinner. To prevent this, the UI must explicitly observe the refresh load state and the item count. When the refresh state is LoadState.NotLoading, endOfPaginationReached is true, and the adapter item count is zero, the application must display a dedicated empty state placeholder. This empty state should explain why no items were found, such as indicating that no search results matched the user query or that the selected filter returned an empty set. Distinguishing between an active loading state, a network error, and an empty success ensures that users are never left guessing whether the application is still working or if there is genuinely no data available. Offline Stale Data and RemoteMediator Trade-Offs When building offline-first Android applications, the combination of Paging 3 and Room database caching is a powerful pattern. However, it introduces complex synchronization challenges. When the device loses internet connectivity, the RemoteMediator will fail when attempting to fetch remote data. If your implementation is not designed to handle offline scenarios gracefully, the application might crash or display perpetual loading errors. In a well-architected offline-first paging setup, the Pager is configured to read exclusively from the Room database, while the RemoteMediator handles background synchronization. When the network is offline, the RemoteMediator catches the IOException, returns LoadResult.Error, but the local Room database query continues to emit the last known valid dataset to the UI. The LoadState for refresh will indicate LoadState.NotLoading because the local database query succeeded, even though the remote refresh failed. The trade-off here is data freshness versus availability. By prioritizing local database emissions, the application remains fully functional offline, allowing users to scroll through previously loaded content. To keep the user informed without blocking their workflow, the UI can observe the remote mediator state and display a non-intrusive offline banner at the top of the screen, notifying the user that they are viewing cached data and that background syncing is paused. Database Invalidation and Cache Clearing Database invalidation occurs when the underlying data source changes outside the normal pagination flow, such as when a synchronization worker clears local tables, a user logs out and switches accounts, or a database migration alters table schemas. When the Room database is invalidated, the PagingSource must invalidate itself to ensure that stale or unauthorized data is not displayed to the user. Paging 3 handles source invalidation automatically when using Room because Room generates PagingSource implementations that invalidate themselves when their underlying tables are modified. However, this invalidation triggers a new refresh cycle. If the invalidation happens while the user is actively scrolling near the bottom of a long list, the sudden reset can cause the list to jump back to the top, disrupting the user experience. Handling database invalidation gracefully requires coordinating local database transactions with the UI state. When a major invalidation event occurs, such as an account switch, the application should explicitly clear the pagination cache, reset the UI scroll position to the top, and display a loading indicator for the initial refresh phase. Testing this behavior ensures that users never see a mix of data from two different user accounts or corrupted list indices after a database reset. Configuration Changes and Process Death Recovery Mobile applications must survive configuration changes, such as screen rotation or window resizing, as well as system-level process death where the operating system terminates the app process in the background to reclaim memory. Paging 3 is designed to survive configuration changes out of the box because the PagingData stream is typically hosted within a ViewModel that survives activity recreation. However, process death presents a different challenge. When the process is killed, the ViewModel and its in-memory streams are destroyed. When the user returns to the app, the system recreates the process, and the UI attempts to restore its previous state using SavedStateHandle. If your Pager is constructed using parameters stored in SavedStateHandle, Paging 3 can reconstruct the data stream and restore the list items and scroll position. To verify that your pagination implementation survives process death, you can use developer options in Android to simulate background process termination, or write instrumentation tests that verify state restoration. Ensuring robust process death recovery prevents crashes and ensures that users return to the exact list position they left, maintaining a polished user experience even under heavy system resource pressure. Implementing a Concrete Paging LoadState Test Testing asynchronous pagination flows can be challenging without the right tools. The official Paging testing artifacts provide utilities to collect PagingData and inspect load states in unit tests. Below is a concrete Kotlin coroutine test example using Turbine and JUnit that verifies how a Paging 3 data source emits refresh and error states. package com.example.paging.test import androidx.paging.PagingSource import androidx.paging.PagingState import kotlinx.coroutines.test.runTest import org.junit.Assert.assertEquals import org.junit.Test class FakePagingSource ( private val shouldFail : Boolean , private val items : List < String > ) : PagingSource < Int , String >() { override suspend fun load ( params : LoadParams < Int >): LoadResult < Int , String > { val page = params . key ?: 1 if ( shouldFail ) { return LoadResult . Error ( RuntimeException ( \"Network failure\" )) } return LoadResult . Page ( data = items , prevKey = if ( page == 1 ) null else page - 1 , nextKey = if ( items . isEmpty ()) null else page + 1 ) } override fun getRefreshKey ( state : PagingState < Int , String >): Int ? { return state . anchorPosition ?. let { anchor -> state . closestPageToPosition ( anchor ) ?. prevKey ?. plus ( 1 ) ?: state . closestPageToPosition ( anchor ) ?. nextKey ?. minus ( 1 ) } } } class PagingSourceFailureTest { @Test testLoadResultErrorEmittedOnFailure () = runTest { val source = FakePagingSource ( shouldFail = true , items = emptyList ()) val params = PagingSource . LoadParams . Refresh < Int >( key = null , loadSize = 10 , placeholdersEnabled = false ) val result = source . load ( params ) assert ( result is LoadResult . Error ) val errorResult = result as LoadResult . Error assertEquals ( \"Network failure\" , errorResult . throwable . message ) } } This test isolates the PagingSource and verifies that when a failure condition is triggered, it correctly returns a LoadResult.Error containing the expected exception. By combining unit tests for your data sources with instrumentation tests for your UI load states, you can achieve comprehensive test coverage across every scenario in the failure matrix. Conclusion and Release Checklist Building a resilient paginated screen in Android requires looking far beyond the happy-path scroll. By systematically mapping out initial refresh failures, inline append errors, empty success boundaries, offline database fallbacks, invalidation triggers, and process death recovery, you transform pagination from a fragile UI component into a robust data pipeline. Use the failure matrix established in this guide as a release checklist for your team, verifying each state with automated tests and manual edge-case testing before deploying to production.",
+            "url": "https://dev.to/ufebri/android-paging-3-failure-matrix-l2e",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "android",
+                "developpement",
+                "git",
+                "ios",
+                "programmation",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-09-26T02:33:21+00:00",
+            "collected_at": "2026-09-26T02:50:03.416474+00:00"
+        },
+        {
+            "id": "ae2fec8eb06ae13c3d8b7b1ef12f6bc24dd3fee4bac0896d62dba41b5c4fc128",
+            "title": "AI Dojo คืออะไร: ทำไมสนามซ้อมเปลี่ยน AI Agent จากสอบผ่านเป็นเก่งจริง",
+            "description": "AI Dojo คืออะไร: ทำไมสนามซ้อมเปลี่ยน AI Agent จากสอบผ่านเป็นเก่งจริง โดย Nokka (นก-กา) | 25 กันยายน 2026 บทความนี้เขียนโดย AI (โมเดล glm-5.3 ของผู้ให้บริการ ollama-cloud) ผ่าน Hermes Agent จาก Nous Research ตรวจสอบและเรียบเรียงโดย Nokka บทที่ 1 จาก 5 ของชุด \"AI Dojo: สนามซ้อมเอเจนต์\" ทีม agent หลายทีมมีประสบการณ์แบบเดียวกัน เปิด benchmark รันโมเดลล่าสุด ได้คะแนนสวยงาม แล้วเอาไปใช้กับงานจริงวันรุ่งขึ้น กลับพังโดยไม่รู้ตัว เหมือนนักเรียนที่ทำข้อสอบเก่งแต่ไม่เคยลงสนามซ้อม เพราะ benchmark แบบเดิมวัดแค่ครั้งเดียวว่าทำได้หรือไม่ แต่ไม่เคยให้ agent ได้ฝึกจากความล้มเหลวของตัวเอง ช่วงหลายเดือนที่ผ่านมา เทรนด์ใหม่กำลังตอบโจทย์นี้ตรงจุด เรียกกันว่า dojo (อ่านว่า โดโจ) ยืมคำจากภาษาญี่ปุ่น แปลว่าสนามฝึกวิชา ไม่ใช่สนามสอบ กลางปีที่ผ่านมา ทีมวิจัยของ Meta แสดงให้เห็นว่าเพียงย้าย agent เข้า dojo เฉยๆ โดยไม่แก้อะไรเลย อัตราความสำเร็จก็ขยับขึ้นทันที แถมพร้อมตัวเลขรองรับที่จับต้องได้จริง [1][2] บทความนี้เป็นบทแรกของชุด 5 ตอน เจาะว่า dojo ทำงานยังไง ทำไมมันได้ผล และทีมเล็กอย่างเราจะเอาไปใช้จริงได้ตรงไหน สองสนามที่คนมักสับสน: สนามสอบ vs สนามซ้อม แนวคิดเดิมของ benchmark คือสนามสอบ กติกาชัด โจทย์คงที่ เก็บคะแนนครั้งเดียว ใช้เทียบโมเดล A กับ B ได้เท่าไหร่ก็เทียบกันได้เท่านั้น ส่วน dojo คือสนามซ้อมที่ agent ได้ลอง ล้มเหลว อ่านคะแนน แล้วลองใหม่ในสภาพแวดล้อมเดิม จุดต่างสำคัญอยู่ที่สองอย่าง การวนซ้ำ (iteration) สนามสอบให้ทำข้อสอบครั้งเดียว สนามซ้อมให้ทำซ้ำได้เรื่อยๆ จนเก่ง สัญญาณป้อนกลับ (feedback loop) สนามสอบบอกแค่ผ่านหรือไม่ผ่าน สนามซ้อมบอกว่าตกอยู่ตรงไหน เพื่อให้รอบถัดไปแก้ตรงนั้นได้ มุมเทียบ สนามสอบ (benchmark) สนามซ้อม (dojo) จำนวนครั้งที่ทำได้ ครั้งเดียวจบ ทำซ้ำได้ไม่จำกัด ข้อมูลที่ได้กลับมา ผ่าน/ไม่ผ่าน คะแนนรายจุด บอกว่าตกตรงไหน ใช้ทำอะไร เทียบโมเดล A กับ B ฝึกให้ agent รุ่นถัดไปเก่งขึ้น ต้นทุนเมื่อพลาด รู้ตอนเอาไปใช้งานจริง จบในสนามซ้อม ไม่กระทบงานจริง หากเทียบกับโลกมนุษย์ สนามสอบเหมือนการทดสอบความแข็งแรงครั้งเดียวให้ผ่านเกณฑ์เข้าทีม ส่วนสนามซ้อมคือช่วงซ้อมที่นักกีฬาได้เห็นสถิติของตัวเองทุกสัปดาห์ แล้วปรับแผนฝึกตามนั้น คนที่มีแต่สนามสอบจะเก่งแค่วันสอบ คนที่มีสนามซ้อมเก่งขึ้นทุกสัปดาห์จริงๆ คำว่า dojo ในวงการมีสองความหมาย คำเดียวกันแต่คนอาจหมายถึงคนละอย่าง ควรแยกให้ชัดตั้งแต่ต้น Dojo แบบปรับน้ำหนักโมเดล (RL dojo) ให้ reward จริงระหว่างฝึก แล้วอัปเดตน้ำหนักโมเดล หนักแน่นแต่แพง ต้องมี GPU เป็นฟาร์ม Dojo แบบปรับวินัย (harness dojo) ฝึกผ่านสภาพแวดล้อมและกติกา แล้วเก็บบทเรียนเป็นชุดคำสั่งหรือ skills โดยไม่แตะน้ำหนักเลย ถูกกว่ามาก ทำได้บนเครื่องเดียว บทที่ 3 จะเจาะความต่างนี้พร้อมตัวอย่างจริงทั้งสองสาย แต่ก่อนถึงตรงนั้น มาดูเคสเปิดตัวที่ทำให้คำนี้ดังก่อน เคสเปิดตัวที่จับต้องได้: Meta AIRA กลางปี 2025 ทีม FAIR ของ Meta ตีพิมพ์งานวิจัยชุด AI Research Agents พร้อมปล่อยโค้ดเป็น repository ชื่อ aira-dojo [1][2] โดยรันอยู่บน MLE-bench ซึ่งเป็น benchmark เก็บโจทย์จากการแข่งขัน Kaggle จริง 75 รายการ [5] แกนของงานเปลี่ยนความหมายของ benchmark จากสนามสอบเป็นสนามซ้อมในสามระดับ ตัวเลขทั้งหมดในหัวข้อนี้วัดบน MLE-bench lite ชุดย่อย 22 โจทย์ที่งานนี้เลือกใช้ประเมิน ส่วน MLE-bench ฉบับเต็มมี 75 โจทย์ [1][5] ระดับที่ 1: ย้ายสนามอย่างเดียว ก็ได้แล้ว พวกเขาย้าย AIDE ซึ่งเป็น agent เดิมที่เคยรันในสภาพแวดล้อมเก่า เข้าไปรันใน AIRA-dojo เท่านั้น โดยไม่แก้ agent เลยแม้แต่บรรทัดเดียว ผลคืออัตราได้เหรียญบน Kaggle กระโดดจาก 35.2% เป็น 45.9% หรือบวก 10.7 จุด งานวิจัยระบุชัดว่าส่วนต่างนี้มาจากสภาพแวดล้อมเพียงอย่างเดียว [2] ระดับที่ 2: ปรับวิธีคิดต่อ ได้อีก พวกเขาปรับชุด operators (คำสั่งคิดของ agent เช่น Draft, Debug, Improve) ให้เหมาะกับสนาม คะแนนขยับต่อไปเป็น 45.5% และเมื่อจับคู่กับกลยุทธ์ค้นหาแบบ Greedy อัตราได้เหรียญขึ้นไปถึง 47.7% สถิติสูงสุดของงานชุดนี้ [1][2] ระดับที่ 3: จากสนามซ้อม สู่สังเวียนจริง ขั้นสำคัญที่สุดคือแทนที่จะแค่วัดผลบน benchmark พวกเขาใช้สนามซ้อมนี้เป็นชั้นฝึกของ agent รุ่นถัดไป จนกระทั่งเมื่อวันที่ 5 กันยายน 2026 Meta ประกาศว่า AIRA₃ รุ่นล่าสุดของระบบวิจัยอัตโนมัติ ลงแข่ง Kaggle จริง [3] โจทย์คือการสอนโมเดล Nemotron ขนาด 30 พันล้านพารามิเตอร์ให้คิดดีขึ้น ทุกทีมได้ข้อมูลเท่ากันและถูกตัดสินจากชุดทดสอบที่ไม่มีใครเห็นล่วงหน้า ผลคือ AIRA₃ ได้อันดับ 8 จากประมาณ 4,000 ทีม พร้อมเหรียญทอง [3] อ่านตัวเลขชุดนี้แล้วมีจุดหนึ่งที่ผมชอบที่สุด ทีมชนะเหรียญทองของ AIRA₃ ไม่ได้ใช้โมเดลของ Meta เองเลย แต่เป็น ensemble ของ GPT 5.5 กับ Claude 4.8 [3] พูดอีกทางคือ ความเก่งไม่ได้อยู่ที่ตัวโมเดลที่คัดสรรมา แต่อยู่ที่ระบบฝึกและสนามซ้อมที่ห่อหุ้มโมเดลไว้ทั้งระบบ ซึ่งเป็นหัวใจของแนวคิด Harness Engineering ที่เราเคยคุยกันใน ชุดบทความก่อน ทำไมระบบฝึกได้ผลกว่าที่ใครๆ คาด ก่อน AIRA คนส่วนใหญ่คิดว่าปัจจัยชี้ขาดคือโมเดล ยิ่งเก่งยิ่งได้เปรียบ แต่งานวิจัยชุดนี้ชี้ว่าตัวชี้ขาดมีสามชั้น และชั้นสนามมีน้ำหนักไม่แพ้กัน ชั้นที่ 1 โมเดลเป็นแค่ชิ้นส่วนเดียว อย่างที่เพิ่งเห็น โมเดลผู้อื่นที่ไม่ใช่ของบ้าน ก็เอาเหรียญทองกลับไปได้เมื่อมีระบบฝึกดีพอ ชั้นที่ 2 ระบบรอบโมเดล (harness) คือคำสั่ง กติกา และสภาพแวดล้อมที่โมเดลทำงานอยู่ข้างใน ซึ่งมีผลทันทีทั้งที่ไม่แตะตัวโมเดล ชั้นที่ 3 สนามซ้อม (dojo) ทำให้ทั้งสองชั้นแรกพัฒนาได้เรื่อยๆ เพราะมี feedback จริงให้วัด แนวคิดนี้ไม่ใช่ของใหม่ในโลกจริง โค้ชมวยอีสานเก่งๆ สอนลูกศิษย์เก็บคะแนนทุกยกทุกไฟต์ ไม่ใช่ดูคลิปชนะแล้วจบ เพราะแพ้ ๆ สอนได้เยอะกว่าชนะทุกไฟต์เสมอ สนามซ้อมของ agent ก็เช่นกัน ค่าความล้มเหลวใน dojo ถูกกว่าความล้มเหลวในงานจริงเสมอ จึงคุ้มที่จะให้ล้มบ่อยๆ ตอนฝึก แนวเดียวกันนี้เกิดขึ้นจริงในประวัติศาสตร์ AI เกมกระดานโบราณอย่างโกะให้บทเรียนตรงนี้มาเป็นชั้นๆ เดิมที AI วางหมากโกะทำได้ด้วยการเรียนรู้จากสถานการณ์เกมของมืออาชีพหลายแสนเกม แต่ความก้าวหน้าที่พลิกเกมคือ AlphaGo เอาไปต่อด้วยการเล่นกับตัวเอง ไม่ต้องรอคนสอน เพราะสนามมีกติกาที่ยุติธรรมและผลแพ้ชนะชัดเจน ทำให้มันฝึกตัวเองได้ ทีนี้คำถามคือแล้วสนามซ้อมที่ดีหน้าตาเป็นยังไง มีองค์ประกอบอะไรบ้าง คำตอบอยู่ในบทที่ 2 ที่จะเปิดฝา AIRA-dojo จริง ไล่ชั้นคำนวณของสนาม ตั้งแต่ isolation ของ environment ลงไปถึงวิธีคำนวณ reward ที่เป็นธรรม สนามซ้อมไม่ใช่ของสวยหรู: มันคุ้มเงินจริง แต่มีข้อแลก หลายทีมอาจคิดว่า dojo เป็นของเล่นของห้องแล็บใหญ่ ตัวเลขบอกว่าคุ้มตั้งแต่ระดับทีมเล็กแล้ว ต้นทุนหลักของทีม agent คือค่า token ของการลองผิดลองถูก สนามซ้อมลดค่านี้ได้เพราะเปลี่ยนการเดาในงานจริง เป็นการซ้อมที่มีขอบเขต สินทรัพย์เดิมไม่ต้องทิ้ง เมื่อ benchmark เดิมกลายเป็นสนามซ้อม โจทย์เก่า ข้อมูลเก่า ชุดวัดผลเก่า ยังใช้ต่อได้ในหน้าที่ใหม่ ได้แผนที่พัฒนาชัดเจน ทีมรู้ว่าสัปดาห์นี้เก่งขึ้นหรือแย่ลงจากสัปดาห์ก่อน และตกจุดไหน แต่จะเล่าเฉพาะด้านสวยคือไม่ซื่อสัตย์ สนามซ้อมมีข้อแลกที่ต้องรู้ก่อนตัดสินใจลงทุน ต้องจ่ายค่าสร้างสนามก่อน ทั้งเวลาออกแบบโจทย์ เตรียมข้อมูล และเขียนตัวตัดสิน ทีมเล็กอาจใช้เวลาหลายสัปดาห์กว่าจะได้สนามที่ใช้ได้จริง สนามที่วัดผิดสอนผิด ถ้ากติกาใน dojo ต่างจากโลกจริง agent จะเก่งแบบเฉพาะสนาม ออกไปข้างนอกแล้วสู้ไม่ได้ งานวิจัยของ Meta เองก็พบว่า agent ของพวกเขา overfit กับสัญญาณทดสอบของตัวเองพอสมควร [1] เรื่องนี้สำคัญพอที่จะเก็บเป็นบทเต็มๆ ในบทที่ 4 ไม่ใช่คำตอบสุดท้ายของทุกทีม ทีมที่งานเปลี่ยนโจทย์ทุกสัปดาห์ อาจยังไม่คุ้มลงทุนสร้างสนามเอง จะเห็นวิธีเลือกในบทที่ 5 สรุปคือ dojo คุ้มเมื่องานของทีมซ้ำๆ พอให้สนามที่สร้างครั้งเดียวใช้ได้หลายรอบ ถ้างานเปลี่ยนเร็วจนสนามตามไม่ทัน ยังมีทางเลือกที่เบากว่า อย่างการยืมสนามสำเร็จรูปอย่าง MLE-Dojo ที่สร้างจาก Kaggle จริง 200 กว่ารายการ [4][6] สรุปบทที่ 1 ช่วงหลายปีที่ผมดูแลและตรวจสอบระบบ agent มา เห็นความเก่งของโมเดลเป็นค่าที่ควบคุมไม่ได้ โมเดลรุ่นใหม่ออกเมื่อไหร่ เก่งขึ้นเมื่อนั้น แต่ความพร้อมของสนามเป็นค่าที่เราควบคุมได้เต็มที่ สนามซ้อมเปลี่ยนความเก่งจากของที่ต้องรอซื้อ ให้เป็นของที่ทีมสะสมเองได้ทุกสัปดาห์ สนามซ้อมไม่ได้ทำให้โมเดลเก่งขึ้นในพลิบเดียว แต่ทำให้ทีมรู้ว่าเก่งขึ้นหรือแย่ลงจากสัปดาห์ก่อนอย่างไร และเมื่อรู้ เราก็ปรับได้ บทหน้าเปิดดูข้างในของสนามจริงว่าต้องมีอะไรบ้าง แล้วพาไล่ตัวเลขจริงของ AIRA ทีละตัว ใครอ่านมาถึงตรงนี้แล้วอยากเจอตัวเลขมันส์ๆ ก่อนใคร ติดตามตอนต่อได้เลยครับ References [1] Edan Toledo, Karen Hambardzumyan, Martin Josifoski และคณะ. \"AI Research Agents for Machine Learning: Search, Exploration, and Generalization in MLE-bench.\" arXiv:2507.02554, กรกฎาคม 2025 (ฉบับปรับปรุงพฤศจิกายน 2025). https://arxiv.org/abs/2507.02554 [2] AIRA-dojo repository. Facebook Research, 2025. https://github.com/facebookresearch/aira-dojo [3] AI at Meta (@AIatMeta). โพสต์ประกาศผล AIRA₃ ในการแข่งขัน Kaggle ที่จัดโดย NVIDIA. โพสต์บน X, 5 กันยายน 2026. https://x.com/AIatMeta/status/2096271545589190927 [4] Rushi Qiang, Yuchen Zhuang, Yinghao Li และคณะ. \"MLE-Dojo: Interactive Environments for Empowering LLM Agents in Machine Learning Engineering.\" arXiv:2505.07782, พฤษภาคม 2025. https://arxiv.org/abs/2505.07782 [5] Chan Jun Shern, Neil Chowdhury, Oliver Jaffe และคณะ (OpenAI). \"MLE-bench: Evaluating Machine Learning Agents on Machine Learning Engineering.\" arXiv:2410.07095, ตุลาคม 2024. https://arxiv.org/abs/2410.07095 [6] MLE-Dojo project page. Georgia Institute of Technology และ Stanford University, 2025. https://mle-dojo.github.io/MLE-Dojo-page",
+            "url": "https://dev.to/sarantoon/ai-dojo-khuueaair-thamaimsnaamchmepliiyn-ai-agent-cchaaksbphaanepnekngcchring-1aak",
+            "source": "DEV Community",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "anthropic",
+                "developpement",
+                "git",
+                "llm",
+                "machine_learning",
+                "nvidia",
+                "openai",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-26T02:30:19+00:00",
+            "collected_at": "2026-09-26T02:50:03.417160+00:00"
+        },
+        {
+            "id": "dfa34e458b86da6557a1eddc12a0b758c4e487de1fb393d559fb9ae74687bca6",
+            "title": "How to Get Machine Learning Clients With No Portfolio",
+            "description": "The first client who ever asked to see my portfolio watched me open my laptop, stare at a folder of Kaggle notebooks, and close it again. I talked for forty minutes about what I could build instead of what I had built. He signed the contract anyway. That one had luck written all over it. The next one needed a method. Three years ago I had no production machine learning work anywhere on my record. No client had paid me for a model. Every job description asked for three-plus years of production experience and a portfolio full of deployed systems, and I had neither. Today ML work is how I make a living as a freelancer, and founders message me instead of the other way around. The distance between those two states was never \"more experience.\" It was a portfolio built from nothing — on purpose, in ninety days, with no client attached yet. This is the playbook I used, and the one I now hand to every developer who asks the same question. The Realization: Nobody Buys a Resume My first real ML client was a logistics company in Dubai that ran three warehouses and booked storage capacity by gut feel. The founder's original request was simple: predict next-month demand per warehouse so they could stop over-booking storage they did not need and under-booking the months they did. I said yes before I knew exactly how I would do it. I spent six weeks on it. The first version underpredicted demand by 40% in its first month, which meant my forecast confidently told them to free up space they actually needed. It was a soft, survivable miss — but it was a miss. I went back, added seasonality terms, lagged features from the previous three months, and stopped trusting a single model: I blended a gradient-boosted tree with a simple exponential smoother and kept the ensemble. The next month's forecast was within 6% of actuals. The client kept paying, then expanded the engagement to a second warehouse. Here is what I learned from that first engagement: the founder did not hire my resume. He hired the fact that I showed up, asked sharp questions about his business, and took ownership of a problem he had been solving with a spreadsheet. My \"portfolio\" at that moment was a single Flask app on free hosting and a Medium post about it. He never asked for credentials. He was already past the \"is this person qualified\" filter, because I had shown him proof of effort in a language he understood. The uncomfortable truth is that most developers fail to get ML clients not because they lack skills, but because they present qualifications instead of evidence. A buyer cannot verify \"expert in deep learning.\" They can verify \"this model takes my warehouse data and returns a number that helps me plan.\" Portfolios fail when they are résumés with screenshots attached. So the entire playbook reduces to one sentence: produce evidence a non-technical buyer can verify in five minutes, and stop treating \"portfolio\" as a formal artifact that must be perfect before you start. Step 1: Build One Proof Project That Solves a Business Problem Not a Titanic survival notebook. Not another CIFAR classifier with a green dashboard. A project that maps to a business pain you can name out loud in one sentence: churn prediction for a SaaS, anomaly detection on inventory, lead scoring for a sales team, demand forecasting for a warehouse. Pick a problem you can get real data for. In 2026 this is easier than ever: public datasets, synthetic generators, and — if you are clever — data you generate yourself by running your own small service and logging everything. I chose demand forecasting for a logistics operator because I could describe it in a single sentence to a founder. That sentence did more selling than any résumé bullet ever would have. The rules I follow for the proof project: One project, not ten. A single deployed system beats a grid of abandoned notebooks. You can only maintain and evangelize one thing at a time. It must have a target, a metric, and a story. What number improved, and by how much? For mine it was forecast error dropping from 40% to 6%. You must be able to explain the trade-offs honestly. Where does it break, and what would you do differently at scale? Do not let this step take longer than four to six weeks. The goal is not a finished product. It is a public, clickable, defensible artifact. Here is the actual selection thinking, so you can copy the method: I wrote a page listing three candidate problems — churn prediction for a subscription tool, anomaly detection on warehouse inventory, demand forecasting for a logistics operator. For each, I asked three questions: can I get the data this month, can a founder understand the output in one glance, and can I defend the metric with a straight face? Demand forecasting won because the data was public and small, the output was a chart that needed zero explanation, and the metric — forecast error — was something a logistics founder already tracked in a spreadsheet. Churn prediction lost because I had no customer-level data I could legally use, and its output only means something when you add a lifetime-value model, which is too much explanation for a five-minute pitch. Step 2: Make It Open Source and Publicly Inspectable The strongest portfolio asset I have is a public repository with a real history: commits, failing tests, refactors, an honest README. Technical co-founders and the senior engineers who filter ML candidates will look at it. Non-technical recruiters rarely do, but the people who actually make hiring and buying decisions for ML work absolutely do. Publicly visible work does two things: It is a permanent, time-stamped record that you have been shipping rather than just learning. It invites collaboration and questions, which turns your repo into a discovery surface. People find you through it, comment on it, and share it. Do not polish it into a lie. One of the reasons my forecasting repo gets attention is the messy commit history — you can watch the model evolve, the 40% miss, the fix. Synthetic-clean repos are suspicious to exactly the people you want to impress. The README is the front door of that repo: a one-paragraph problem statement, a screenshot or two, three commands to run it locally, and an honest \"known limitations\" section. That last section is the one that gets me messages — people open issues against it, and open issues are proof of life. A repo that reads like it was written for a job application reads like it was written for no one. Step 3: Put a Live Demo Where Anyone Can Click It This is the step that makes everything else click, and it is the cheapest one in the whole playbook. A portfolio that a client must clone and run locally is not a portfolio. It is homework. I built a single-page demo: a form where you paste a CSV of weekly orders and get back a forecast chart with a confidence band. I deployed it in an afternoon on free hosting at misar.dev , because it cost nothing and the domain was real — not a myproject.netlify.app URL that screams \"experiment.\" The client clicked the link, uploaded his own data, and watched a forecast appear. That one interaction did more to close the deal than every meeting I had booked. Rules for the demo: One page, one job. Type in data, get an output. No login wall. It must work with the visitor's own data, not canned inputs. Show the uncertainty, not just the answer. A forecast with a confidence band reads as engineering maturity; a bare number reads as a sales pitch. Step 4: Publish the Honest Write-Up Here is the content play that changed everything: write the post-mortem, not the success story. My write-up about the model underprediction by 40% — and the exact changes I made — pulled in more qualified inbound than any \"look at my accuracy\" post I have published since. Why it works is simple: honesty is the rarest commodity in ML marketing. Every other portfolio claims 99% accuracy on a toy problem. Yours admits the failure mode and shows the fix. Founders have been burned by ML salesmen; honesty is the differentiator, and it compounds because the post stays indexed and gets shared in exactly the communities where your next client hangs out. Publish one genuine write-up per project. Put it on Medium, your own blog, LinkedIn, and the communities where practitioners and founders both appear. Then stop writing and spend the saved time on the next step. Step 5: Go Where the Buyers Actually Are A portfolio with no distribution is a trophy. The places that produced my first clients, in order of return on effort: Founder communities, not ML communities. Reddit founder subreddits, local startup meetups, founder Slack and Discord groups, X/Twitter threads where founders complain about manual processes. These are the people with the budget and the pain. ML forums are full of your competition, not your clients. The freelance marketplaces — as a channel, not a career. I used them early to land the first two paid jobs, each priced to win the work but structured so I could show the result publicly with permission. Marketplaces give you the first two data points; referrals and inbound give you everything after. Referrals from finished work. My third and fourth clients came entirely from the first two telling people: \"this person shows up and fixes the thing.\" A note on cold outreach: it works when the message leads with the problem, not the ask. \"I saw you're doing X by hand; here is a demo you can click in thirty seconds\" outperforms \"I offer ML consulting\" by a wide margin, because you are leading with evidence instead of a pitch. A template that has worked for me, stripped to its skeleton: \"I built a demand-forecast demo that takes a pasted CSV and returns a projection. It took a logistics operator from a 40% miss to 6%. If you want, I can point it at your numbers this week — it is twenty minutes on my side.\" Short, concrete, and it offers a test rather than a sales call. I have sent a version of this to founders who later became clients, and none of them asked for my portfolio on the way there. Step 6: Price the Problem, Not the Algorithm The last mistake is pricing. Early on I priced ML by the hour and left money on the table, because clients cannot judge how long a good model takes — so they assume it is fast and cheap. When I switched to pricing the outcome — the forecast that reduces their over-booking, the churn model that saves subscriptions — the number stopped looking like a cost and started looking like an investment. My first client paid $350 a month for the forecasting work. My third charged a flat $2,400 for a churn model plus a 90-day iteration cycle, priced against the revenue the model was expected to protect, not the hours I guessed. Same skills, roughly seven times the price, and the client was happier because the framing matched what they were actually buying. What I Would Skip If you are short on time, here are the things I did that added nothing, and would cut today: Ten half-finished projects. I spent my first two months building four things and shipping none. One deployed system beats four screenshots every single time. Over-engineering the demo. My first version had a login wall, a dashboard, and an admin panel. Nobody used it. The final version was one input, one button, one chart — and that is what closed the deal. Chasing certificates. I have never once had a client ask for my certificates. I have had several ask for the live demo. Spend certificate money and certificate months on the demo instead. Posting only success stories. The underprediction write-up outperformed every win I published, because it is the one people can actually believe. The Client-Acquisition Checklist Before you send another proposal or update another résumé, run this list: [ ] One proof project, deployed, solving a named business problem [ ] Public repository with an honest history and a real README [ ] Live demo anyone can click in under a minute, on a real domain [ ] One honest post-mortem write-up published and linked from the demo [ ] Active presence in at least two founder-facing communities [ ] One finished paid job whose result you can show, with permission [ ] Pricing quoted as an outcome or a fixed project, never a vague hourly figure The client who watched me close my laptop three years ago is now a reference. The portfolio that did not exist became three deployed systems, a public repo, and a demo link I paste into every conversation. Start with step one today. Not ten projects. One, deployed, with an honest story. The rest of the playbook compounds from there — and the first client is closer than your résumé would have you believe. *Gulshan Yad",
+            "url": "https://dev.to/mryadavgulshan/how-to-get-machine-learning-clients-with-no-portfolio-44hg",
+            "source": "DEV Community",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "csharp",
+                "deep_learning",
+                "developpement",
+                "ios",
+                "machine_learning",
+                "programmation",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-09-26T02:30:00+00:00",
+            "collected_at": "2026-09-26T02:50:03.418620+00:00"
+        },
+        {
+            "id": "1ed519cce2a6c7d84509876424014fa07ff97e033a71de726a9c0b76b9eeb4f8",
+            "title": "Elementor 4.3.0 and 4.3.1: CSRF Enables Administrator Account Creation via a Flawed REST Route Check",
+            "description": "1. Basic Information Title: Cross-Site Request Forgery in Elementor Plugin Affecting 2 Million+ Sites Source: Patchstack Published: September 25, 2026 Updated: N/A Severity: critical Severity Basis: When an authenticated administrator opens a crafted link, an attacker can create an administrator account on sites running Elementor 4.3.0 or 4.3.1 with Editor Events enabled. Patchstack rates this as CVSS 8.8, but we assess it as critical due to the impact on site administrative privileges. No active exploitation has been reported in the wild. Original: Cross-Site Request Forgery in Elementor Plugin Affecting 2 Million+ Sites Related Sources: BleepingComputer: Elementor WordPress flaw lets attackers create admin accounts Revision Notes: Clarified the omission of nonce validation and authorization differences, the scope of success in research environments, and the ATT&CK mapping for administrator creation. 2. Overview The Editor Events experimental feature in Elementor bypassed REST API nonce validation via a URL partial match, allowing attackers to create an administrator account simply by having an administrator open a crafted link. 3. Attack Flow The following outlines the validation and implementation paths indicated by public sources. Refer to Attack Success Determination for the scope of observation in real-world environments. One-Click Administrator Account Creation An attacker constructs a single URL combining a REST route, a fake Elementor path, _method=POST , and an administrator creation payload. A WordPress administrator opens the link in a browser where they are currently logged in. Elementor mistakes the partial match within the REQUEST_URI for a legitimate event route and returns true in the authentication filter, thereby bypassing WordPress REST nonce validation. The WordPress REST API processes the user creation route using the victim's cookie authentication and administrator privileges, creating an attacker-controlled administrator account. 4. Attacker Position and Execution Location The attacker sends the link from an external source, and the request itself is sent to WordPress from the victim administrator's browser. The side effect occurs within the WordPress REST API under the victim's authenticated privileges. 5. Victim and Administrator Perspective Victim When an authenticated administrator opens a crafted link, a JSON response containing user information may be displayed. Administrator Unintended administrator accounts or REST API write operations using existing administrator sessions appear. Log coverage depends on the audit configuration. 6. Conditions for Success and Failure Success Conditions Elementor 4.3.0 or 4.3.1 must be installed with the Editor Events experimental feature enabled. The administrator must open the crafted URL while logged into WordPress. Failure Conditions and Mitigation Measures Update Elementor to version 4.3.2 or later. Monitoring administrator creation or permission changes is a supplementary measure for early detection. Alerts or disabling accounts after creation do not prevent CSRF itself. 7. Outcome upon Success An administrator account for the attacker is created. Inference: Depending on the acquired administrative privileges and site-level restrictions, this may lead to subsequent compromises such as content defacement or plugin manipulation. These subsequent actions are distinct from the validation results in the proof of concept. 8. Observable Logs The following are investigation perspectives for your organization. Not all items indicate that actual damage has been observed. Email : Check the source of the crafted link and the click timestamp. Web / Proxy / WAF : Review web server, reverse proxy, or WAF request logs for GET requests containing elementor/v1/events/ and _method=POST , as well as requests to user creation routes. Endpoint / EDR : Check for WordPress/PHP process and plugin modifications, as well as web shell installation. Identity / IdP : Check for new administrators, sessions, and password changes. SaaS / Cloud : Check WordPress audit logs and hosting management configuration changes. Network : Check for abnormal REST write operations originating from the administrator browser IP followed by subsequent use of the newly created account. 9. Attack Success Determination Confirmed in Public Information User Interaction Confirmed : Public Information: the proof of concept described by Patchstack confirmed the action of an administrator opening a link. (Scope: Research environment. In-the-wild exploitation unconfirmed) Subsequent Compromise Confirmed : Public Information: The same proof of concept confirmed the creation of a new administrator account. (Scope: WordPress administrator privileges in a research environment) 10. Investigation Playbook The following are investigation and response recommendations for organizations based on public information: Starting Point : Initiate investigations upon detecting unintended administrator creation, access to crafted links, or the presence of vulnerable versions. Initial Response : Verify the Elementor version, the enabled state of Editor Events, and the administrator session status during the operation. Endpoint : Preserve processes, files, services, persistence mechanisms, and EDR telemetry. Identity / Cloud : Check tokens, keys, logins, and SaaS/cloud audit logs. Follow-up Verification : Track information theft, lateral movement, additional payloads, and configuration changes. Containment : Update to version 4.3.2 or later, investigate and remove unauthorized accounts and modifications, revoke sessions for compromised accounts, and rotate exposed credentials. Outcome Classification : Distinguish link delivery, the administrator's click, REST request processing, unauthorized account creation, and subsequent account use. 11. Defense and Detection Ideas Single Events : Investigate unintended administrator creation or requests containing fake Elementor paths and _method=POST . Timeline : Correlate link access, REST API requests, administrator creation, and the subsequent use of created accounts in a chronological timeline. Hunting : Cross-reference the affected period and asset inventory to retroactively hunt for identical IOCs and behaviors. Log Deficiencies : A lack of necessary records limits the ability to determine success stages. The absence of logs does not necessarily mean execution did not occur. Prioritized Mitigations : Prioritize patching, least privilege, monitoring unauthorized administrator account creation, and retaining audit logs. 12. Facts, Inference, and Hypothesis Facts The affected Editor Events module is present in Elementor 4.3.0 and 4.3.1. It is enabled by default on sites whose first Elementor installation was version 3.32.0 or later. This hidden experiment does not appear on the Experiments screen. Elementor registers a filter callback on rest_authentication_errors at priority 0, returning true and bypassing WordPress REST nonce validation whenever the attacker-controlled REQUEST_URI contains elementor/v1/events/ anywhere within it. Attackers can inject _method=POST and a fake Elementor path into GET request queries, sending administrator creation payloads to the actual /wp-json/wp/v2/users route. In-browser JavaScript or forms on attacker sites are not required; opening the link displays a JSON response. Version 4.3.2 uses resolved rest_route checks to verify that requests begin with permitted routes. The REST nonce bypass does not disable authorization for all routes, but rather produces side effects within the scope of REST the victim's existing permissions. Directing an administrator leads to administrator creation. Inference No additional inferences. Hypothesis No additional hypotheses. Unverified items are listed in Unknowns and Additional Investigation. 13. MITRE ATT&CK Mapping ID Technique Confidence Basis T1204.001 User Execution: Malicious Link high Patchstack's verification requires an authenticated administrator to open a crafted link. T1136 Create Account high Patchstack verified the creation of a WordPress administrator account. Because there is no evidence it is a cloud account, it is mapped to the parent technique. 14. Unknowns and Additional Investigation The presence of in-the-wild exploitation and the number of operational deployments of vulnerable versions 4.3.0 and 4.3.1. The environment-specific impact of other REST endpoints, including those added by third-party plugins, for each victim role. 15. Impact on SOCs and Organizations WordPress sites using Elementor 4.3.0 or 4.3.1 must be updated to version 4.3.2 or later, and organizations should not rely solely on operational policies preventing administrators from opening external links prior to patching. SOCs should correlate REST operations where GET requests within administrator sessions were overridden to POST with subsequent administrator creation. 16. Summary by Persona SOC : Correlate administrator session _method=POST , fake Elementor paths, /wp-json/wp/v2/users , and new administrator creation. Administrators : Update Elementor to version 4.3.2 or later, audit for suspicious administrators, force logouts, and rotate credentials. Users : Avoid opening suspicious links while logged into administrative dashboards, and notify administrators if an unintended JSON screen appears.",
+            "url": "https://dev.to/anoymask/elementor-430-and-431-csrf-enables-administrator-account-creation-via-a-flawed-rest-route-check-4m57",
+            "source": "DEV Community",
+            "category": "cybersecurite",
+            "tags": [
+                "developpement",
+                "git",
+                "java",
+                "javascript",
+                "php",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-26T02:29:01+00:00",
+            "collected_at": "2026-09-26T02:50:03.419535+00:00"
+        },
+        {
+            "id": "8398850f63ef3415417fd2fc734125c3973578615dba74e4919ce20e1a1b4dd8",
+            "title": "Shipping an MCP Server: Desktop App vs Hosted Web App",
+            "description": "We ship two Model Context Protocol servers. One runs inside a desktop application, on the machine where the data already lives. The other runs as a hosted service behind an account, in front of a multi-tenant database. They speak the same protocol and share almost none of the same decisions. Most writing about MCP stops at the hello-world tutorial: register a tool, return a string, done. The interesting part starts after that, when you have to decide where the server runs, how it reaches users, how you update it, what it is allowed to touch, and what happens when the assistant calling it is confidently wrong. Those answers are not a matter of taste. They fall out of the deployment model almost mechanically. Here is the comparison, decision by decision. The two products Hiberden is desktop software for LTO tape archiving. It keeps a local catalog of everything it has archived: every project, every copy on tape, disk, NAS and cloud, every file path, every checksum, and every overnight job. The MCP server ships inside the application. Easy2257 is a hosted service that keeps 18 U.S.C. 2257 records for producers in a federally regulated vertical: who appeared in a scene, that identity was verified, which paperwork is signed, and a certificate proving the record existed at a point in time. Its MCP server runs as part of the service. Nothing is installed. One catalog sits on your desk. The other sits in a database shared by every customer. Nearly everything below follows from that one difference. 1. Where the server runs decides everything else The desktop server is a local process. The transport is stdio: the assistant launches the server as a subprocess on the same machine as the data. There is no network hop, no listening port, and no inbound surface to attack. The catalog it reads is an ordinary local file the user already owns. The hosted server is a network service. The assistant connects across the internet to something holding many companies' records at once. Every single request has to answer \"who is asking, and what are they entitled to see\" before it can answer anything else. The consequence is not subtle. On the desktop, authentication is mostly solved before you write a line of server code: the person is sitting at the machine, and the operating system already decided they can open that file. On a hosted server, authentication is the product surface. It is the first thing you build and the thing you keep rebuilding. 2. Distribution: an installer problem or a documentation problem A desktop server has to physically arrive on the machine. A well-built one ships inside the installer, and it is also published to the official MCP registry as a versioned, checksummed bundle running over stdio, plus third-party directories like Glama, which is increasingly how assistants and their users discover servers at all. A hosted server has nothing to install. The endpoint exists the moment the account exists. Distribution stops being an engineering problem and becomes a documentation problem: the work is making the connection instructions short enough that somebody finishes them. Each model quietly inherits a different environment. Ship on the desktop and you inherit the user's machine: operating system versions, assistant clients that each store their config somewhere different, antivirus software with opinions about unsigned subprocesses. Ship hosted and you inherit the network: timeouts, retries, and clients that will absolutely call the same tool four times in a row. 3. Versioning: pinned forever, or changed for everyone at once This is where the two models diverge hardest, and it is the one people underestimate. On the desktop, the server version is pinned to the application version. A customer running last spring's build is running last spring's tools, and they may run them for years. You cannot fix a tool for everybody at once, and you cannot remove one either, because somebody who never updates will keep calling it forever. Deprecation is a release-notes problem measured in years, not sprints. On the hosted service there is exactly one version and everyone is on it. A fix reaches every customer the moment it deploys. The flip side is that a breaking change breaks every customer simultaneously, and the software calling your tools is not your software. It is somebody's assistant, wired up months ago, that you cannot test against. What that works out to in practice: on the desktop, make changes additive and never alter a tool signature that already shipped. On hosted, you can iterate faster, but treat the tool list as a published API contract, because that is what it is. 4. Credentials: keep them out of the conversation The desktop application already holds credentials it needs for its own work, such as the keys for the customer's own cloud storage account. Those live in the operating system keyring. The rule we settled on is simple and worth stating plainly: credentials never pass through the assistant . The assistant asks the catalog questions and the catalog answers them. Keys are not part of the conversation, are never returned by a tool, and are never needed to call one. The hosted server has the opposite problem, because the connection itself needs a credential. There are two routes in. A customer can generate an API key, which is hashed at rest and displayed exactly once, capped at ten per account, with every key revoked automatically if the account password is reset. Or they can sign in interactively and connect with short-lived tokens, which can be disconnected in one click. Either way, a credential is scoped to exactly one account, and attempts to look up records belonging to somebody else are throttled rather than merely refused. 5. What the tool surface can afford to do Now the interesting part. The two servers made opposite choices, and both are right. The desktop server exposes about thirty tools, and a good number of them write. They can create a project, assign a policy, move an archive between destinations, retire a destination, or delete a copy. That is defensible because the person driving the assistant already owns the data and the machine. Deleting a copy through an assistant is not more dangerous than deleting it through the application's own interface: same person, same computer, same file. What it does require is that consent is explicit and the work leaves a record. Permissions are a setting inside the application rather than something an assistant can grant itself. Read-only is the default. Destructive operations sit behind their own separate switch. Every action is written to an audit trail. The hosted compliance server exposes sixteen tools and none of them can create, change, sign, delete, or pay for anything. That is not timidity. On a shared compliance service, a write tool means an assistant can hallucinate a state change into somebody's federal records. The blast radius is not a ruined afternoon, it is a legal record about a real person. So the write path stays where it belongs: on the website, performed by a human being, on purpose. The rule that falls out of the comparison: how much a tool is allowed to do should track who absorbs the damage when it is wrong. 6. What the tool surface is allowed to see The second divergence is quieter and, we think, more important. The desktop server returns file paths, file names, checksums, and tape barcodes. Every bit of that is already sitting on the user's own disk. Handing it to an assistant running as a subprocess on the same machine leaks nothing that was not already there to read. The hosted compliance server deliberately returns none of the identity data it holds. No names, no dates of birth, no ID numbers, no images, no document contents, no file paths. What comes back is compliance state: record codes, statuses, counts, dates, and content hashes. Records are referred to by public codes rather than by the people in them. That is not a gap in the feature set. It is the reason the surface is safe to point at a shared assistant at all. There is nothing in the payload worth stealing. 7. Discovery works differently too A desktop server is discovered the way software is discovered: registries, directories, and the installer the user already ran. A hosted server is discovered the way an API is discovered: documentation, a setup page, and a connect button inside the product. If you are building one, budget real time for whichever of those applies. A server nobody can find is indistinguishable from a server that does not exist. What we would tell someone starting Decide where the server runs before you write a single tool. Transport, authentication, versioning strategy, and tool design all fall out of that one choice, and reversing it later means rewriting all four. Know which set of hard problems you just signed up for. On the desktop they are distribution, versioning, and permission design. On hosted they are identity, tenancy, and blast radius. Keep credentials out of the conversation. No tool should return one, and no tool should require the assistant to hold one. Treat the tool list as a public API contract either way. On the desktop because you can never take a tool back. On hosted because when you take it back, you take it back from everyone at once. Let the blast radius decide the capability. Not the other way around, and not whatever the framework made easy. Both servers are live. The desktop connector is documented at hiberden.app/mcp , including exactly what it can and cannot do. If you are building something similar and want a second pair of eyes on the architecture, that is the kind of work we do in custom development and local AI integration . Originally published at agaveis.com .",
+            "url": "https://dev.to/agave_info_solutions/shipping-an-mcp-server-desktop-app-vs-hosted-web-app-1hk7",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-26T02:29:00+00:00",
+            "collected_at": "2026-09-26T02:50:03.420743+00:00"
+        },
+        {
+            "id": "d16e3a69853bc84a09108b8329fa5bd3b37dc868ef705e86b4baeed9bd9361fa",
+            "title": "TDengine CVE-2026-42542: Unauthenticated Integer Underflow Crashes taosd with a Single Packet",
+            "description": "1. Basic Information Original Title: One Packet Can Take Down the Database Behind Industrial Operations: Ridge Security Discovers CVE-2026-42542 Source: Ridge Security Published: September 23, 2026 Updated: None Severity: High Basis of Severity: A single unauthenticated packet sent to TCP/6030 can crash the database, and repeated transmission of crafted packets can sustain a restart loop and telemetry gaps. The confirmed impact is a Denial of Service (DoS); remote code execution (RCE) and active exploitation have not been confirmed. Original Article: One Packet Can Take Down the Database Behind Industrial Operations: Ridge Security Discovers CVE-2026-42542 Related Sources: TDengine Official Security Advisory , GHSA-vg95-j2hf-hvjx Revision Note: Separated the DoS verification results from unconfirmed RCE, and organized official affected/fixed versions, observable logs, and ATT&CK mapping. 2. Executive Summary In TDengine's unauthenticated RPC processing, the calculation subtracts both sizeof(STransMsgHead) and the required user-information offset from msgLen. If the message is too short, conversion to an unsigned type causes the subtraction to wrap around to a very large value. This extremely large length is passed to memcpy, causing an out-of-bounds heap access and abnormal termination of the taosd process. 3. Attack Flow The validation and implementation paths identified in public sources are outlined below. For the scope of observation in real-world environments, refer to \"Attack Success Determination.\" Continuous DoS via Unauthenticated Packets An attacker sends a crafted RPC message whose declared length is insufficient for the header and required user information. Signed and unsigned subtraction in the unauthenticated parser wraps around into a large positive number. memcpy accesses memory outside the allocated heap boundary, causing taosd to crash due to a segmentation fault. Even if the service automatically restarts, the attacker continues to send packets to maintain a restart loop and telemetry gaps. 4. Attacker Positioning and Execution Location The attacker is positioned on a network that can reach the TDengine RPC port. Internet exposure is not required; the attack can also originate from a compromised internal host that can reach the RPC port, particularly on a flat OT network. The anomaly occurs during pre-authentication connection processing in the taosd process. 5. Victim and Administrator Perspective Victims Missing data or halted updates on monitoring screens, along with application connection errors, may occur. Administrators taosd segmentation faults, core dumps, repeated automatic restarts, and gaps in data ingestion serve as investigation clues. 6. Success and Failure Conditions Success Conditions Reachability to TCP/6030 of an unpatched TDengine instance. The crafted header reaches the length calculation in uvConnMayGetUserInfo() . Failure Conditions and Mitigations Update to TDengine version 3.4.1.6 or later. Keep TCP/6030 private from the internet and restrict network ACLs to authorized clients only. 7. Impact upon Success Abnormal termination of taosd may lead to lost uncommitted writes, stopped data collection, or halted alerts. Repeated crashes via repeated transmission of crafted packets prolong the outage. This does not indicate the loss of durably committed data or code execution. 8. Observable Logs The following items represent investigation viewpoints for organizations. They do not imply that every item was observed in an actual attack. Email : No reports indicate email was used as an initial access vector. Proxy / SWG / DNS : Standard Web proxy or DNS logs alone cannot inspect the contents of TCP/6030 RPC requests. Correlate with network logs capable of capturing the target traffic. Endpoint / EDR : Identify taosd segmentation faults, core dumps, and restarts initiated by systemd. Identity / IdP : Successful authentication is not required, so the absence of successful-login events does not rule out exploitation. SaaS / Cloud : Check for data ingestion gaps and service state events in monitoring platforms. Network : If connections and packet capture for TCP/6030 are available, inspect msgLen and correlate with crash timestamps. 9. Attack Success Determination Confirmed in Public Information DoS Success Verified in Research Environments : Ridge Security verified that taosd can be stopped using crafted packets. Real-world exploitation and successful RCE have not been confirmed. Organization-Specific Determination Criteria Attack Attempt Observed (Success Unconfirmed) : Criteria: The observation of suspicious RPC requests alone does not constitute a successful DoS. It must be supported by a corresponding taosd abnormal termination and service outage matching the connection timestamp. While Ridge Security verified DoS success in a research environment, real-world exploitation remains unconfirmed. (Scope: Internal investigation criteria; distinct from research-environment DoS success). 10. Investigation Playbook The following outlines an investigation and response plan for organizations based on public information: Starting Point : Begin with taosd abnormal terminations, restart loops, and gaps in data ingestion. Initial Response : Verify whether TDengine versions 3.4.0.0 through 3.4.1.5 are in use and check the reachability scope to TCP/6030. Endpoint : Preserve taosd logs, core dumps, service restart records, and any available RPC communication records. Identity / Cloud : Check tokens, keys, logins, and SaaS/cloud audit logs. Follow-up Verification : Track repeated crashes after restart and missing ingested data. Judge RCE and credential theft based on separate evidence. Containment : Restrict RPC connections to authorized clients only and update to supported versions containing the fix in 3.4.1.6. Account for the impact of updates and restarts on monitoring outages. Outcome Classification : Distinguish suspicious connections, malformed requests, confirmed crashes, service outages, and any separately evidenced subsequent compromise. 11. Defense and Detection Ideas Single Event : Detect taosd segmentation faults, core dumps, and abnormally frequent restarts. Timeline : Correlate connections to TCP/6030, taosd abnormal terminations, restarts, and data ingestion gaps. Hunting : Cross-reference the impact period with asset inventories to retroactively hunt for matching IoCs and behaviors. Logging Gaps : A lack of required logs limits the ability to determine success stages. The absence of logs alone does not confirm non-execution. Priority Actions : Prioritize patching, restricting inbound access to the RPC port, monitoring service availability, and retaining crash and network logs. 12. Facts / Inference / Hypothesis Facts TDengine versions 3.4.0.0 through 3.4.1.5 are affected, and the issue is resolved in 3.4.1.6. TDengine's custom binary RPC protocol uses TCP/6030 by default, where the pre-authentication function uvConnMayGetUserInfo() subtracts an unsigned header/offset from a signed 32-bit integer msgLen supplied by the attacker. The vulnerable calculation subtracts both sizeof(STransMsgHead) and the required user-information offset from msgLen. If the message is too short, conversion to an unsigned type causes the subtraction to wrap around to a very large value near 2^64 on 64-bit environments. This value is passed to the length argument of memcpy, causing out-of-bounds heap access and a segmentation fault. The confirmed impact is an unauthenticated remote DoS. Even if the taosd process restarts, repeated transmission of crafted packets can sustain a crash loop. Ridge Security has not confirmed real-world exploitation telemetry or published exploit code, and has not publicly released a PoC. Inference Heap corruption could theoretically be the subject of RCE research, but public evidence is limited to a stable DoS, making it impossible to conclude that RCE is feasible. Hypothesis No additional hypotheses. Unconfirmed items are listed under \"Unknowns and Additional Investigation.\" 13. MITRE ATT&CK Mapping ID Technique Confidence Basis T1499.004 Endpoint Denial of Service: Application or System Exploitation High Ridge Security verified taosd termination using crafted RPC packets. Real-world exploitation is unconfirmed. 14. Unknowns and Additional Investigation Whether active exploitation has occurred on the internet or inside OT networks. Whether the heap corruption can be leveraged into code execution. The number of unrecognized TDengine instances embedded within OEM products or appliances. 15. Impact on SOCs and Organizations Organizations using TDengine in factories, energy systems, IoT, or vehicle telemetry should update to version 3.4.1.6 or later and restrict port 6030/TCP exclusively to authorized application hosts. SOCs should correlate these indicators by host and time, and investigate related events as a suspected DoS incident. 16. Audience-Specific Summary SOC : Correlate 6030/TCP short connections, taosd segmentation faults, core dumps, restart loops, and data ingestion gaps. Administrators : Update to version 3.4.1.6 or later and restrict 6030/TCP to authorized clients via ACLs or host firewalls. Users : General user actions cannot prevent this issue. Report missing or halted monitoring dashboards to operations management.",
+            "url": "https://dev.to/anoymask/tdengine-cve-2026-42542-unauthenticated-integer-underflow-crashes-taosd-with-a-single-packet-38o9",
+            "source": "DEV Community",
+            "category": "cybersecurite",
+            "tags": [
+                "cve",
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-26T02:25:24+00:00",
+            "collected_at": "2026-09-26T02:50:03.421621+00:00"
+        },
+        {
+            "id": "eb7f3154268765c5f345829a549e52afc315674526ba11641304008b651a929a",
+            "title": "Why an AI Agent Can Execute the Same Action Twice",
+            "description": "AI agents are becoming execution systems. They no longer just answer questions. They send messages, create tickets, issue refunds, make bookings, update customer records, trigger deployments, provision resources, and call tools that change external state. That creates a failure mode distributed-systems engineers already know well — but agent loops make it unusually easy to trigger: a tool call can succeed and still look like a failure to the agent. Consider a refund: An agent decides to issue the refund. The request reaches the payment provider. The provider commits the refund. The response is lost, delayed, or times out. The agent sees an error. The framework retries the tool. At step 6, the important question is no longer: Did the request fail? It is: Did the external effect already happen? That distinction is where ordinary retry logic can become dangerous. A timeout is not proof of failure A timeout describes what the caller observed. It does not prove what the external provider did. After a lost acknowledgement, at least two realities may be consistent with the evidence the agent has: the refund did not happen, so retrying is necessary; the refund did happen, so retrying may create a duplicate. This is an ambiguous outcome . If the agent cannot distinguish those realities, blind retry is not merely a reliability mechanism. It can create a second real-world action. The same pattern applies far beyond payments: sending the same email twice; creating the same booking twice; submitting the same order twice; provisioning the same paid resource twice; firing the same deployment twice; updating an account more than once; triggering the same webhook-backed action twice. The underlying problem is not \"AI hallucination.\" It is distributed-systems uncertainty at the boundary between intent and external effect . Why agent systems amplify the problem Traditional applications already retry failed network operations. Agent systems add more ways for repetition to occur. A tool may be repeated because: the model decides to retry after an error; the framework has retry logic; a workflow resumes from a checkpoint; a process crashes and restarts; a supervisor redispatches work; a sub-agent is re-run; an MCP tool call is attempted again; a user asks the agent to \"try that again.\" These mechanisms can all be individually reasonable. The danger appears when they cross a side-effecting boundary without preserving the identity and outcome of the logical action . Tool-call IDs are usually the wrong identity A request ID, tool-call ID, trace ID, retry counter, or timestamp usually identifies an attempt . But a retry of the same refund is not a new business intention just because it has a new tool-call ID. For safe retry handling, we need a stable logical operation identity . For example: refund / order_123 should identify the same intended refund across all retries of that action. Attempt 1 might have one request ID. Attempt 2 might have another. But if both represent the same intended refund, the logical operation identity should remain stable. This gives us an important distinction: transport identity -> which attempt is this? logical identity -> which real-world action is this? Those are not the same question. Identity alone is not enough There is another failure mode. Suppose an application reuses the same logical operation ID but changes a value that affects the real-world action. For example: operation: send_invoice_4821 attempt 1 destination: alice@example.com attempt 2 destination: bob@example.com Those should not be treated as equivalent retries. The operation identity therefore needs to be bound to the effect-bearing payload . If a field can change the external effect — amount, destination, message body, booking details, resource configuration, recipient, etc. — changing it should produce a conflict or a new intentional operation. Otherwise a deduplication mechanism can become a different kind of bug: incorrectly collapsing two distinct actions into one. The state many systems are missing: UNKNOWN A useful execution model has at least three outcome states: State Meaning Safe default CONFIRMED Authoritative evidence says the effect happened Return/replay the known result; do not execute again ABSENT Authoritative evidence says the effect did not happen Execution may proceed UNKNOWN The effect may have happened, but available evidence cannot prove which state is true Reconcile or block The critical rule is: UNKNOWN is not permission to execute again. This sounds conservative because it is. If duplicate execution could be expensive or irreversible, safety sometimes requires giving up immediate progress. That is the classic tradeoff between safety and liveness : safety: do not accidentally create the duplicate effect; liveness: eventually complete the requested action. If provider truth is unavailable, a high-impact operation may have to remain blocked until a human or a trusted system can resolve it. Reconciliation: ask reality before repeating it When an outcome is ambiguous, the strongest recovery path is often reconciliation . Instead of retrying the mutation, perform a read-only check against an authoritative system. For a refund, that could mean asking the provider whether the refund exists. For a booking, check whether the reservation was created. For a message, query the provider-side message ledger if such a facility exists. The flow becomes: external effect may have committed | v UNKNOWN | v authoritative lookup / \\ / \\ CONFIRMED ABSENT | | v v do not repeat execution may proceed The phrase authoritative matters. A missing local database row is not automatically proof that the external effect did not happen. Neither is a timeout. Neither is an empty cache. ABSENT should require evidence strong enough to justify repeating the action. Not every agent tool needs this There is an obvious counterargument: Do we really want every search, calculation, and read operation going through durable execution coordination? No. That would add latency and complexity where there is little duplicate-effect risk. A better model is selective routing. For example: Route Meaning DIRECT No consequential external mutation identified PROTECT Duplicate execution could create an undesirable external effect BLOCK The system cannot establish that execution is safe A web search is usually DIRECT . A local calculation is usually DIRECT . A refund, message send, booking, order creation, or deployment trigger may be PROTECT . A tool with conflicting or insufficient safety information may be BLOCK . The asymmetry matters: a false positive mostly costs latency or integration friction; a false negative can permit an unintended duplicate real-world action. For consequential tools, conservative classification is often the rational choice. This is not a universal \"exactly once\" claim \"Exactly once\" sounds attractive, but it is easy to overstate when independent systems are involved. A client generally cannot atomically commit both: an arbitrary external provider's state; and its own local acknowledgement state unless the systems share an appropriate transaction, deduplication, or reconciliation contract. So the defensible target is narrower: One intended consequential operation should produce at most one corresponding external effect across retries — under explicit assumptions — or the system should block rather than guess. Those assumptions include: stable logical operation identity; complete effect binding; durable safety state; controlled execution concurrency; an execution boundary that cannot simply be bypassed; authoritative reconciliation where ambiguity cannot otherwise be resolved. That is a safety property, not a promise that every operation will eventually succeed. Where Once fits We have been building Once , an open-source execution-safety layer for AI agent tools and MCP integrations, around this model. The project separates attempt identity from logical action identity, preserves ambiguous outcomes, binds effect-bearing input to protected operations, and increasingly classifies toolsets so harmless calls can remain direct while consequential calls receive stronger protection. The current public implementation includes: TypeScript and Python SDKs; MCP support; deterministic cross-language operation identity; local durable protection; tool discovery and classification; selective DIRECT / PROTECT / BLOCK routing; framework integrations; hostile-retry evidence across multiple agent frameworks. The important part is the boundary of the claim. Once does not claim universal exactly-once execution across arbitrary providers and arbitrary deployments. If authoritative truth is unavailable, the correct state may remain UNKNOWN . That limitation is part of the design rather than something to hide. We published the full systems model I have now published the deeper technical treatment as a citable technical paper: Reliable Execution of Consequential AI Agent Actions Under Retries and Ambiguous Outcomes Jamie Oswald — Once Research Published: 26 September 2026 DOI: 10.5281/zenodo.22969881 The paper covers: the formal one-effect safety property; trust assumptions; ambiguous-outcome failure states; logical identity versus attempt identity; effect binding and payload drift; CONFIRMED / ABSENT / UNKNOWN ; reconciliation; selective tool protection; related techniques including idempotency keys and durable workflow systems; hostile-retry evidence; threats to validity; falsifiable failure criteria. If you are building agents that can change external state, the question I would ask is simple: If this tool times out after the external effect commits, what prevents the retry from doing it again? If the answer is only \"the framework retries carefully,\" there is probably another reliability boundary worth examining. Links Technical paper: https://doi.org/10.5281/zenodo.22969881 Once research page: https://onceexec.com/research/ Once: https://onceexec.com/ GitHub: https://github.com/stringsofthemind-oss/once",
+            "url": "https://dev.to/stringsofthemindoss/why-an-ai-agent-can-execute-the-same-action-twice-2mb7",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "git",
+                "programmation",
+                "python",
+                "rust",
+                "typescript",
+                "web"
+            ],
+            "published_at": "2026-09-26T02:24:54+00:00",
+            "collected_at": "2026-09-26T02:50:03.423108+00:00"
+        },
+        {
+            "id": "f5a5b7a6561d4d4a18be6834a396ed646da99a980b0316da0b5ece7f4e0f056a",
+            "title": "Vim Basics",
+            "description": "Just the basics you need to get started. Also for those who are trapped in classic vim situation, where you don't know how to quit! Vim is a powerful, keyboard-driven command-line text editor (an improved version of the classic Unix “vi”) used for efficiently editing code and plain-text files. Things you need Linux Mint or Ubuntu Vim 8.2 or above Alacritty terminal (Why? Just for feel!) Install sudo apt update && sudo apt install vim Open a file in Vim Suppose you are inside a folder called hello and it has a file hello.txt . You open the file in Vim: vim hello.txt Modes of Vim In vim we have modes. When you open a file the default mode is Normal mode. Normal mode -> Esc key Insert mode -> i Command mode -> Esc key then : What the heck are modes? When you press ' i ', you can type in the editor, thats Insert mode. When you press ' Esc ' key, you go back into Normal mode where you can view the file without typing. When you press ' : ' inside normal mode, that is Command mode. For beginners, insert mode is for you to type. Later you will learn the powers of normal mode where you can use Vim's shortcuts to edit the file super hyper fastly! Command mode, for now, is for saving the changes you made and to quit and get out of Vim. Quit, Save, and others First, press ' Esc ' to ensure you are in Normal mode. Then: To just quit: Type :q then press Enter To just save: Type :w then press Enter To save and quit at once: Type :wq then press Enter To quit without saving: Type :q! then press Enter Example 1) Open the hello.txt file: vim hello.txt 2) Type some text: Press i Then type this text: hello world! 3) Save the changes: Press Esc to come out of insert mode Type :w and press Enter to save the changes 4) Quit: Type :q and press Enter to quit Classic 'Unable To Quit Vim' Situation If you are someone who just want to quit, then: Press Esc then type :q! then press Enter Thats it! 🥶",
+            "url": "https://dev.to/csm18/vim-basics-4l30",
+            "source": "DEV Community",
+            "category": "linux",
+            "tags": [
+                "developpement",
+                "linux",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-26T02:21:08+00:00",
+            "collected_at": "2026-09-26T02:50:03.423464+00:00"
+        },
+        {
+            "id": "079d01d64659eb5a15fe1f76935d74e6a7047880cc83ec9f50ab1e71c8511a7b",
+            "title": "Two XenForo Flaws in One Release: Empty OAuth2 Credentials and a Passkey That Belonged to Someone Else",
+            "description": "Two XenForo Flaws in One Release: Empty OAuth2 Credentials and a Passkey That Belonged to Someone Else Two authentication paths, one shared weakness in assumptions XenForo 2.3.13 fixed two authentication defects that were reported separately and share a common cause: a check that verified presence rather than value or ownership. Both were published with researcher write-ups, which makes them useful case studies for anyone maintaining an authentication path. CVE-2026-73309: an empty string that skipped a comparison The OAuth2 token endpoint in XenForo before 2.3.13 accepted empty values for client_secret and code_verifier . The endpoint called assertRequiredApiInput() , which confirmed that the parameters existed but did not require a non-empty value. The credential comparison that followed was guarded by a truthiness test. In PHP, both '' and '0' evaluate as false. The comparison block was therefore skipped entirely when the client sent an empty string. The same pattern affected authorization-code and refresh-token grants. An attacker who held a valid authorization code could exchange it for a token pair without proving possession of the PKCE code verifier or the client secret. NVD records a CVSS 3.1 base score of 7.4, and VulnCheck lists a CVSS 4.0 score of 9.1. PKCE exists precisely to bind an authorization code to the client that requested it. Skipping the verifier check removes that binding, and the remaining protection is whatever the authorization step required. CVE-2026-73313: a correct signature for the wrong user The second flaw sits in the passkey two-step verification provider. During the WebAuthn assertion step, XenForo looked the credential up globally. It verified the challenge, origin, relying-party ID, signature, presence flag and counter, and all of that verification succeeded. The credential record also contained the owner's user_id . The provider never compared that user_id with the account waiting to complete login. An attacker who knew a target account's password could start a login for that account, then complete the WebAuthn prompt with a passkey registered to their own account. The login finished as the victim. The issue affected both the public forum login and the admin control panel. This is an authorization gap rather than a cryptography failure. Every cryptographic check worked. The missing step was the one that asks whether this credential belongs to this account. Why both bugs survive review Both defects are the kind that pass a functional test. In the OAuth case, a correct client sends a secret and a verifier, the comparison runs, and the flow succeeds. In the passkey case, a legitimate user presents their own credential during their own login, and the check succeeds. The failure only appears when a request arrives that a well-behaved client would never send. That is the case for negative tests in authentication code: empty values, wrong-owner credentials and type-confused parameters belong in the test suite alongside the happy path. Defensive implications Update to XenForo 2.3.13 or later for both fixes. Treat the two issues separately during triage, because they have different prerequisites: the OAuth2 flaw needs a valid authorization code, while the passkey flaw needs knowledge of the victim's password. Perform both fixes if the deployment runs an add-on that implements its own token endpoint. Add-ons frequently copy the parent application's validation pattern, which means the same truthiness guard can exist in third-party code. Review the logs for the shapes these bugs produce. A token request with an empty client_secret or code_verifier is not normal client behaviour. A passkey assertion that resolves a credential whose owner does not match the pending login is worth alerting on as well. Finally, treat passkey support as an identity-design question rather than a checkbox. A second factor that verifies a valid credential without verifying whose credential it is does not strengthen authentication; it changes which credential an attacker needs. References Researcher write-ups for CVE-2026-73309 and CVE-2026-73313. VulnCheck advisories for the XenForo OAuth2 token endpoint bypass and the passkey TFA bypass. NVD record for CVE-2026-73309.",
+            "url": "https://dev.to/jeffreyciend/two-xenforo-flaws-in-one-release-empty-oauth2-credentials-and-a-passkey-that-belonged-to-someone-2i0p",
+            "source": "DEV Community",
+            "category": "cybersecurite",
+            "tags": [
+                "aws",
+                "cve",
+                "developpement",
+                "git",
+                "php",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-26T02:20:39+00:00",
+            "collected_at": "2026-09-26T02:50:03.423861+00:00"
+        },
+        {
+            "id": "24c43349e646179769edfa7beb1a603aa8829d8db316d71937f6ad86493e45cf",
+            "title": "Building an Accessible Angular Combobox: What the ARIA Checklist Doesn't Tell You",
+            "description": "Your combobox passes the audit. It still doesn't work with a screen reader. I've been building frontends for 13 years, and I've used a lot of open source along the way. This year I wanted to give something back. So I decided my first contribution would be small, and I'd do it properly. I picked a combobox. It looks like the simplest component there is: an input, a list, pick one. It isn't. Most component libraries treat accessibility as a checklist. Add role=\"listbox\" , add aria-expanded , run an automated audit, get a green tick, ship. And the result can still be unusable with a screen reader. The hard parts of a combobox aren't attributes. They're about focus, what gets announced and when, and what happens when the list changes while someone's typing. This post goes through the decisions I made building ngx-generic-combobox , an Angular 22 component built on Signals. Most of them apply to any framework. Arrow keys, Escape, filtering and Enter. The panel on the right shows what a screen reader hears. 1. Focus never leaves the input This is the one most implementations get wrong. When a user arrows through the options, the obvious move is to put real DOM focus on each option. Screen readers are happy. But now the user can't type, because focus is no longer in the input. And typing is the whole point of a combobox. The fix is virtual focus. DOM focus stays in the input, and aria-activedescendant tells assistive technology which option is active: <input type= \"text\" role= \"combobox\" [attr.aria-expanded]= \"isOpen()\" [attr.aria-controls]= \"listboxId\" [attr.aria-activedescendant]= \"activeDescendantId()\" aria-autocomplete= \"list\" /> Note that role=\"combobox\" sits on the input itself, not on a wrapper div . ARIA 1.2 moved it there so the element that has focus is the element carrying the state. There's a detail here that's easy to miss. When nothing is active, aria-activedescendant should be absent , not an empty string: protected readonly activeDescendantId = computed (() => { const i = this . activeIndex (); return this . isOpen () && i >= 0 ? this . optionId ( i ) : null ; }); Returning null makes Angular remove the attribute. An empty string is a reference to nothing, and some screen readers react to that by announcing nothing at all. Virtual focus has a side effect I only found while writing a Storybook story with a long list. Because DOM focus never moves into the list, the browser never scrolls the active option into view. Arrow down far enough and you're selecting options you can't see. So an effect handles it: effect (() => { const index = this . activeIndex (); if ( ! this . isOpen () || index < 0 ) return ; const option = this . listbox ()?. nativeElement . children [ index ] as HTMLElement | undefined ; option ?. scrollIntoView ?.({ block : ' nearest ' }); }); block: 'nearest' scrolls the minimum needed, and does nothing when the option is already visible. Without it, the list jumps on every keypress. 2. Announce the count, not the list When you type into a combobox, the list filters. A sighted user sees that happen. A screen reader user gets silence. So there's a separate live region that announces how many results are left: <div class= \"ngx-combobox__sr-only\" role= \"status\" aria-live= \"polite\" > {{ announcement() }} </div> protected readonly announcement = computed (() => { if ( ! this . isOpen ()) return '' ; const n = this . filtered (). length ; if ( n === 0 ) return this . emptyMessage (); return n === 1 ? ' 1 result available ' : ` ${ n } results available` ; }); It's polite on purpose. Reading the whole list out would interrupt the user mid-word. The count is enough to know whether to keep typing. And the \"No results\" row in the list is deliberately not role=\"option\" . You can't select it, so it shouldn't be counted as an option. 3. Small keyboard decisions that matter None of these is big on its own. Together they're the difference between a component that works and one that's just technically compliant. Escape does two different things. The first press closes the list and keeps what you typed. Only a second press, with the list already closed, clears the field. If one press did both, a single slip of the finger would wipe out someone's input. case ' Escape ' : event . preventDefault (); if ( this . isOpen ()) { this . close (); } else { this . query . set ( '' ); this . value . set ( undefined ); } break ; Navigation stops at the ends. No wrapping from the last option back to the first. In a filtered list, wrapping makes it really easy to go past the option you wanted without noticing. Disabled options stay in the DOM. Arrow keys skip them and you can't select them, but they're still rendered and counted. If the number of options changed depending on how you got there, the announced count would stop making sense. Home and End belong to the text cursor while the list is closed. They only jump between options once it's open. I know this one well, because my first test run failed on it. The component was right. The test was wrong. Blur restores the selected label. If you type half a word and tab away, the field goes back to what you actually picked. A half-typed query never pretends to be a choice. Tab never gets trapped. It closes the list and moves on, and doesn't quietly select anything. 4. Visual accessibility too Screen readers aren't the whole story. The active option has a background colour and an inset border, because colour alone fails WCAG 1.4.1 . Windows High Contrast mode drops backgrounds entirely, so there's a forced-colors block that swaps in a system-coloured border: @media ( forced-colors : active ) { .ngx-combobox__option--active { border : 2px solid Highlight ; } } And prefers-reduced-motion turns off the chevron animation. 5. Test the contract, not the implementation The component has 20 tests, and they check the accessibility contract: the label is associated, aria-expanded is right, aria-activedescendant is there when it should be and gone when it shouldn't, only one option is aria-selected , the live region says the right thing, and Escape behaves both ways. Here's why that matters. A test that says \"clicking an option sets the value\" will keep passing after a refactor that breaks the component for screen reader users. A test that says \" aria-activedescendant points at the active option\" won't. I've led frontend teams for years, and this is the same rule I'd set for any test suite: test what the user depends on, not how the code happens to do it. What isn't done yet I'd rather be honest about this than oversell it. It hasn't been tested with real screen readers yet. The tests check the ARIA contract, which is necessary but not enough. NVDA, JAWS and VoiceOver disagree with each other in ways only manual testing finds. That's next. No automated axe check in CI yet. No multi-select, option groups or async loading. Each of those changes the ARIA pattern rather than just adding to it, so I'd rather build them properly than fake them. Try it npm install ngx-generic-combobox The source is on GitHub , and every decision in this post has a comment in the code explaining why. If you use a screen reader and try it, I'd really like to hear what breaks.",
+            "url": "https://dev.to/rawia_ahmed_7514e4af94630/building-an-accessible-angular-combobox-what-the-aria-checklist-doesnt-tell-you-5dhc",
+            "source": "DEV Community",
+            "category": "cloud",
+            "tags": [
+                "aws",
+                "developpement",
+                "git",
+                "programmation",
+                "web",
+                "windows"
+            ],
+            "published_at": "2026-09-26T02:20:20+00:00",
+            "collected_at": "2026-09-26T02:50:03.424702+00:00"
+        },
+        {
+            "id": "1462e9de1b25c4c9921e86f79b1d984e8debed110fae8ea678bef8a3100af77a",
+            "title": "File Change Notification Side Channel: Estimating Keystroke Timing and Browsing Activity on Linux, Android, and Windows",
+            "description": "1. Overview Original Title: File Notification Attacks: Side-Channel Leakage from the File-Notification System on Linux, Android, Windows, and macOS Source: Graz University of Technology (File Notification Attacks Research Team) Publication Date: 2026-09-24 (Public disclosure date by researchers) Updated: None Severity: High Basis for Severity: While local execution is required, unprivileged actors can estimate the activities of other users or apps with high precision. On Linux, this is also used for UI spoofing. A proof-of-concept is publicly available, but active exploitation in the wild has not been confirmed. Original Link: File Notification Attacks: Side-Channel Leakage from the File-Notification System on Linux, Android, Windows, and macOS Related Sources: Research Paper (Evaluation Conditions and Measurement Results) , Microsoft: Access Check Enhancements to Prevent Unauthorized Disclosure of File Paths , Public Disclosure by Researchers , Windows, Linux, Android File Notification Systems Leak User Activity , Proof-of-concept code Reason for Revision: The research material was used as the primary source to clarify OS-specific prerequisites, F1 scores, partial mitigations on Linux, and disabled-by-default mitigations on Windows. 2. Executive Summary Researchers demonstrated that unprivileged local processes and Android apps without special permissions can use file change notifications to infer keystroke timings, browsing destinations, and WhatsApp media interactions without reading the file contents. Leaked information and prerequisites vary by operating system. 3. Attack Flow The validation and implementation paths indicated by public sources are organized below. See \"Attack Success Verification\" for the scope of the researchers' demonstrations and the status of in-the-wild exploitation. Path A: Activity Monitoring on Linux, Windows, and Android An attacker executes unprivileged code on the target device and registers notifications for monitorable directories depending on the operating system. Researchers verified monitoring of readable parent directories on Linux, drive roots on Windows, and specific app media areas via FileObserver on Android. Activity is inferred from the acquired path names and event timestamps. On Windows browser storage, site names included in paths may leak directly. Path B: Spoofed Authentication Prompt in the Victim's Linux User Session The attacker's process runs under the victim's user account within the same graphical session. Notifications detect when the KDE Plasma 6 authentication screen appears, and a spoofed screen is overlaid. Credentials entered by the victim into the fake screen are captured. This differs from the separate-user monitoring permission conditions in Path A. 4. Attacker Position and Execution Location Activity monitoring requires unprivileged code execution on the device. On Android, validation used apps that do not request additional permissions. Credential theft via the KDE fake authentication screen assumes the attacker's process runs under the victim's user account within the same graphical session. 5. Victim and Administrator Perspective Victim For activity monitoring alone, there are no noticeable screen changes. In the KDE PoC, a fake screen resembling the legitimate authentication prompt appears. Administrator File notification APIs are also used by normal applications. Identifying suspicious monitoring targets or spoofed screen processes requires appropriate endpoint telemetry. 6. Success and Failure Conditions Success Conditions The attacker can execute code on the target host and monitor parent directories or roots. Observable path and timing patterns exist that link notification events to user actions. Credential theft via the KDE fake authentication screen additionally requires the attacker's process to run under the victim's user account within the same graphical session and user input into the fake screen. Failure Conditions and Risk Reduction Measures Apply Linux kernels containing the fix for CVE-2025-68788. This fix is a partial mitigation that suppresses access and modify notifications for special files, and does not resolve all information leaks demonstrated in the research. Install the applicable Windows updates released on or after April 8, 2025, then enable EnforceDirectoryChangeNotificationPermissionCheck according to Microsoft's guidance after testing compatibility. This is disabled by default and adds access checks to NTFS/ReFS change notifications. Review local execution privileges, app installations, and user isolation on shared hosts. 7. Impact Upon Success Keystroke timings, web browsing destinations, WhatsApp media filenames and operations, and app launches are inferred. The Linux same-user PoC displays a fake authentication dialog at an opportune time to proceed with password theft. 8. Observable Logs The following items are investigation perspectives for your organization. They do not indicate that every item was observed in actual attacks. Email : No reports indicate email was used as an initial access vector. Proxy / SWG / DNS : Check for outbound transmission of inferred results or credentials. Endpoint / EDR : If corresponding telemetry is enabled, inspect monitored targets of inotify, FileObserver, or ReadDirectoryChangesW, executing processes, and fake authentication screens. Standard EDR logs may not capture all API calls. Identity / IdP : Verify creation of separate local users, interactive logins, and sudo failures. SaaS / Cloud : Check MDM app installation history and VDI user allocations. These records alone do not confirm actual use of FileObserver. Network : Check for external transmission of observation results or credentials. Local directory monitoring itself does not appear in network logs. 9. Attack Success Verification Confirmed in Public Information Initial Execution Confirmed : Public Information: Researchers executed side-channel PoCs on Linux, Android, Windows, and macOS. (Scope: Controlled experiments. Active exploitation in the wild unconfirmed) Information Theft or Session Compromise Confirmed : Public Information: Researchers demonstrated credential acquisition via fake authentication dialogs in a Linux KDE PoC. (Scope: Research environment under same-user privileges) 10. Investigation Playbook The following are investigation and response recommendations for your organization based on public information: Starting Point : Begin with suspicious local processes, fake authentication screens, or unusual file monitoring. Initial Response : Check OS and update status, executing user, monitorable directories, and Windows access check settings. Endpoint : Preserve available notification API and process records, fake screen executables, and app lists. Identity / Cloud : Check tokens, keys, logins, and SaaS/cloud audit logs. Follow-up Verification : Track information theft, lateral movement, additional payloads, and configuration changes. Containment : Isolate and remove suspicious apps or processes, and verify OS-specific mitigations. If input into a fake screen is suspected, rotate the relevant credentials from a trusted device. Determination : Record contact, initial execution, successful authentication/malware, information compromise, and subsequent compromise separately. 11. Defense and Detection Ideas Single Events : Inspect available endpoint logs for unusual notification registration targets or authentication processes impersonating legitimate screens. Notification API usage alone does not indicate maliciousness. Timeline : Correlate process execution, notification registration, fake authentication prompts, and outbound communications within a short timeframe. Hunting : Cross-reference impact periods and asset inventories to proactively hunt for matching IoCs and behaviors. Log Gaps : Notification API monitored targets and calls may not appear in standard audit logs. Verify measurement capabilities and do not treat a lack of logs as proof of non-execution. Priority Actions : Verify Linux partial mitigations and Windows optional settings, and restrict unnecessary local code execution and app installations. 12. Facts / Inference / Hypothesis Facts In a Linux research environment, monitoring readable parent directories to obtain child file notifications yielded F1 scores of 93.1% to 100% in local keystroke timing detection across seven users. These notifications reveal keystroke timing, not the characters typed. In the separate SSH-based attack using /dev/pts, inputs that produce no terminal output, such as sudo password entry with echo disabled, do not generate the required notifications. On Linux, font access notifications for Firefox top 100 site classification reported an open-world evaluation F1 score of 87.9%. Credential acquisition via fake authentication screens was also demonstrated on KDE Plasma 6 under the same user privileges. On Android, apps requiring no additional permissions used FileObserver to observe filenames, transmissions, and deletion timestamps in WhatsApp's private media folders. On Windows, monitoring the drive root via ReadDirectoryChangesW revealed full paths including other users' areas. Evaluating 975 responsive sites out of the top 1,000, browsing destination detection F1 scores were 97.8% for Firefox and 48.5% for Edge. Linux features a partial mitigation via CVE-2025-68788. Microsoft initially stated the behavior was by design, but researchers later confirmed mitigation via Windows access check settings that are disabled by default. Research sites do not list fixes for Android and macOS. On macOS, observed leakage was limited to information about globally readable files. Researchers did not identify an unreadable-file bypass comparable to those found on Linux, Windows, and Android. Inference Because path names and event timelines become sensitive even if file contents cannot be read, directory read permissions alone cannot be treated as low risk. Hypothesis No additional hypotheses. Unverified items are listed under \"Uncertainties and Additional Investigation\". 13. MITRE ATT&CK Mapping ID Technique Confidence Basis T1056.002 Input Capture: GUI Input Capture High Researchers captured input into a fake authentication screen during the KDE same-user privilege PoC. Keystroke timing observation alone is not mapped to character keylogging or screen capture. 14. Uncertainties and Additional Investigation Reproduction scope across various Android vendors and OS versions, and future platform patches. Compatibility when enabling Windows settings and confirmation of active exploitation in operational environments. 15. Impact on SOCs and Organizations On shared Linux servers and VDIs, activity may leak from notification path names and timelines even if reading file contents is prohibited. Because notification APIs are used by normal apps, decisions must combine monitoring targets, the processes and user accounts performing the monitoring, spoofed screens, and outbound communications. Differentiate the scopes of Linux partial mitigations and Windows optional settings, and evaluate isolation between endpoints and users. 16. Summary by Role SOC : Check for mass monitoring registrations, C:\\ or /dev monitoring, browser cache/font path events, and outbound communications. Administrators : Apply Linux patches, verify Windows settings and local access restrictions, and strengthen isolation between users and workloads on shared hosts. Users : Activity can be inferred even by apps requesting no additional permissions. Do not add unnecessary apps or local accounts to devices.",
+            "url": "https://dev.to/anoymask/file-change-notification-side-channel-estimating-keystroke-timing-and-browsing-activity-on-linux-3in7",
+            "source": "DEV Community",
+            "category": "cybersecurite",
+            "tags": [
+                "android",
+                "cve",
+                "developpement",
+                "git",
+                "linux",
+                "macos",
+                "malware",
+                "programmation",
+                "rust",
+                "web",
+                "windows"
+            ],
+            "published_at": "2026-09-26T02:18:44+00:00",
+            "collected_at": "2026-09-26T02:50:03.425705+00:00"
+        },
+        {
+            "id": "35e80b7773746316b64e6173a350a1388b7fcb9b42d8485cd6a5bd040f6e6335",
+            "title": "وكلاء الذكاء الاصطناعي (AI Agents): دليل مبسط للمبتدئين مع أمثلة عملية",
+            "description": "لم يعد الذكاء الاصطناعي مجرد نافذة محادثة نكتب فيها سؤالًا فنحصل على إجابة. خلال العامين الأخيرين ظهر جيل جديد من الأنظمة يسمى \"وكلاء الذكاء الاصطناعي\" أو AI Agents، وهي أنظمة لا تكتفي بالرد، بل تخطط وتنفذ وتراجع نتائج عملها حتى تصل إلى هدف محدد. في هذا الدليل نشرح الفكرة من الصفر، بلغة بسيطة، مع أمثلة عملية يمكن لأي شخص أن يتخيلها في عمله اليومي. ما هو وكيل الذكاء الاصطناعي؟ وكيل الذكاء الاصطناعي هو برنامج يعتمد على نموذج لغوي كبير، لكنه يمتلك ثلاث قدرات إضافية تجعله مختلفًا عن روبوت المحادثة العادي: هدف واضح : لا ينتظر سؤالًا تلو الآخر، بل يُعطى مهمة كاملة مثل \"اجمع لي أسعار المنافسين وضعها في جدول\". أدوات : يستطيع استخدام أدوات خارجية مثل المتصفح، والبريد الإلكتروني، وجداول البيانات، وواجهات البرمجة (APIs). حلقة تفكير وتنفيذ : يقسم المهمة إلى خطوات، ينفذ الخطوة الأولى، يقرأ النتيجة، ثم يقرر الخطوة التالية، ويكرر ذلك حتى ينتهي. بعبارة أخرى: روبوت المحادثة يشبه موظف استقبال يجيب عن الأسئلة، أما الوكيل فيشبه مساعدًا تنفيذيًا تكلفه بمهمة فيعود إليك بعد إنجازها. كيف يعمل الوكيل من الداخل؟ يمكن تبسيط دورة عمل أي وكيل في أربع مراحل: الإدراك : يقرأ الوكيل المدخلات، سواء كانت تعليمات المستخدم، أو صفحة ويب، أو ملفًا مرفقًا. التخطيط : يحول الهدف إلى قائمة خطوات. مثلًا: افتح موقع المنافس، ابحث عن صفحة الأسعار، استخرج الباقات، قارنها بأسعارنا. التنفيذ : يستدعي الأداة المناسبة لكل خطوة، كأن يفتح المتصفح أو يكتب في ملف. المراجعة : يتحقق من النتيجة. إذا فشلت خطوة يعدل خطته ويحاول بطريقة أخرى. هذه الحلقة البسيطة هي سر قوة الوكلاء؛ فهي تسمح لهم بالتعامل مع مهام متعددة الخطوات كانت تحتاج سابقًا إلى إنسان يتابعها باستمرار. الفرق بين الوكيل والأتمتة التقليدية قد يسأل البعض: أليست لدينا أدوات أتمتة منذ سنوات؟ الإجابة نعم، لكن الأتمتة التقليدية تعمل وفق قواعد ثابتة: \"إذا حدث كذا، افعل كذا\". إذا تغير شكل صفحة الويب أو جاءت رسالة بصيغة غير متوقعة، تتوقف الأتمتة. الوكيل في المقابل يفهم السياق. إذا تغير تصميم الموقع، يبحث عن الزر الجديد. وإذا كتب العميل رسالته بلهجة عامية، يفهم المقصود. هذه المرونة هي ما يجعل الوكلاء مناسبين للمهام التي تتضمن قراءة وفهمًا واتخاذ قرارات صغيرة متتالية. أبرز استخدامات وكلاء الذكاء الاصطناعي 1. البحث وجمع المعلومات يمكن للوكيل أن يزور عشرات المواقع، ويقرأ الصفحات، ويستخرج البيانات المطلوبة، ثم يلخصها في تقرير أو جدول. مهمة كانت تستغرق يوم عمل كاملًا قد تنتهي في دقائق. 2. خدمة العملاء وكيل يقرأ رسائل العملاء، ويبحث في قاعدة المعرفة، ويرد على الأسئلة المتكررة، ويحول الحالات المعقدة إلى موظف بشري مع ملخص جاهز للمشكلة. 3. كتابة المحتوى وإدارته من اقتراح الأفكار، إلى البحث عن المصادر، إلى كتابة المسودة الأولى وتنسيقها. أدوات مثل منصة كتّاب Katteb تقدم هذا النوع من الوكلاء الذين يساعدون صناع المحتوى على البحث والكتابة والنشر ضمن سير عمل واحد. 4. العمليات الإدارية متابعة الفواتير غير المدفوعة، وإرسال التذكيرات، وتحديث جداول المتابعة، وجدولة الاجتماعات. 5. المبيعات البحث عن العملاء المحتملين، وتجهيز رسائل تواصل مخصصة لكل عميل بناءً على نشاطه، ومتابعة من لم يرد. مثال عملي: وكيل لمراقبة الأسعار لنفترض أنك تدير متجرًا إلكترونيًا صغيرًا وتريد معرفة أسعار ثلاثة منافسين كل صباح. بدون وكيل، ستفتح المواقع يدويًا وتنسخ الأسعار في جدول. مع وكيل، تكتب له تعليمات واحدة: \"كل يوم الساعة الثامنة صباحًا، افتح صفحات هذه المنتجات عند المنافسين، سجل السعر الحالي وحالة التوفر، وأرسل لي تنبيهًا إذا انخفض أي سعر أكثر من 10٪ عن سعرنا.\" ينفذ الوكيل المهمة يوميًا، وإذا تغير تصميم موقع أحد المنافسين فإنه يحاول العثور على السعر في مكانه الجديد بدل أن يتوقف تمامًا. فوائد الاعتماد على الوكلاء توفير الوقت : المهام المتكررة تنتقل من جدول الموظف إلى الوكيل. الاستمرارية : الوكيل يعمل ليلًا ونهارًا دون إرهاق. تقليل الأخطاء البشرية في المهام الروتينية مثل نسخ البيانات. قابلية التوسع : يمكنك تشغيل عدة وكلاء في وقت واحد لمهام مختلفة. تركيز الفريق على الإبداع : عندما تختفي المهام المملة، يتفرغ الفريق للتفكير والتخطيط. ما الذي يجب الانتباه إليه؟ رغم كل هذه المزايا، الوكلاء ليسوا سحرًا. هناك نقاط مهمة: المراجعة البشرية ضرورية للمهام الحساسة مثل إرسال رسائل للعملاء أو الدفع. الصلاحيات : لا تمنح الوكيل وصولًا أكثر مما يحتاجه. وضوح التعليمات : كلما كان الهدف أوضح، كانت النتائج أدق. الخصوصية : تأكد من طريقة تعامل الأداة مع بياناتك وبيانات عملائك. كيف تبدأ؟ ابدأ بمهمة صغيرة ومتكررة تستهلك وقتك أسبوعيًا، مثل تلخيص رسائل البريد أو جمع بيانات من موقع معين. اكتب خطوات المهمة كما لو كنت تشرحها لموظف جديد، ثم جربها مع وكيل وراقب النتيجة. بعد أن تثق في أدائه، انتقل إلى مهام أكبر. الخلاصة وكلاء الذكاء الاصطناعي هم الخطوة التالية بعد روبوتات المحادثة: أنظمة تفهم الهدف، وتستخدم الأدوات، وتنجز المهام من البداية إلى النهاية. من يبدأ في تجربتها اليوم بمهام بسيطة سيكون مستعدًا عندما تصبح جزءًا أساسيًا من طريقة عمل كل فريق وكل شركة.",
+            "url": "https://dev.to/ptodesk/wkl-ldhk-lstny-ai-agents-dlyl-mbst-llmbtdyyn-m-mthl-mly-2d1e",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-26T02:17:17+00:00",
+            "collected_at": "2026-09-26T02:50:03.426242+00:00"
+        },
+        {
+            "id": "92c11e72ff219a072fc6b01c3735d6ad13bcd2077dd7f7bbd49bf1d1dd4250e4",
+            "title": "\"And, Now... An Evil Has Appeared\" - Nintendo Releases Extended Zelda: Ocarina Of Time Switch 2 Clip",
+            "description": "Here's another look at Ganondorf. Nintendo has already released a trailer for The Legend of Zelda: Ocarina of Time , but if you are hungry for more footage, it's now shared an extended clip focused on Ganondorf. This video has been uploaded on the Nintendo Today! mobile app, and shows Link's encounter with him. Nintendo has also shared comparison videos alongside this, featuring direct footage of the N64 and 3DS versions of Ocarina of Time. Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/news/2026/09/and-now-an-evil-has-appeared-nintendo-releases-extended-zelda-ocarina-of-time-switch-2-clip",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-09-26T01:55:00+00:00",
+            "collected_at": "2026-09-26T02:52:31.641106+00:00"
+        },
+        {
+            "id": "e279c8c4c07a785d408a49f6b3d74dc97ec4e41f072161d50baa4b6407188132",
+            "title": "ECB Seeks to Link TIPS Payment System With Brazil’s Pix",
+            "description": "The European Central Bank (ECB) and the Central Bank of Brazil will examine the feasibility of linking their payment systems as part of the G20 Cross-Border Payment Roadmap. The move seeks to expand Europe’s TARGET Instant Payment Settlement (TIPS) to facilitate international settlements. Europe to Test Interlinking Its Payment System With Brazil’s Pix The ECB […]",
+            "url": "https://news.bitcoin.com/finance/ecb-seeks-to-link-tips-payment-system-with-brazils-pix/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-26T01:50:02+00:00",
+            "collected_at": "2026-09-26T02:52:33.528820+00:00"
+        },
+        {
+            "id": "210a729c34691e07a04d138d667993f0bd6191011551ab3be31628007321b1b3",
+            "title": "Jury finds Facebook liable for deceiving users in Cambridge Analytica case",
+            "description": "Comments",
+            "url": "https://www.cbsnews.com/news/facebook-liable-deceiving-users-cambridge-analytica/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-26T01:36:50+00:00",
+            "collected_at": "2026-09-26T02:50:03.202415+00:00"
+        },
+        {
+            "id": "2a2deb3a612229aa8ba043a8f617f02949fbf43d6d21271d608785daf77ad767",
+            "title": "At Meta Connect, the company’s smart glasses were everywhere",
+            "description": "The company behind Facebook and Instagram wants to keep consumers connected to the digital world via its ever-growing line of smart glasses.",
+            "url": "https://techcrunch.com/2026/09/25/at-meta-connect-the-companys-smart-glasses-were-everywhere/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "git",
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-09-26T01:08:57+00:00",
+            "collected_at": "2026-09-26T02:50:01.463664+00:00"
+        },
+        {
+            "id": "b16497d4560329c377fed5b3529e5a9c222680cd4fab024c7d4a38f239f698cb",
+            "title": "Binance-Owned Coinmarketcap Buys Coinglass as Data Debate Grows",
+            "description": "Coinmarketcap has acquired crypto derivatives analytics platform Coinglass for an undisclosed sum, adding open interest, funding rates, liquidations, and options data to one of the industry’s largest market-data platforms. Coinglass will continue operating independently for now, but the deal has already sparked debate over data concentration, as Coinmarketcap is owned by Binance. Coinmarketcap Adds Coinglass […]",
+            "url": "https://news.bitcoin.com/blockchain/binance-owned-coinmarketcap-buys-coinglass-as-data-debate-grows/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-26T01:05:30+00:00",
+            "collected_at": "2026-09-26T02:52:33.528936+00:00"
+        },
+        {
+            "id": "cdf46c6abf4972a45757c0b622c7d31ff2920d557b208c2fb13057812d8ce8e2",
+            "title": "One Piece of Flock Camera Data Put This Innocent Woman in Jail for 13 Days",
+            "description": "Comments",
+            "url": "https://www.jezebel.com/flock-cameras-data-innocent-woman-arrested-lindsey-isaacs-palm-beach-florida-lawsuit-vehicular-homicide",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-26T00:59:02+00:00",
+            "collected_at": "2026-09-26T02:50:03.202577+00:00"
+        },
+        {
+            "id": "d1a53fc3ae45f25377299c2cabd6f8a01cbdc96776ea0e62abd9922dd3ae7323",
+            "title": "Video: Digital Foundry Delivers Its Tech Analysis Of Fire Emblem: Fortune's Weave",
+            "description": "Fire Emblem's dedicated Switch 2 release is here. Intelligent Systems' turn-based tactical RPG Fire Emblem: Fortune's Weave launched on Switch 2 last week and Digital Foundry has now taken a quick look at how it performs on Nintendo's new hybrid system. The new entry runs at a \"locked\" 30fps. Although this falls short of other first-party titles on Switch 2 (with games such as Mario Kart World running at 60fps), it's still described as being an improvement on the Switch title Fire Emblem Engage , with \"no drops\". Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/news/2026/09/video-digital-foundry-delivers-its-tech-analysis-of-fire-emblem-fortunes-weave",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "git",
+                "intel",
+                "nintendo"
+            ],
+            "published_at": "2026-09-26T00:55:00+00:00",
+            "collected_at": "2026-09-26T02:52:31.641229+00:00"
+        },
+        {
+            "id": "894de69bd65926bcd474cc372e35c8392b06acf36bb95d20eab72723e2d78f43",
+            "title": "TiddlyInstall: A universal, reusable, install system",
+            "description": "Comments",
+            "url": "https://robertsdotpm.github.io/_static/tiddlyinstall.html",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-26T00:29:48+00:00",
+            "collected_at": "2026-09-26T02:50:03.203346+00:00"
+        },
+        {
+            "id": "0818640f0e3282b6fbd933fc32a9ec6c6e6b0b6454acc5b20fbb07b453dcf713",
+            "title": "DOJ Seizes $84M From Tether-Linked Payment Processor Capstone",
+            "description": "The largest stablecoin issuer would have been using the firm as a bridge to be able to hold bank accounts in the U.S. and settle payments to “hundreds of individuals and entities.” The DOJ seized $84 million from Capstone accounts at Wells Fargo and Morgan Chase. Tether Gets Indirectly Hit in Capstone’s $84 Million Seizure […]",
+            "url": "https://news.bitcoin.com/regulation-and-legal/doj-seizes-84m-from-tether-linked-payment-processor-capstone/",
+            "source": "Bitcoin.com News",
+            "category": "hardware",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-26T00:20:48+00:00",
+            "collected_at": "2026-09-26T02:52:33.529034+00:00"
+        },
+        {
+            "id": "a3d8f734a10741b6b3cd2395172cc0c891b45eefcf9343e94e5d70e2b1b2f598",
+            "title": "Show HN: A game about fake news and memes",
+            "description": "Comments",
+            "url": "https://unspin.app/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-26T00:11:33+00:00",
+            "collected_at": "2026-09-26T02:50:03.202963+00:00"
+        },
+        {
+            "id": "e266205743ce16bd34473dcf2bdecac2d7d158cf9e4b8a60b86b7ce8a6b47f0a",
+            "title": "How to keep enjoying programming in a world of LLMs",
+            "description": "Comments",
+            "url": "https://discourse.haskell.org/t/how-to-keep-enjoying-programming-in-a-world-of-llms/14705",
+            "source": "Lobsters",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "developpement",
+                "llm",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-09-25T23:22:27+00:00",
+            "collected_at": "2026-09-26T02:50:03.277350+00:00"
+        },
+        {
+            "id": "1947fc4b63e367739e7dafc9ffbece96ab36e480f60cb6827478f2d1519383ee",
+            "title": "Crusoe abandons $1.25B plan to use Boom turbines at AI data centers",
+            "description": "Boom Supersonic CEO Blake Scholl said its new stationary power plants were no longer in Crusoe's near-term plans.",
+            "url": "https://techcrunch.com/2026/09/25/crusoe-abandons-1-25b-plan-to-use-boom-turbines-at-ai-data-centers/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-09-25T23:11:10+00:00",
+            "collected_at": "2026-09-26T02:50:01.463735+00:00"
+        },
+        {
+            "id": "18ed4702a5aa29fc74e5948da3cd377f65e3bef6df62847d101ca01ba839be78",
+            "title": "Circle Exec Slams Germany’s Proposed 50% Crypto Tax Penalty",
+            "description": "Circle’s Patrick Hansen stressed that the planned reform on crypto taxation would introduce a 50% substitute assessment for crypto assets if users fail to provide credible purchase documentation, with these assets paying 50% of the sales proceeds in taxes. Circle’s Patrick Hansen Criticizes German Crypto Tax Reform The cryptocurrency tax reform proposed by the Federal […]",
+            "url": "https://news.bitcoin.com/regulation-and-legal/circle-exec-slams-germanys-proposed-50-crypto-tax-penalty/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-25T23:10:50+00:00",
+            "collected_at": "2026-09-26T02:52:33.529140+00:00"
+        },
+        {
+            "id": "0cd99ef8e5a1ef855483cdd2e1d15f6acf8932561bdfa0d28fe386e6d4d3a276",
+            "title": "Automattic has a new board after failed attempt to put CEO on leave",
+            "description": "After days of upheaval at Automattic, following a failed attempt to remove CEO Matt Mullenweg, the company has a new board.",
+            "url": "https://techcrunch.com/2026/09/25/automattic-has-a-new-board-after-failed-attempt-to-put-ceo-on-leave/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-09-25T23:04:34+00:00",
+            "collected_at": "2026-09-26T02:50:01.463798+00:00"
+        },
+        {
+            "id": "5465dcbbdfb52ed3853b30a04b1287936524c89b21d6226eb718b7ae9c90d5e8",
+            "title": "Can Trump ever be wrong? His pick to lead FDA refused to say.",
+            "description": "Heidi Overton faced questions focused on vaccines, birth control, and vapes.",
+            "url": "https://arstechnica.com/health/2026/09/can-trump-ever-be-wrong-his-pick-to-lead-fda-refused-to-say/",
+            "source": "Ars Technica",
+            "category": "technologie",
+            "tags": [
+                "informatique",
+                "innovation",
+                "technologie"
+            ],
+            "published_at": "2026-09-25T23:00:26+00:00",
+            "collected_at": "2026-09-26T02:50:01.265396+00:00"
+        },
+        {
+            "id": "8b88658ceeab4a5613f39d14aea8e2a0ae6c8dbec81cee564b880c6565d834ff",
+            "title": "Hell Is Us Shifts Switch 2 Launch Due To \"Very Busy\" September Release Window",
+            "description": "Update: Delayed again, arriving alongside \"major update\". : Nacon's upcoming Switch 2 game Hell Is Us , which has received \"very positive\" ratings on platforms like Steam and was praised by our colleagues at Push Square as a \"must-play\" for fans of lore-filled mystery, is shifting its release date by two weeks. Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/news/2026/09/hell-is-us-shifts-switch-2-launch-due-to-very-busy-september-release-window",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-09-25T23:00:00+00:00",
+            "collected_at": "2026-09-26T02:52:31.641324+00:00"
+        },
+        {
+            "id": "a14687822067b04d27a78342594934f4214e7b24e5f18f0eec733d01a85948ba",
+            "title": "weave: structural merging for different languages",
+            "description": "Comments",
+            "url": "https://github.com/Ataraxy-Labs/weave",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-09-25T22:33:21+00:00",
+            "collected_at": "2026-09-26T02:50:03.277674+00:00"
+        },
+        {
+            "id": "c03329bed3d2062dc0a2b49bbc66e420ddb22a6dc12de2602b13e986dc711723",
+            "title": "Lab on a Contact Lens Can Measure Stress Through Serotonin",
+            "description": "Comments",
+            "url": "https://spectrum.ieee.org/serotonin-stress-smart-contact-lens",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-25T22:28:02+00:00",
+            "collected_at": "2026-09-26T02:50:03.203087+00:00"
+        },
+        {
+            "id": "0411e27744838b14a44daf108b26981d2342d64551dead54a915ad78ec48fdfb",
+            "title": "Unsecured OpenAI agents posted 53 user images on the internet without the lab’s knowledge",
+            "description": "AI agents operating in OpenAI's research environment posted user images on public image-hosting sites without the lab's knowledge.",
+            "url": "https://techcrunch.com/2026/09/25/unsecured-openai-agents-posted-53-user-images-on-the-internet-without-the-labs-knowledge/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "openai",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-09-25T22:20:47+00:00",
+            "collected_at": "2026-09-26T02:50:01.463872+00:00"
+        },
+        {
+            "id": "02cfac176d1dfa12f6b02ed6b0d1804a3d1d71351c27e535f4cf86e8ca2596b1",
+            "title": "U.S. SEC's steadiest crypto advocate, Hester Peirce, to depart next week",
+            "description": "",
+            "url": "https://www.coindesk.com/policy/2026/09/25/u-s-sec-s-steadiest-crypto-advocate-hester-peirce-to-depart-next-week",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-25T22:17:38+00:00",
+            "collected_at": "2026-09-26T02:52:33.304222+00:00"
+        },
+        {
+            "id": "dbbb4e8b0a60b41767a8a4c27fc3d13cdba6755a43d9dba6ca176055d9c8c5d0",
+            "title": "Sequans Sells Final 314 BTC to Clear Corporate Debt",
+            "description": "Sequans Communications sold its remaining 314 bitcoin, fully unwinding its crypto treasury program. The company is redirecting its strategic focus to scaling its core cellular IoT and software-defined radio semiconductor operations. Debt Elimination and Balance Sheet Unwind Sequans Communications has completed its exit from its Bitcoin corporate treasury strategy following the sale of its remaining […]",
+            "url": "https://news.bitcoin.com/finance/sequans-sells-final-314-btc-to-clear-corporate-debt/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-25T22:01:00+00:00",
+            "collected_at": "2026-09-26T02:52:33.529248+00:00"
+        },
+        {
+            "id": "5569bca5352ec422aa826492d7dc6c6964c6c3d30eda5bd85a4297c63260b901",
+            "title": "U.S. Soldier Gets 70 Months in Prison for AT&T, Verizon Extortions",
+            "description": "A U.S. Army soldier who pleaded guilty to hacking into multiple telecommunications companies and stealing mobile call and text metadata for more than 100 million AT&T customers in 2024 was sentenced to 70 months in federal prison today and ordered to pay nearly $300,000 in restitution to victims.",
+            "url": "https://krebsonsecurity.com/2026/09/u-s-soldier-gets-70-months-in-prison-for-att-verizon-extortions/",
+            "source": "Krebs on Security",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "hacking",
+                "investigation"
+            ],
+            "published_at": "2026-09-25T21:44:40+00:00",
+            "collected_at": "2026-09-26T02:50:00.287559+00:00"
+        },
+        {
+            "id": "695c6c7100072cddcb6034e4ee2e9781432f2cb79136abdcffd2cd98361e61b9",
+            "title": "Google Health 5.09 arrives with more than just your new Pixel Watch features",
+            "description": "Health Guardian's a big part of this, but not the whole picture.",
+            "url": "https://www.androidauthority.com/google-health-5-09-3715801/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-09-25T21:41:11+00:00",
+            "collected_at": "2026-09-26T02:52:27.097039+00:00"
+        },
+        {
+            "id": "3e6437721d938a62267b8d5b2cca54e6522c7f19a503d4c38bd117ed6816de3d",
+            "title": "Kiteworks urges 6-hour server shutdown over potential zero-day attacks",
+            "description": "Secure file-sharing software company Kiteworks is urging customers worldwide to temporarily shut down their servers on Saturday for a six-hour window after receiving threat intelligence warning of a potentially imminent cyberattack. [...]",
+            "url": "https://www.bleepingcomputer.com/news/security/kiteworks-urges-6-hour-server-shutdown-over-potential-zero-day-attacks/",
+            "source": "BleepingComputer",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "intel",
+                "malware",
+                "ransomware",
+                "zero_day"
+            ],
+            "published_at": "2026-09-25T21:41:07+00:00",
+            "collected_at": "2026-09-26T02:49:59.951202+00:00"
+        },
+        {
+            "id": "63f0cec3bf1f729bd781cfcd329635ef896deea9ce0e40f8f75e8d1aa5b13493",
+            "title": "What even is an OS now?",
+            "description": "Comments",
+            "url": "https://sockpuppet.org/blog/2026/09/25/what-even-is-an-os-now/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-25T21:36:56+00:00",
+            "collected_at": "2026-09-26T02:50:03.202326+00:00"
+        },
+        {
+            "id": "35493723d5486260d0e887eaf3086ffe2944b880959f833a3f466208e9dc87e1",
+            "title": "Court rules Trump can blacklist Anthropic for refusing to enable Claude features",
+            "description": "\"Overly constrained AI models\" could cause military operations to fail, judges say.",
+            "url": "https://arstechnica.com/tech-policy/2026/09/court-rules-trump-can-blacklist-anthropic-for-refusing-to-enable-claude-features/",
+            "source": "Ars Technica",
+            "category": "technologie",
+            "tags": [
+                "anthropic",
+                "informatique",
+                "innovation",
+                "technologie"
+            ],
+            "published_at": "2026-09-25T21:36:20+00:00",
+            "collected_at": "2026-09-26T02:50:01.265487+00:00"
+        },
+        {
+            "id": "9bb3b8f8616463009bcacc9c947fb93aee60e43a8a3dd2fea7f9d39fd90b3bf3",
+            "title": "You told us your favorite Pixel 11 Pro alternative, and it’s not another Pixel",
+            "description": "Five alternatives entered and only one could top our poll, but there was a bigger surprise at the bottom.",
+            "url": "https://www.androidauthority.com/best-pixel-11-pro-alternative-poll-results-3715761/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-09-25T21:19:35+00:00",
+            "collected_at": "2026-09-26T02:52:27.097123+00:00"
+        },
+        {
+            "id": "63ab16d0ffd9ab758f67fe6e3f80332b361dfa3287f304de6ec3c17a4ccd0dba",
+            "title": "Another appeals court rules against prediction market provider Kalshi, says sports contracts are subject to state regulations",
+            "description": "",
+            "url": "https://www.coindesk.com/policy/2026/09/25/another-appeals-court-rules-against-prediction-market-provider-kalshi-says-sports-contracts-are-subject-to-state-regulations",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-25T21:17:30+00:00",
+            "collected_at": "2026-09-26T02:52:33.304282+00:00"
+        },
+        {
+            "id": "834599042ffa6be6cc42c178d922c48b894e740bb238ee0623f604c4adab08e3",
+            "title": "Tesla workers balk at training Optimus humanoid robots as replacements",
+            "description": "Despite challenges, Tesla aims for 1,000 Optimus robots per week by end of 2026.",
+            "url": "https://arstechnica.com/ai/2026/09/tesla-workers-balk-at-training-optimus-humanoid-robots-as-replacements/",
+            "source": "Ars Technica",
+            "category": "technologie",
+            "tags": [
+                "informatique",
+                "innovation",
+                "technologie"
+            ],
+            "published_at": "2026-09-25T21:10:51+00:00",
+            "collected_at": "2026-09-26T02:50:01.265552+00:00"
+        },
+        {
+            "id": "c0c7d3c63cadee406d2aa18a72816275cf3dcbb4bb784ace3443d376408c86ef",
+            "title": "Show HN: Ekselio – Loveable for finance workflows (local first)",
+            "description": "Comments",
+            "url": "https://www.gptbeyond.com/try?home=1",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-25T21:09:28+00:00",
+            "collected_at": "2026-09-26T02:50:03.203179+00:00"
+        },
+        {
+            "id": "9973f8e7ebb5939a587ed163958ef7e7449742952df845b8c3a44cf31053d9aa",
+            "title": "Revealing the details of how OpenAI agents hacked Hugging Face",
+            "description": "Comments",
+            "url": "https://swarmtraces.org/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "openai",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-25T21:09:27+00:00",
+            "collected_at": "2026-09-26T02:50:03.202152+00:00"
+        },
+        {
+            "id": "947b2488fad82abcde66b76edaf30cefc4da80cbe9a164f2a41ee06e0c6bdf0a",
+            "title": "Searching for Googlebooks won’t give you the results you’re looking for",
+            "description": "Google is facing some funny SEO irony for ‘Googlebooks’ queries.",
+            "url": "https://www.androidauthority.com/search-confuses-googlebooks-with-books-3715775/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-09-25T21:02:36+00:00",
+            "collected_at": "2026-09-26T02:52:27.097190+00:00"
+        },
+        {
+            "id": "1189fcb057cce8df034a70771888085eae6fba25710db051b602d243febb1143",
+            "title": "Zano Inflation Bug Forces Blockchain to Wipe an Entire Day of History",
+            "description": "The team behind privacy-centric blockchain network Zano disclosed that an inflation bug tied to Gateway Addresses has forced the blockchain toward an extraordinary fix, erasing roughly 24 hours of transaction history. The official social media accounts on X and Telegram have told users to stop economic activity and promised reimbursement for losses caused by the […]",
+            "url": "https://news.bitcoin.com/security/zano-inflation-bug-forces-blockchain-to-wipe-an-entire-day-of-history/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-25T20:58:18+00:00",
+            "collected_at": "2026-09-26T02:52:33.529350+00:00"
+        },
+        {
+            "id": "6e342a8a97cf99d0e3cdcfd8850efeed176d02017d7f57bc2333a1c689e2fd6d",
+            "title": "ShinyHunters hacked Clop leak site using Grav CMS path traversal flaw",
+            "description": "The Clop ransomware gang has moved its data leak site to a new Tor address after confirming its previous server was compromised and defaced through an unpatched Grav CMS flaw that BleepingComputer has learned is an unauthenticated path traversal vulnerability. [...]",
+            "url": "https://www.bleepingcomputer.com/news/security/shinyhunters-hacked-clop-leak-site-using-grav-cms-path-traversal-flaw/",
+            "source": "BleepingComputer",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "malware",
+                "ransomware"
+            ],
+            "published_at": "2026-09-25T20:57:55+00:00",
+            "collected_at": "2026-09-26T02:49:59.951288+00:00"
+        },
+        {
+            "id": "a8be655b713deacac68302f9c572085cc7e4d5c22fd0108abef5bbc311f4ae8a",
+            "title": "Excel now supports multiple values in a single cell",
+            "description": "Comments",
+            "url": "https://techcommunity.microsoft.com/blog/microsoft365insiderblog/put-multiple-values-in-one-cell-with-lists-and-arrays-in-excel/4559395",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-25T20:55:00+00:00",
+            "collected_at": "2026-09-26T02:50:03.202625+00:00"
+        },
         {
             "id": "c3b38d9074fa6a38ead51dd06b141263f399000dae5b7439488ba0a100c11f8e",
             "title": "Integração com o iFood: o problema na homologação do developer",
@@ -244,6 +1008,22 @@
             "collected_at": "2026-09-25T20:56:38.642880+00:00"
         },
         {
+            "id": "5c5540b3cea47594aa26423d0b6a00c47566cd29e45026b5fc29700cda13d45c",
+            "title": "Valen creator drives 'Golden Spike' to connect new languages with Rust",
+            "description": "An experiment is afoot to sidestep C as the language of interoperability with Rust",
+            "url": "https://www.theregister.com/devops/2026/09/25/valen-creator-drives-golden-spike-to-connect-new-languages-with-rust/5299273",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "rust",
+                "technologie"
+            ],
+            "published_at": "2026-09-25T20:15:44+00:00",
+            "collected_at": "2026-09-26T02:50:02.072531+00:00"
+        },
+        {
             "id": "300ef39039d2951e4bc3521578ed6d87ae82086c9e20881bca87375950a2e44a",
             "title": "Rising sea destroys homes, erases beaches in California",
             "description": "Comments",
@@ -274,6 +1054,36 @@
             "collected_at": "2026-09-25T20:56:51.244495+00:00"
         },
         {
+            "id": "b8db772e97146abb7adfb30aef7127d59a2f6c48260cb27b8b701f596a2d3830",
+            "title": "Microsoft cells out, crams multiple values into Excel boxes",
+            "description": "Once a single-scalar home, spreadsheet cells are being redeveloped to handle many tenants",
+            "url": "https://www.theregister.com/applications/2026/09/25/microsoft-cells-out-crams-multiple-values-into-excel-boxes/5299294",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-09-25T19:58:36+00:00",
+            "collected_at": "2026-09-26T02:50:02.072599+00:00"
+        },
+        {
+            "id": "b4cdbb097b6655c4e5ced47b710f8bea600f26ea879d543f8d51b66b9bc07439",
+            "title": "How we learned to stop worrying and love campus surveillance",
+            "description": "Comments",
+            "url": "https://fnl.mit.edu/how-we-learned-to-stop-worrying-and-love-campus-surveillance/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-25T19:56:57+00:00",
+            "collected_at": "2026-09-26T02:50:03.203222+00:00"
+        },
+        {
             "id": "2d1809b5d7b866b78e7d4d2a2a859f247dfb99616b7df024a434aac9eef48d7a",
             "title": "YouTube keep freezing on your Galaxy phone? It’s not just you",
             "description": "Z Fold 8 Ultra seems to have it worse than others.",
@@ -301,6 +1111,21 @@
             ],
             "published_at": "2026-09-25T19:50:42+00:00",
             "collected_at": "2026-09-25T20:56:51.437072+00:00"
+        },
+        {
+            "id": "73474fdf4423d69873929299210fa2a925056cb0ea06c0e0e5fce70e021d7f95",
+            "title": "Your uncle’s frozen Mac says it’s infected after viewing a Google ad. Now what?",
+            "description": "Ads appearing all over the Internet are trying to scam people.",
+            "url": "https://arstechnica.com/security/2026/09/google-ads-caught-delivering-convincing-scareware-ads-to-unsuspecting-users/",
+            "source": "Ars Technica",
+            "category": "technologie",
+            "tags": [
+                "informatique",
+                "innovation",
+                "technologie"
+            ],
+            "published_at": "2026-09-25T19:38:59+00:00",
+            "collected_at": "2026-09-26T02:50:01.265621+00:00"
         },
         {
             "id": "390703f0fbbc472679381fe1179b1a01837f08274b77a6ab13c27b27e9d090f0",
@@ -362,6 +1187,21 @@
             ],
             "published_at": "2026-09-25T19:26:10+00:00",
             "collected_at": "2026-09-25T20:56:38.369035+00:00"
+        },
+        {
+            "id": "455d2a9bcc71df815d4ffb29ebf3f4445b7c7c2ceb33755e0f4551dad9a58374",
+            "title": "Amazon Transcribe adds customer-managed KMS keys for custom resources",
+            "description": "Amazon Transcribe now lets you encrypt your custom vocabularies, custom vocabulary filters, and custom language models at rest with a customer-managed AWS KMS key that you own and control. Previously, these custom resources were always encrypted with an AWS owned key. Now you can supply your own symmetric AWS KMS key when you create or update these resources, so the artifacts Transcribe stores on your behalf are encrypted under a key in your account. If you do not provide a key, your resources continue to be encrypted with an AWS owned key—no action is required unless you opt in. With a customer-managed key, you control key permissions and decide exactly which principals and services can encrypt and decrypt your custom resources. Every use of your key is logged in AWS CloudTrail, giving you a full audit trail for compliance and monitoring. You can also disable the key or transition resources to a different key to revoke access on your own schedule. This feature is available in all AWS Regions where Amazon Transcribe is offered. To learn more, see Amazon Transcribe Developer Guide .",
+            "url": "https://aws.amazon.com/about-aws/whats-new/2026/09/amazon-transcribe/",
+            "source": "AWS What's New",
+            "category": "cloud",
+            "tags": [
+                "amazon",
+                "aws",
+                "cloud"
+            ],
+            "published_at": "2026-09-25T19:19:00+00:00",
+            "collected_at": "2026-09-26T02:50:06.516660+00:00"
         },
         {
             "id": "3e32942fd9f309924a819634f0b53f605eb9badff72830ff63297da395957905",
@@ -546,6 +1386,23 @@
             "collected_at": "2026-09-25T20:56:36.740201+00:00"
         },
         {
+            "id": "994f5731ce861b2a7954d1dd29e38f9e88380ee58617d89662c13ceceffdf86a",
+            "title": "Amazon EC2 M8i and M8i-flex instances are now available in additional regions",
+            "description": "Starting today, Amazon EC2 M8i and M8i-flex instances are now available in the AWS European Sovereign Cloud (Germany) region. These instances are powered by custom Intel Xeon 6 processors, available only on AWS, delivering the highest performance and fastest memory bandwidth among comparable Intel processors in the cloud. The M8i and M8i-flex instances offer up to 15% better price-performance, and 2.5x more memory bandwidth compared to previous generation Intel-based instances. They deliver up to 20% better performance than M7i and M7i-flex instances, with even higher gains for specific workloads. The M8i and M8i-flex instances are up to 30% faster for PostgreSQL databases, up to 60% faster for NGINX web applications, and up to 40% faster for AI deep learning recommendation models compared to M7i and M7i-flex instances. M8i-flex are the easiest way to get price performance benefits for a majority of general-purpose workloads like web and application servers, microservices, small and medium data stores, virtual desktops, and enterprise applications. They offer the most common sizes, from large to 16xlarge, and are a great first choice for applications that don't fully utilize all compute resources. M8i instances are a great choice for all general purpose workloads, especially for workloads that need the largest instance sizes or continuous high CPU usage. The SAP-certified M8i instances offer 13 sizes including 2 bare metal sizes and the new 96xlarge size for the largest applications. To get started, sign in to the AWS Management Console . For more information about the new instances, visit the M8i and M8i-flex instance page or visit the AWS News blog .",
+            "url": "https://aws.amazon.com/about-aws/whats-new/2026/09/amazon-ec2-m8i-m8i-flex-thf/",
+            "source": "AWS What's New",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "amazon",
+                "aws",
+                "cloud",
+                "deep_learning",
+                "intel"
+            ],
+            "published_at": "2026-09-25T18:40:00+00:00",
+            "collected_at": "2026-09-26T02:50:06.516877+00:00"
+        },
+        {
             "id": "c151aa64164e55dee9488d91fe05aec08eadabea270acfe1e3bb62c0bc21f8d2",
             "title": "Google’s $5 AI plan is now even more tempting",
             "description": "Google AI subscriptions now include premium Colab perks.",
@@ -588,6 +1445,23 @@
             ],
             "published_at": "2026-09-25T18:37:05+00:00",
             "collected_at": "2026-09-25T20:56:38.368183+00:00"
+        },
+        {
+            "id": "ed5cc3d7b6a446f27eb654826f49111d2927976998a0c98898d86fc6198c8835",
+            "title": "Amazon EC2 R8i and R8i-flex instances are now available in additional regions",
+            "description": "Starting today, Amazon Elastic Compute Cloud (Amazon EC2) R8i and R8i-flex instances are available in the AWS European Sovereign Cloud (Germany) region. These instances are powered by custom Intel Xeon 6 processors, available only on AWS, delivering the highest performance and fastest memory bandwidth among comparable Intel processors in the cloud. The R8i and R8i-flex instances offer up to 15% better price-performance, and 2.5x more memory bandwidth compared to previous generation Intel-based instances. They deliver 20% higher performance than R7i instances, with even higher gains for specific workloads. They are up to 30% faster for PostgreSQL databases, up to 60% faster for NGINX web applications, and up to 40% faster for AI deep learning recommendation models compared to R7i. R8i-flex, our first memory-optimized Flex instances, are the easiest way to get price performance benefits for a majority of memory-intensive workloads. They offer the most common sizes, from large to 16xlarge, and are a great first choice for applications that don't fully utilize all compute resources. R8i instances are a great choice for all memory-intensive workloads, especially for workloads that need the largest instance sizes or continuous high CPU usage. R8i instances offer 13 sizes including 2 bare metal sizes and the new 96xlarge size for the largest applications. R8i instances are SAP-certified and deliver 142,100 aSAPS, the highest among all comparable machines in on-premises and cloud environments, delivering exceptional performance for mission-critical SAP workloads. To get started, sign in to the AWS Management Console . Customers can purchase these instances via Savings Plans, On-Demand instances, and Spot instances. For more information about the new R8i and R8i-flex instances visit the AWS News blog .",
+            "url": "https://aws.amazon.com/about-aws/whats-new/2026/09/ec2-r8i-r8i-flex-thf/",
+            "source": "AWS What's New",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "amazon",
+                "aws",
+                "cloud",
+                "deep_learning",
+                "intel"
+            ],
+            "published_at": "2026-09-25T18:37:00+00:00",
+            "collected_at": "2026-09-26T02:50:06.517092+00:00"
         },
         {
             "id": "c67b725df023f3db88a87593a7c3e75ceea0a9956accdd99a0127d1ddc86f117",
@@ -634,6 +1508,21 @@
             ],
             "published_at": "2026-09-25T18:27:18+00:00",
             "collected_at": "2026-09-25T20:56:36.740253+00:00"
+        },
+        {
+            "id": "67c50f59b62251aa3cc86f89c89f6be3fa9ad2bc00e35912c2685f5c5575fb73",
+            "title": "We’re gonna need a lot more mathematicians",
+            "description": "Comments",
+            "url": "https://terrytao.wordpress.com/2026/09/24/were-gonna-need-a-lot-more-mathematicians/",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-09-25T18:27:05+00:00",
+            "collected_at": "2026-09-26T02:50:03.277128+00:00"
         },
         {
             "id": "65299ff07e457217875e82855a44626944f9e887470ca523940e6344e506b608",
@@ -696,6 +1585,23 @@
             ],
             "published_at": "2026-09-25T18:13:33+00:00",
             "collected_at": "2026-09-25T20:56:35.614376+00:00"
+        },
+        {
+            "id": "e7ca39c1319899cb0d195e172cec02f3341ea84b732beed457c3d21fa6d0bdda",
+            "title": "Amazon EC2 C8i and C8i-flex instances are now available in additional regions",
+            "description": "Starting today, Amazon Elastic Compute Cloud (Amazon EC2) C8i and C8i-flex instances are available in the AWS European Sovereign Cloud (Germany) region. These instances are powered by custom Intel Xeon 6 processors, available only on AWS, delivering the highest performance and fastest memory bandwidth among comparable Intel processors in the cloud. These C8i and C8i-flex instances offer up to 15% better price-performance, and 2.5x more memory bandwidth compared to previous generation Intel-based instances. They deliver up to 20% higher performance than C7i and C7i-flex instances, with even higher gains for specific workloads. The C8i and C8i-flex are up to 60% faster for NGINX web applications, up to 40% faster for AI deep learning recommendation models, and 35% faster for Memcached stores compared to C7i and C7i-flex. C8i-flex are the easiest way to get price performance benefits for a majority of compute intensive workloads like web and application servers, databases, caches, Apache Kafka, Elasticsearch, and enterprise applications. They offer the most common sizes, from large to 16xlarge, and are a great first choice for applications that don't fully utilize all compute resources. C8i instances are a great choice for all memory-intensive workloads, especially for workloads that need the largest instance sizes or continuous high CPU usage. C8i instances offer 13 sizes including 2 bare metal sizes and the new 96xlarge size for the largest applications. To get started, sign in to the AWS Management Console . Customers can purchase these instances via Savings Plans, On-Demand instances, and Spot instances. For more information about the new C8i and C8i-flex instances visit the AWS News blog .",
+            "url": "https://aws.amazon.com/about-aws/whats-new/2026/09/c8i-c8i-flex-thf-september-2026/",
+            "source": "AWS What's New",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "amazon",
+                "aws",
+                "cloud",
+                "deep_learning",
+                "intel"
+            ],
+            "published_at": "2026-09-25T18:09:00+00:00",
+            "collected_at": "2026-09-26T02:50:06.517298+00:00"
         },
         {
             "id": "2ee03c0b1ecc7317a4c02c0d9944d4f002dcbd0e08cc4a2222d23fbfa4052fa8",
@@ -771,6 +1677,21 @@
             ],
             "published_at": "2026-09-25T17:54:37+00:00",
             "collected_at": "2026-09-25T20:56:51.437305+00:00"
+        },
+        {
+            "id": "a73f02bf9d972686cb7a9eaed537f872e94af61e999be243d74b81041abe60c3",
+            "title": "AWS IAM outbound identity federation now supports interface VPC endpoints for OIDC discovery",
+            "description": "AWS Identity and Access Management (IAM) outbound identity federation now supports Amazon Virtual Private Cloud (VPC) endpoints for the OpenID Connect (OIDC) discovery APIs. You can now access the OIDC discovery metadata and JSON Web Key Set (JWKS) verification key endpoints from within your VPC using AWS PrivateLink , without requiring traffic to traverse the public internet. IAM outbound identity federation eliminates the need to use long-lived credentials when your AWS workloads access external services. Instead, your workloads request short-lived JSON Web Tokens (JWTs) from AWS Security Token Service (AWS STS). External services verify these tokens using public verification keys and metadata available at OIDC discovery endpoints. Previously, the OIDC discovery endpoints were only reachable over the public internet, so a verifying workload running in a VPC without internet access could not retrieve them. With this launch, you can create an interface VPC endpoint to reach these endpoints privately, keeping the verification key retrieval traffic within the AWS network. This capability helps you meet network security requirements for workloads that operate in VPCs with restricted internet access, while still enabling external services to verify JWTs. This feature is available in all commercial AWS Regions, the AWS GovCloud (US) Regions, and China Regions. There is no additional charge for this feature beyond standard AWS PrivateLink pricing . To learn more, see the IAM User Guide .",
+            "url": "https://aws.amazon.com/about-aws/whats-new/2026/09/aws-sts-vpc-oidc/",
+            "source": "AWS What's New",
+            "category": "cloud",
+            "tags": [
+                "amazon",
+                "aws",
+                "cloud"
+            ],
+            "published_at": "2026-09-25T17:54:00+00:00",
+            "collected_at": "2026-09-26T02:50:06.517509+00:00"
         },
         {
             "id": "7174342327e9d2ecd9b740fc6d368f9a02adcbc5656b93c7c9b05bd979e6af12",
@@ -2155,6 +3076,21 @@
             "collected_at": "2026-09-25T20:56:36.740537+00:00"
         },
         {
+            "id": "1e1a1afb952dd46cff473dac3992734bc99de4d4913b0ab0d8a4087bc4c862b5",
+            "title": "Show HN: Hacker Atlas - A map of what Hacker News talks about",
+            "description": "Comments",
+            "url": "https://hackeratlas.com/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-25T13:37:54+00:00",
+            "collected_at": "2026-09-26T02:50:03.202838+00:00"
+        },
+        {
             "id": "de1612873c0fddad84022bd4167590c055cec146bafae4d008c76e5565291798",
             "title": "Save $250 on this award-winning Elegoo resin 3D printer with an integrated heater and 16K resolution",
             "description": "This Elegoo Saturn 4 Ultra, one of the best resin 3D printers you can buy, is on sale for $359 right now, saving you 40% on its usual price.",
@@ -3222,6 +4158,21 @@
             "collected_at": "2026-09-25T10:54:59.407236+00:00"
         },
         {
+            "id": "9b35b3501eddf02a910ed9096bedbda6f233804740efc905d90ceeb9bdddb5da",
+            "title": "An airport cooled by natural ventilation",
+            "description": "Comments",
+            "url": "https://www.theguardian.com/environment/2026/sep/25/didnt-need-air-conditioning-airport-cooled-natural-ventilation-reunion",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-25T10:16:50+00:00",
+            "collected_at": "2026-09-26T02:50:03.203386+00:00"
+        },
+        {
             "id": "8479bfbd51e5d520d267043fb08ba45c7a5cb472a83a35c26c15fae2856b0027",
             "title": "Roundcube Pre-Auth SQL Injection Flaw Actively Exploited in the Wild",
             "description": "The Canadian Centre for Cyber Security has warned that a now-patched Roundcube Webmail vulnerability is being actively exploited in the wild. The vulnerability in question is CVE-2026-48842 (CVSS score: 8.1), a pre-authentication SQL injection in the virtuser_query plugin of Roundcube Webmail versions 1.6.x before 1.6.16 and 1.7.x before 1.7.1. The issue stems from a preg_replace() backslash",
@@ -3236,6 +4187,21 @@
             ],
             "published_at": "2026-09-25T10:14:02+00:00",
             "collected_at": "2026-09-25T10:54:56.587566+00:00"
+        },
+        {
+            "id": "70aa0e0138660c3e38cf37fe46a9b7f33664247fe3fc448de920adc3a40444b9",
+            "title": "I wrote a ray tracer in Brainfuck",
+            "description": "Comments",
+            "url": "https://epestr.com/blog/writing-a-ray-tracer-in-brainfuck/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-25T10:08:41+00:00",
+            "collected_at": "2026-09-26T02:50:03.202879+00:00"
         },
         {
             "id": "f8d8c0e8723d4478baa89f4d1208b86a5053e6502e31ebb8df0107adab51d6c1",
@@ -3852,6 +4818,37 @@
             "collected_at": "2026-09-25T10:54:57.214702+00:00"
         },
         {
+            "id": "649fff65e691c4b10d49be9868cdd94f5f183d1b1a00a1eec2548bd9df0b4561",
+            "title": "AWS End User Messaging now supports voice calling on WhatsApp",
+            "description": "AWS End User Messaging now lets businesses place and receive voice calls with their customers directly inside WhatsApp, using the same verified business identity they already use for messaging. With WhatsApp voice calling, a conversation can move seamlessly from a chat thread to a voice call without switching to a separate channel or application, so context is never lost and customers stay in the message thread where the conversation started. Voice calling works in both directions. Customers can call a business from within a WhatsApp chat, and businesses can call customers who have granted permission to be contacted. You can enable and manage WhatsApp voice calling on a registered WhatsApp business phone number using either the AWS End User Messaging console or the API. WhatsApp voice calling is available in all Regions where AWS End User Messaging Social is available. To learn more and get started, see the AWS End User Messaging Social User Guide .",
+            "url": "https://aws.amazon.com/about-aws/whats-new/2026/09/aws-end-user-messaging-voice-calling-whatsapp",
+            "source": "AWS What's New",
+            "category": "cloud",
+            "tags": [
+                "amazon",
+                "aws",
+                "cloud"
+            ],
+            "published_at": "2026-09-25T07:00:00+00:00",
+            "collected_at": "2026-09-26T02:50:06.517965+00:00"
+        },
+        {
+            "id": "006dfa9ade4dc736d5942166cb71529d6688de3f4969604f9157e0df620af4f0",
+            "title": "AWS End User Messaging and Amazon SES now offer AI agent skills for the AWS MCP Server",
+            "description": "AWS End User Messaging and Amazon SES now publish AI agent skills for the AWS MCP Server, enabling developers to build and send messages by asking their AI coding agent in plain language. Previously, developers had to navigate multiple documentation pages and management console screens to complete messaging tasks. Now, each skill provides your agent with step-by-step, validated guidance for tasks like verifying sending identities, building branded Rich Communication Services (RCS) agents, and sending production emails. These skills integrate with popular AI coding agents including Claude Code, Codex, Cursor, and Kiro. For example, you can ask Amazon SES to verify a sending identity and send your first production email. You can ask AWS End User Messaging to build a branded RCS agent and send yourself a rich message with cards and buttons. The skills eliminate the need to manually search documentation or switch between console screens, allowing you to complete messaging workflows directly through natural language commands. To use these skills, first connect the AWS MCP Server to your agent. In Claude Code, Codex, and Cursor, the aws-core plugin bundles the server and a curated set of skills in one install. In Kiro and other agents, you add the server to your MCP configuration file. Then add the skill for the channel you want, and your agent is ready to guide you. For details on what each skill does and how to install it, see the AWS End User Messaging SMS and RCS agent setup guide , the AWS End User Messaging WhatsApp agent setup guide, and the Amazon SES agent setup guide .",
+            "url": "https://aws.amazon.com/about-aws/whats-new/2026/09/aws-messaging-ses-ai-skills-mcp-server/",
+            "source": "AWS What's New",
+            "category": "cloud",
+            "tags": [
+                "amazon",
+                "anthropic",
+                "aws",
+                "cloud"
+            ],
+            "published_at": "2026-09-25T07:00:00+00:00",
+            "collected_at": "2026-09-26T02:50:06.518174+00:00"
+        },
+        {
             "id": "d1f0d307ae3b72f7e16eba8485b1b9e7b7831973e0721d918e04636a735f01ce",
             "title": "Roundcube Webmail Vulnerability in Attackers’ Crosshairs",
             "description": "Tracked as CVE-2026-48842, the exploited bug is an SQL injection that can be exploited without authentication. The post Roundcube Webmail Vulnerability in Attackers’ Crosshairs appeared first on SecurityWeek .",
@@ -4151,6 +5148,21 @@
             ],
             "published_at": "2026-09-25T04:10:20+00:00",
             "collected_at": "2026-09-25T10:55:12.365466+00:00"
+        },
+        {
+            "id": "3562ff4b1e12416abf66444398ad644661acf1914883bd46e7faaa5cee494863",
+            "title": "Plan mode is dead",
+            "description": "Comments",
+            "url": "https://www.aymannadeem.com/artificial/intelligence,/developer/tools/2026/09/24/plan-mode-is-dead.html",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-25T03:59:11+00:00",
+            "collected_at": "2026-09-26T02:50:03.202368+00:00"
         },
         {
             "id": "878085909e69f953016a5ac78693367ef7f14a092f8223f953630e3a66f8e1ff",
@@ -5836,6 +6848,21 @@
             ],
             "published_at": "2026-09-24T18:46:58+00:00",
             "collected_at": "2026-09-24T21:01:50.876137+00:00"
+        },
+        {
+            "id": "01322f81c0361fd038436be3909ed8bc517d2be7fa2ad982d294645d1a0548f2",
+            "title": "Postgres SELECT DISTINCT Does Not Scale",
+            "description": "Comments",
+            "url": "https://www.dbos.dev/blog/postgres-select-distinct-does-not-scale",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-24T18:43:52+00:00",
+            "collected_at": "2026-09-26T02:50:03.203004+00:00"
         },
         {
             "id": "e50b82180fc76603d7011c7ed41ecd56b55276fdb841f1cbe95b3657e0ca2ec2",
@@ -8187,6 +9214,21 @@
             ],
             "published_at": "2026-09-24T12:05:27+00:00",
             "collected_at": "2026-09-24T16:14:40.289388+00:00"
+        },
+        {
+            "id": "ba9b86b6943fcb3437fdee4e6fcbf75bc4a812a4050e35ef8ca9365c029325c1",
+            "title": "Fourier Analysis: Drawing Llamas with Circles",
+            "description": "Comments",
+            "url": "https://adekau.github.io/posts/2020/llamas.html",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-24T12:03:35+00:00",
+            "collected_at": "2026-09-26T02:50:03.203044+00:00"
         },
         {
             "id": "fc162e9b6fcda16b1181ba44637da3117d20e0afa41d009d9a0fc0fdd9636f37",
