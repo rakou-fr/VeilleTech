@@ -1,7 +1,492 @@
 {
-    "updated_at": "2026-09-27T16:08:24.095221+00:00",
-    "count": 11878,
+    "updated_at": "2026-09-27T20:40:24.781379+00:00",
+    "count": 11920,
     "articles": [
+        {
+            "id": "c926f5f9b247ae6bc2b43924411e64b9c8cbb34a87b9d5cd9864eb8d4d1418c1",
+            "title": "Anatomía de un Slice en Producción: Handlers sin interfaces, EF Core sin repositorios y eventos desacoplados (Parte 2)",
+            "description": "En la Parte 1 de esta serie , exploramos por qué Clean Architecture tradicional suele agotar a los equipos con su laberinto de proyectos y capas. Vimos la filosofía de Vertical Slice Architecture (VSA) : la complejidad se paga por slice, no por proyecto , y cómo organizar Minimal APIs limpias y auto-descubiertas. Pero ahora viene lo bueno: abrir el capó del motor y escribir código de producción . En este artículo responderemos a las preguntas que todo desarrollador .NET se hace al enfrentarse a VSA por primera vez: ¿Cómo estructuro un caso de uso para no terminar con un archivo inmanejable de 1000 líneas? ¿Dónde quedaron las interfaces? ¿Es pecado no poner ICreateProductService ? ¿Por qué dejamos de usar MediatR en pleno 2026? ¿Cómo persistimos con Entity Framework Core sin caer en la trampa del patrón repositorio genérico? ¿Cómo validamos peticiones y cómo hacemos que dos slices se comuniquen sin acoplarse? Vamos paso a paso. Anatomía de un caso de uso: Todo lo que cambia junto, vive junto En Clean Architecture, para entender qué hace \"Crear Producto\", tienes que abrir la entidad en un proyecto, el DTO en otro, el validador en otro y el handler en otro. En VSA aplicamos el principio de cohesión espacial : todo lo relacionado con ese caso de uso específico vive en un único archivo: Features/Products/CreateProduct.cs . Observa el código completo de producción: using FluentValidation ; using Microsoft.AspNetCore.Http.HttpResults ; using VsaTemplate.Common.Events ; using VsaTemplate.Common.Persistence ; using VsaTemplate.Features.Products.Contracts ; using VsaTemplate.Features.Products.Domain ; namespace VsaTemplate.Features.Products ; // 1. Contratos y validación agrupados bajo el nombre del caso de uso public static class CreateProduct { public record Request ( string Name , decimal Price ); public record Response ( Guid Id , string Name , decimal Price ); public class Validator : AbstractValidator < Request > { public Validator () { RuleFor ( x => x . Name ). NotEmpty (). MaximumLength ( 200 ); RuleFor ( x => x . Price ). GreaterThan ( 0 ); } } } // 2. La lógica del caso de uso en su clase Handler contigua public class CreateProductHandler ( AppDbContext db , IEventDispatcher eventDispatcher ) { public async Task < Created < CreateProduct . Response >> Handle ( CreateProduct . Request request , CancellationToken ct ) { var product = new Product { Id = Guid . NewGuid (), Name = request . Name . Trim (), Price = request . Price , }; db . Products . Add ( product ); await db . SaveChangesAsync ( ct ); // Publicar evento in-process para otros interesados await eventDispatcher . Publish ( new ProductCreated ( product . Name , product . Price ), ct ); return TypedResults . Created ( $\"/products/ { product . Id } \" , new CreateProduct . Response ( product . Id , product . Name , product . Price )); } } Analicemos la genialidad de esta estructura: Clase estática contenedora : CreateProduct actúa como un espacio de nombres local. Sus DTOs son CreateProduct.Request y CreateProduct.Response . Se acabaron los nombres kilométricos como CreateProductCommandDto o CreateProductResultModel . Constructor primario de C# : Las dependencias ( AppDbContext , IEventDispatcher ) entran directamente en la firma de CreateProductHandler(...) . Sin campos privados private readonly , sin boilerplate. Todo a la vista : En 45 líneas tienes el contrato de entrada, el contrato de salida, las reglas de validación y la lógica de ejecución. Si el negocio te pide cambiar el largo máximo del nombre a 300 caracteres, modificas este archivo y nada más . El fin de las interfaces ceremoniales: Cero interfaces para tus handlers Si vienes del mundo corporativo de .NET, tu instinto probablemente te grite: «¡Espera! ¿Dónde está ICreateProductHandler ? ¿Cómo vas a registrar eso en el contenedor de dependencias? ¿Cómo lo vas a testear?» Hablemos con honestidad: Una interfaz sirve para intercambiar implementaciones en tiempo de ejecución. Un caso de uso de negocio tiene exactamente UNA implementación. Crear una interfaz ICreateProductHandler cuya única clase hija es CreateProductHandler no es desacoplamiento: es ceremonia . Es código que tienes que mantener, renombrar y navegar en el IDE sin recibir ningún beneficio a cambio. ¿Y la testabilidad? La testabilidad no viene de tener una interfaz; viene de cómo recibe sus dependencias la clase . Como CreateProductHandler recibe todo por su constructor primario, en tus pruebas unitarias simplemente haces: var handler = new CreateProductHandler ( dbRealOInMemory , fakeDispatcher ); var result = await handler . Handle ( request , CancellationToken . None ); ¡No necesitas mockear la interfaz del handler porque estás testeando el handler mismo! Dónde SÍ usamos interfaces La regla nunca fue \"no usar interfaces\" , sino \"no usar interfaces sin una segunda implementación real\" . Las interfaces se reservan para las fronteras del sistema , donde genuinamente existen implementaciones alternativas: TimeProvider (reloj real del sistema vs reloj congelado para tests). IEventDispatcher (despachador in-process vs despachador de test o distribuido). Pasarelas de pago ( IStripeService vs FakePaymentGateway ). Envío de correos ( SendGridClient vs NullEmailSender ). Registro automático por convención con Scrutor Para no tener que registrar a mano cada handler en el contenedor de dependencias con services.AddScoped<CreateProductHandler>() , usamos la librería Scrutor para escanear el ensamblado al iniciar la aplicación. En Composition/UseCaseRegistration.cs : namespace VsaTemplate.Composition ; public static class UseCaseRegistration { public static IServiceCollection AddUseCaseHandlers ( this IServiceCollection services ) => services . Scan ( scan => scan . FromAssemblyOf < Program >() . AddClasses ( classes => classes . Where ( t => t is { IsPublic : true , IsAbstract : false } && t . Name . EndsWith ( \"Handler\" ))) . AsSelf () . WithScopedLifetime ()); } ¿Qué hace esto? Busca cualquier clase pública que termine en Handler . La registra AsSelf() (su propio tipo concreto) con ciclo de vida Scoped . Consecuencia: Cuando creas un nuevo caso de uso (ej. UpdateProductHandler ), no tocas ningún archivo de configuración . El contenedor ya sabe resolverlo. ¿Por qué le dijimos adiós a MediatR? Durante años, MediatR fue el estándar indiscutible en .NET para implementar el patrón Command/Query. Pero el contexto ha cambiado drásticamente: ERA ANTERIOR (Controllers + MediatR) HTTP Request ──► Controller ──► MediatR.Send ──► Pipeline ──► Handler (Mucha delegación innecesaria para terminar en el mismo método) ERA MODERNA (Minimal APIs + Endpoint Filters) HTTP Request ──► Minimal API Endpoint ──► Endpoint Filter ──► Handler (Directo, nativo, sin intermediarios ni reflexión costosa) Minimal APIs resuelve el enrutamiento directamente al handler : En el mapeo de rutas simplemente inyectas el handler: (CreateProduct.Request req, CreateProductHandler handler) => handler.Handle(req) . Minimal APIs resuelve el handler del contenedor y lo llama directo. No hay nada que \"mediar\". Los cross-cutting concerns ahora son Endpoint Filters : El logging, la validación o las métricas que antes metías en IPipelineBehavior<TRequest, TResponse> ahora se manejan con los filtros nativos de ASP.NET Core ( EndpointFilter ). Cambio de licenciamiento : A partir de 2025, MediatR adoptó un modelo de licencia comercial. Para qué pagar o preocuparte por licencias cuando el framework base de .NET ya te da todas las herramientas necesarias de forma más rápida y limpia. Persistencia con EF Core: El \"antipatrón\" del repositorio genérico Muchos proyectos de Clean Architecture meten una capa obligatoria de repositorios: IRepository<T> , IProductRepository , etc. Pero recordemos un detalle técnico elemental: Entity Framework Core ya implementa los patrones Unit of Work ( DbContext ) y Repository ( DbSet<T> ). Crear un ProductRepository encima de EF Core solo para hacer: public async Task < Product ?> GetByIdAsync ( Guid id ) => await _context . Products . FindAsync ( id ); es crear una abstracción con fuga ( leaky abstraction ). Pierdes la potencia de LINQ, la capacidad de hacer proyecciones directas ( .Select() ), paginación eficiente, AsNoTracking() , o splits queries. En nuestra plantilla, los handlers consumen AppDbContext directamente: var product = await db . Products . AsNoTracking () . Where ( p => p . Id == id ) . Select ( p => new ProductDto ( p . Id , p . Name , p . Price )) . FirstOrDefaultAsync ( ct ); Rápido, expresivo y con cero capas intermedias inútiles. La configuración Fluent API vive junto a la entidad Siguiendo nuestra pregunta guía: ¿Qué cambia junto? , si agregas una columna a Product , la configuración de base de datos cambia en el mismo commit. Por eso, en vez de una carpeta lejana Infrastructure/Data/Configurations/ , colocamos ProductConfiguration.cs dentro del slice: Features/Products/Domain/ : namespace VsaTemplate.Features.Products.Domain ; public class ProductConfiguration : IEntityTypeConfiguration < Product > { public void Configure ( EntityTypeBuilder < Product > builder ) { builder . Property ( p => p . Name ). HasMaxLength ( 200 ); builder . Property ( p => p . Price ). HasPrecision ( 18 , 2 ); builder . Property ( p => p . RowVersion ). IsConcurrencyToken (); } } AppDbContext las descubre automáticamente con una sola línea en OnModelCreating : modelBuilder . ApplyConfigurationsFromAssembly ( typeof ( Program ). Assembly ); Pero... ¿por qué las migraciones están centralizadas en Common ? Aquí ocurre algo fascinante. Alguien podría pensar: \"Si todo vive en el slice, ¿por qué no ponemos las migraciones dentro de Features/Products/Migrations ?\" La respuesta es técnica: Entity Framework Core no permite partir las migraciones por carpeta o feature . Cada migración es un cálculo diferencial del modelo completo de datos de la base, apoyado en un único ModelSnapshot lineal por DbContext . Si intentaras dividirlas por feature, corromperías la historia secuencial de la base de datos. Por eso, las migraciones se generan centralizadas en Common/Persistence/Migrations/ . VSA no es dogma: somos pragmáticos y respetamos la naturaleza de las herramientas que usamos. Validación elegante: FluentValidation en un Endpoint Filter ¿Cómo validamos el request sin llenar el handler de ifs if (string.IsNullOrEmpty(request.Name)) ? En la plantilla utilizamos un filtro de endpoint genérico: ValidationFilter.cs . namespace VsaTemplate.Common.Endpoints ; public static class ValidationFilterExtensions { public static RouteHandlerBuilder WithValidation < TRequest >( this RouteHandlerBuilder builder ) where TRequest : class => builder . AddEndpointFilter ( async ( context , next ) => { // Obtenemos el validador registrado para este tipo de Request var validator = context . HttpContext . RequestServices . GetRequiredService < IValidator < TRequest >>(); var request = context . Arguments . OfType < TRequest >(). First (); var result = await validator . ValidateAsync ( request , context . HttpContext . RequestAborted ); // Si la validación falla, corta la petición y retorna HTTP 400 Bad Request (ProblemDetails) return result . IsValid ? await next ( context ) : TypedResults . ValidationProblem ( result . ToDictionary ()); }) . ProducesValidationProblem (); // Documenta automáticamente el error 400 en OpenAPI } En el mapeo de la ruta en Endpoints.cs , solo agregas una extensión encadenada: group . MapPost ( \"/\" , ( CreateProduct . Request request , CreateProductHandler handler , CancellationToken ct ) => handler . Handle ( request , ct )) . WithName ( nameof ( CreateProduct )) . WithValidation < CreateProduct . Request >(); Las grandes ventajas de este enfoque: El Handler es territorio sagrado : El handler sabe que si el código llegó a él, los datos ya son 100% válidos. No necesita manejar ValidationProblem ni ensuciarse con validaciones. Respuesta estándar : Si falla, el cliente recibe automáticamente un RFC 9457 ProblemDetails estándar con el desglose de errores por propiedad. Fail fast en desarrollo : Si usas .WithValidation<T>() pero olvidaste escribir la clase Validator , el contenedor falla inmediatamente con una excepción explícita ( GetRequiredService ), impidiendo que despliegues un endpoint con validaciones rotas. Comunicación entre Slices: Eventos in-process Nuestra Regla #1 de VSA dice: «Un slice no usa los casos de uso ni los handlers de otro slice». Pero surge un problema real: cuando se coloca una orden de compra en el slice Orders , necesitamos que el slice Notifications envíe un correo y registre un log. ¿Cómo lo hacemos sin que PlaceOrderHandler llame directamente a Notifications ? La respuesta: Eventos de dominio in-process. Un Dispatcher propio de ~40 líneas En lugar de instalar librerías pesadas, la plantilla incluye un dispatcher sencillo y directo en Common/Events/EventDispatcher.cs : namespace VsaTemplate.Common.Events ; public class EventDispatcher ( IServiceProvider services ) : IEventDispatcher { public async Task Publish < TEvent >( TEvent @event , CancellationToken ct = default ) where TEvent : class { // Resuelve todos los handlers suscritos a TEvent en el scope actual foreach ( var handler in services . GetServices < IEventHandler < TEvent >>()) { await handler . Handle ( @event , ct ); } } } El contrato público vive en Contracts/ El slice emisor ( Orders ) define su evento en una subcarpeta pública: Features/Orders/Contracts/OrderPlaced.cs : namespace VsaTemplate.Features.Orders.Contracts ; public record OrderPlaced ( Guid OrderId , Guid ProductId , int Quantity , decimal Total ); Cuando se coloca la orden, PlaceOrderHandler simplemente publica el evento: await eventDispatcher . Publish ( new OrderPlaced ( order . Id , product . Id , quantity , total ), ct ); Y en el slice de notificaciones ( Features/Notifications/OrderPlacedNotification.cs ), escuchamos el evento: public class OrderPlacedNotification ( ILogger < OrderPlacedNotification > logger ) : IEventHandler < OrderPlaced > { public Task Handle ( OrderPlaced @event , CancellationToken ct ) { logger . LogInformation ( \"Nueva orden recibida: {OrderId}. Enviando confirmación...\" , @event . OrderId ); return Task . CompletedTask ; } } Orders no tiene la más remota idea de que Notifications existe. Están 100% desacoplados. ¿Cuándo migrar a Wolverine o MassTransit? Este dispatcher in-process es ligero y comparte la misma transacción y memoria del request. Si el proceso del servidor se cae a la mitad, el evento en memoria se pierde. Cuando necesites garantías transaccionales duras (Outbox Pattern), reintentos automáticos ante caídas o enviar mensajes a brokers externos (RabbitMQ, Kafka, Azure Service Bus), el salto natural y recomendado en el ecosistema .NET es Wolverine . Y lo mejor: como tus handlers ya son métodos limpios, migrar a Wolverine requiere mínimos cambios. Resumen del flujo de un caso de uso HTTP POST /api/products │ ▼ ┌──────────────────────────────────────┐ │ Endpoint Route Builder │ └──────────────────┬───────────────────┘ │ ▼ ┌──────────────────────────────────────┐ │ .WithValidation<CreateProduct.Req>() │ ──► ¿Inválido? ──► HTTP 400 ProblemDetails └──────────────────┬───────────────────┘ │ (Válido) ▼ ┌──────────────────────────────────────┐ │ CreateProductHandler │ │ • Guarda en DbContext (EF Core) │ │ • Publica EventDispatcher │ └──────────────────┬───────────────────┘ │ ▼ HTTP 201 Created (JSON) Conclusión y lo que viene en la Parte 3 Hemos visto cómo un slice cobra vida: Casos de uso compactos y altamente cohesivos. Handlers concretos sin interfaces ficticias, registrados automáticamente por convención con Scrutor. Persistencia directa con Entity Framework Core. Validación automática desacoplada del negocio mediante Endpoint Filters. Comunicación limpia entre slices mediante eventos in-process. Pero falta la pieza más crítica de todas: la protección y el futuro . ¿Cómo testeamos estos slices sin caer en la pesadilla de mockear 20 llamadas a repositorios? ¿Cómo evitamos que un desarrollador distraído rompa las reglas y acople los slices entre sí? ¿Cómo compartimos estos modelos C# con el frontend en Angular/React sin desincronizarnos? ¿Y cómo escala esta arquitectura si el sistema crece a 50 o 100 slices? Todo eso lo resolveremos en el cierre de la trilogía: Parte 3: Blindaje, Frontend y Evolución . Código fuente de referencia El código de todos los ejemplos proviene directamente de la plantilla: 👉 Repositorio en GitHub: betoramiz/vsa-template ¡Déja tu opinión en los comentarios! ¿Qué opinas de eliminar las interfaces en los handlers? ¿Prefieres eventos in-process o usar un mediador tradicional?",
+            "url": "https://dev.to/betoramiz/anatomia-de-un-slice-en-produccion-handlers-sin-interfaces-ef-core-sin-repositorios-y-eventos-4cl9",
+            "source": "DEV Community",
+            "category": "cloud",
+            "tags": [
+                "azure",
+                "csharp",
+                "developpement",
+                "git",
+                "ios",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-27T20:37:00+00:00",
+            "collected_at": "2026-09-27T20:40:09.891641+00:00"
+        },
+        {
+            "id": "b23de0d0868c0e844fa0b548a1d395a94120e9e12b05727ebb9e267ebe138574",
+            "title": "Deconstruyendo Clean Architecture: Por qué nos cansa y cómo Vertical Slice Architecture nos devuelve la paz en .NET (Parte 1)",
+            "description": "¿Alguna vez has tenido esa sensación de \"estoy escribiendo demasiada burocracia\" al crear un endpoint sencillo en .NET? Imagina esta escena cotidiana: tu equipo necesita agregar un endpoint para registrar un producto. Una tabla sencilla con tres columnas: Id , Name y Price . Nada del otro mundo. Abres tu solución y el viaje comienza: Creas la entidad en MiApp.Domain . Defines una interfaz en MiApp.Application.Contracts ( ICreateProductUseCase o IProductRepository ). Creas un ProductDto , un CreateProductCommand y un mapper (o perfil de AutoMapper). Implementas la interfaz en MiApp.Application o MiApp.Infrastructure . Implementas el repositorio ProductRepository con un único método AddAsync . Creas el controlador en MiApp.Api , inyectas la interfaz y conectas los cables. Registras el servicio en el contenedor de Inyección de Dependencias. Quince minutos después, tienes 7 archivos modificados o creados en 4 proyectos distintos para guardar una fila en una base de datos. Y lo peor de todo: esa interfaz ICreateProductService solo tiene —y tendrá por siempre— una sola implementación . Si te sentiste identificado, bienvenido al club. Esto no es falta de ganas: es fatiga por arquitectura ceremonial . En esta serie de 3 entregas exhaustivas, vamos a desarmar este problema y ver cómo construir una Web API en .NET con Vertical Slice Architecture (VSA) de forma pragmática, tomando como referencia una plantilla lista para producción construida con C# moderno y Minimal APIs. El problema de Clean Architecture: El costo se paga el día uno Clean Architecture, Onion Architecture o la arquitectura hexagonal son herramientas magníficas... cuando el problema que resuelven justifica su costo. El problema ocurre cuando las adoptamos por defecto como si fueran una ley grabada en piedra. En una arquitectura por capas tradicional, el software se organiza por preocupaciones técnicas : [ Capa de Presentación / API ] │ ▼ [ Capa de Aplicación (Casos de uso / DTOs) ] │ ▼ [ Capa de Dominio (Entidades / Lógica pura) ] ▲ │ [ Capa de Infraestructura (EF Core / Repositorios) ] Cada capa vive en un proyecto .csproj separado. Para cualquier cambio, tu mente y tu editor tienen que saltar de un proyecto a otro. Las cosas que cambian juntas están separadas por la fuerza. Pero lo más peligroso es esto: En Clean Architecture pagas el costo máximo de complejidad desde el día 1 para todos los casos de uso, incluso para los más triviales. Un CRUD de lectura de 2 campos paga la misma ceremonia que un motor de pricing financiero hipercomplejo con reglas de negocio cambiantes. ¿Y si invertimos la fórmula? La idea central: La complejidad se paga por slice Aquí es donde entra Vertical Slice Architecture (VSA) , popularizada por referentes como Jimmy Bogard (creador de MediatR) y refinada por Derek Comartin (CodeOpinion) y Milan Jovanović. En VSA, la estructura del código no refleja la técnica (capas), sino las capacidades del negocio (features): CAPAS TRADICIONALES VERTICAL SLICE (División por técnica) (División por negocio) ┌─────────────────────────┐ ┌──────────┐ ┌──────────┐ │ Presentación │ │ │ │ │ ├─────────────────────────┤ │ Feature │ │ Feature │ │ Aplicación │ ──► │ Products │ │ Orders │ ├─────────────────────────┤ │ │ │ │ │ Dominio │ │ │ │ │ ├─────────────────────────┤ │ │ │ │ │ Infraestructura │ │ │ │ │ └─────────────────────────┘ └──────────┘ └──────────┘ En lugar de rebanar el sistema de forma horizontal, lo cortamos en rebanadas verticales . Un slice atraviesa todo lo necesario para resolver ese caso de uso: desde la ruta HTTP hasta la consulta a la base de datos. La premisa de oro es: La complejidad se paga por slice, no por proyecto. ¿Un caso de uso es un simple reporte o un CRUD directo? Se resuelve en un único archivo, usando consultas directas sin ceremonias. ¿Otro caso de uso es crítico, tiene reglas complejas y requiere validación avanzada y eventos? Ese slice particular tendrá un modelo de dominio rico, validadores dedicados y más pruebas. Y lo mejor: la complejidad de un caso de uso difícil no contamina al resto de la aplicación . Las 5 reglas que sustituyen a la policía de capas En Clean Architecture, la separación en múltiples proyectos .csproj existe para que el compilador nos impida hacer trampas (por ejemplo, que el dominio no referencie a la base de datos). Al movernos a una arquitectura de vertical slices dentro de un solo proyecto Web API, eliminamos los muros físicos. Pero para que no se convierta en el temido \"código espagueti\", establecemos 5 reglas de oro explícitas : Un slice no usa los casos de uso de otro slice. Lo público de un slice es únicamente su modelo de datos ( Domain/ , para consultas compartidas) y sus eventos ( Contracts/ ). La lógica interna de un caso de uso es privada. Nada entra a Common hasta que se repita al menos 3 veces. La abstracción prematura es la raíz de la complejidad innecesaria. No crees una clase base genérica porque \"quizás la usemos luego\". Si dos features hacen algo similar, permítete duplicar un poco de código. A la tercera repetición, se refactoriza a Common . El archivo de endpoints se mantiene tonto. Solo mapea la ruta HTTP hacia el handler correspondiente. Cero lógica de negocio, cero consultas directas en el mapeo de rutas. La complejidad es opt-in por slice. Validadores, modelos enriquecidos, manejo transaccional... se agregan únicamente donde el negocio lo exige. Camino de crecimiento sin saltos dramáticos. Feature pequeño en una carpeta → Feature grande convertido en módulo → Monolito Modular → Microservicio (solo si realmente hace falta escalabilidad independiente). Estructura de proyecto: Menos proyectos, más claridad ¿Cómo se ve esto en la vida real? En lugar de tener una solución con 5 proyectos .csproj , arrancamos con un solo proyecto Web API y su proyecto de tests correspondiente: # Crear solución y proyectos dotnet new slnx -n MiApp dotnet new web -n MiApp -o src/MiApp dotnet new xunit -n MiApp.Tests -o tests/MiApp.Tests dotnet sln add src/MiApp tests/MiApp.Tests dotnet add tests/MiApp.Tests reference src/MiApp La estructura dentro de src/MiApp queda limpia, intuitiva y navegable: src/MiApp/ ├── Program.cs ← Composición de la app ├── Common/ ← Infraestructura compartida real │ ├── Endpoints/ ← Contratos base y filtros │ ├── Persistence/ ← DbContext global y migraciones │ └── ErrorHandling/ ← Manejo de errores RFC 9457 ├── Composition/ │ └── UseCaseRegistration.cs ← Registro automático por convención └── Features/ ├── Products/ ← Slice de Productos │ ├── Endpoints.cs ← Solo enrutamiento de este feature │ ├── CreateProduct.cs ← Un caso de uso = un archivo │ ├── GetProducts.cs │ ├── GetProductById.cs │ ├── DeleteProduct.cs │ └── Domain/ │ ├── Product.cs │ └── ProductConfiguration.cs └── Orders/ ← Slice de Órdenes ├── Endpoints.cs ├── PlaceOrder.cs ├── GetOrderById.cs ├── Contracts/ │ └── OrderPlaced.cs ← Eventos públicos para otros slices └── Domain/ └── Order.cs Nota algo fundamental: cuando te asignen una tarea sobre \"Productos\", nunca sales de la carpeta Features/Products . No tienes que abrir 6 carpetas en el explorador de soluciones. Todo lo que cambia junto, vive junto. Enrutamiento con Minimal APIs: Endpoints tontos y limpios Hay quienes meten toda la definición de rutas, validación y lógica dentro del propio Program.cs . A los 5 endpoints, Program.cs se vuelve inleíble. Nuestra decisión de diseño fue: Separar las rutas de la lógica : Cada feature tiene un archivo Endpoints.cs . Funciona como la \"tabla de contenidos\" del slice. Endpoints tontos : El endpoint solo recibe la petición HTTP y se la pasa al handler. Observa cómo se ve Features/Products/Endpoints.cs : namespace VsaTemplate.Features.Products ; public class Endpoints : IFeatureEndpoints { public static void Map ( IEndpointRouteBuilder app ) { var group = app . MapGroup ( \"/api/products\" ) . WithTags ( \"Products\" ); group . MapPost ( \"/\" , ( CreateProduct . Request request , CreateProductHandler handler , CancellationToken ct ) => handler . Handle ( request , ct )) . WithName ( nameof ( CreateProduct )) . WithValidation < CreateProduct . Request >(); group . MapGet ( \"/\" , ( int ? page , int ? pageSize , GetProductsHandler handler , CancellationToken ct ) => handler . Handle ( page , pageSize , ct )) . WithName ( nameof ( GetProducts )); group . MapGet ( \"/{id:guid}\" , ( Guid id , GetProductByIdHandler handler , CancellationToken ct ) => handler . Handle ( id , ct )) . WithName ( nameof ( GetProductById )); group . MapDelete ( \"/{id:guid}\" , ( Guid id , DeleteProductHandler handler , CancellationToken ct ) => handler . Handle ( id , ct )) . WithName ( nameof ( DeleteProduct )); } } ¿Qué logramos con esto? En 20 líneas de código entiendes todo lo que ofrece el módulo de productos. Las rutas están agrupadas con prefijo /api/products y categorizadas para OpenAPI. Cada endpoint delega inmediatamente en su *Handler . .WithName(...) le da una identidad única a la operación (clave para el frontend, como veremos en la Parte 3). Auto-descubrimiento de Endpoints: Olvídate de tocar Program.cs Uno de los mayores dolores de cabeza en proyectos grandes es el archivo central de configuración. Cada vez que alguien crea un feature, tiene que tocar Program.cs para registrarlo. Si 3 programadores hacen esto al mismo tiempo en ramas distintas, prepárate para los conflictos de Git (merge conflicts). Para resolver esto, implementamos un patrón de auto-descubrimiento . Aprovechando las interfaces con métodos estáticos abstractos ( static abstract ) introducidas en C# 11, definimos un contrato muy simple en Common/Endpoints/IFeatureEndpoints.cs : namespace VsaTemplate.Common.Endpoints ; public interface IFeatureEndpoints { static abstract void Map ( IEndpointRouteBuilder app ); } Y luego, en Common/Endpoints/EndpointRegistration.cs , creamos un método de extensión que escanea el ensamblado al arrancar y mapea automáticamente todas las clases que implementen esta interfaz: public static class EndpointRegistration { public static IEndpointRouteBuilder MapFeatureEndpoints ( this IEndpointRouteBuilder app ) { var endpointTypes = typeof ( Program ). Assembly . GetTypes () . Where ( t => t is { IsAbstract : false , IsInterface : false } && typeof ( IFeatureEndpoints ). IsAssignableFrom ( t )); foreach ( var type in endpointTypes ) { var mapMethod = type . GetMethod ( nameof ( IFeatureEndpoints . Map ), BindingFlags . Public | BindingFlags . Static ); mapMethod ?. Invoke ( null , [ app ]); } return app ; } } Ahora, en tu Program.cs , solo necesitas una sola línea: var app = builder . Build (); // Registra todos los endpoints de todos los features automáticamente app . MapFeatureEndpoints (); app . Run (); El resultado : Agregar un feature nuevo es tan simple como crear la carpeta Features/Clientes/ , agregar su Endpoints.cs implementando IFeatureEndpoints , y listo. El sistema lo descubre al compilar. No tocas Program.cs para nada. Conclusión y lo que viene Hemos pasado de una maraña de capas horizontales a un esquema vertical donde: Organizamos el código por capacidades de negocio , no por conceptos técnicos. Eliminamos proyectos .csproj innecesarios y reducimos la fricción mental. Definimos rutas limpias con Minimal APIs y las descubrimos automáticamente sin tocar archivos centrales. Pero ahora viene la pregunta del millón: ¿Cómo se ve por dentro ese CreateProduct.cs ? ¿Dónde quedaron las interfaces? ¿Cómo inyectamos las dependencias si no usamos ICreateProductHandler ? ¿Y qué pasó con MediatR? ¿Cómo interactuamos con Entity Framework Core sin escribir una capa de repositorios? Todo eso lo veremos en la Parte 2: Anatomía de un Slice en Producción , donde destriparemos el diseño de los Handlers, la validación elegante sin ensuciar el negocio, y la comunicación entre slices mediante eventos ligeros. ¿Quieres explorar el código completo? Puedes clonar y probar la plantilla directamente desde el repositorio de GitHub: 👉 betoramiz/vsa-template Cuéntame en los comentarios: ¿En tu equipo actual usan Clean Architecture tradicional? ¿Cuántos proyectos tiene tu solución .NET habitual? ¡Nos leemos abajo!",
+            "url": "https://dev.to/betoramiz/deconstruyendo-clean-architecture-por-que-nos-cansa-y-como-vertical-slice-architecture-nos-4fn8",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "csharp",
+                "developpement",
+                "git",
+                "ios",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-27T20:36:38+00:00",
+            "collected_at": "2026-09-27T20:40:09.893503+00:00"
+        },
+        {
+            "id": "d5c8da7c2331fa1c0bc819c78aecf12525684c5028510cd558e36aa74349fdfc",
+            "title": "kubernetes for engineers who know literally nothing",
+            "description": "Disclaimer: this is not a post from a seasoned DevOps engineer. So if you also know very little about Kubernetes, ignorance loves company. To start with some (somewhat) fun facts: Kubernetes was created by Google (in 2014) Kubernetes is also known as K8s (K********s = K + 8 letters + s) Why would you even need Kubernetes? Well, lets start simple. Imagine you have created a report generation app. It has 2 services - a backend and a frontend. People upload some information and you return a .txt report. But obviously returning a .txt document is ugly. Users want graphs, nice fonts, interactive links. You need to create PDFs. But creating PDFs can be heavy work and your backend needs to remain fast and responsive. Introducing PDF generation inside the backend will seriously slow stuff down. So you decide to add a third service for PDF generation. This means your main backend service remains fast and responsive, while the heavy work is done separately. A lot more moving parts right? And each part has different deployment requirements too. The PDF generation service needs a lot more memory than the backend to generate the PDFs. Plus, when there are a surge of PDF requests you need extra resources to deal with load. You probably want a queue too. And we haven't even added state yet to keep track of everything! So add a database, cron jobs for S3 lifecycle, observability, and a bunch of networking rules between all your services. As the application grows, it's going to get harder and harder to manage everything. Because this is just one feature in one simple app. Imagine a company with hundreds of teams and hundreds of services. Before getting into Kubernetes, let's start with a key concept. The container. A container is an isolated process with its own packaged environment. In other words, a running app with the code you've written and the packages you've installed. Containers are the solution to \"well it works for me!\" because building a container involves declaring dependencies and versions. This makes it easy to run the app consistently across different environments. With our report generation app, we would package the backend, the frontend, and the PDF generation service into separate containers. This means each service can run independently with as many instances as we need. For example, running several PDF generation containers during peak times. Once you've defined containers, this is where Kubernetes comes in. Kubernetes allows you to manage all of the containers in your system. You define the desired state of your system and Kubernetes works to make this a reality. So what does your \"desired state\" actually look like? Well for us, our desired state might be 3 PDF generation containers running at any time. Or it could be more complex too, like having more instances when traffic is heavy and less instances when traffic is light, to optimise cost and latency. We can define these rules with Kubernetes. With this basic mental model, we can start unpacking the key parts of Kubernetes. At the top level is the cluster . A cluster is a group of machines — known as nodes — managed by Kubernetes. The cluster acts as an operational boundary — for example, you might have a production and a staging cluster. Within the cluster, there are two key things: The control plane The worker nodes The control plane manages the worker nodes. It stores your instructions and works to enforce them. The worker nodes actually run your containers. So who manages the control plane? Well you can do this yourself, but often you will use a managed Kubernetes provider (for example, Google Kubernetes Engine - GKE) if you're on the cloud. The control plane acts as the brains of your system and it has a few key components: The API server is how you communicate with the control plane. etcd is a key/value database that Kubernetes uses to store cluster configuration and state. The scheduler decides which node to run stuff on. The controller manager ... manages your controllers (more on this). The worker nodes are easy to understand as a hierarchy. cluster └── worker node └── pod └── container We are already familiar with the cluster. The worker node is simply a machine, like one you might rent from a cloud provider. A pod seems a little harder to define and is often described as: \"The smallest deployable units of computing that you can create and manage in Kubernetes\" K8s docs . A pod is defined by what it contains, which is a collection of containers. Usually a pod contains just a single application container. So our PDF generation container, frontend container, and backend container would all have separate pods. A pod usually only has multiple containers if you need a helper container, for example something for collecting logs. Instead of scaling up and down raw containers, Kubernetes manages pods. This means multiple containers can \"live together\", sharing storage, an IP address, and lifecycle. But a pod is ephemeral. When it dies, it is recreated (not repaired) and it gets a new identity. TLDR - a cluster is a group of nodes, a node contains a group of pods, and a pod contains a group of containers. Kubernetes manages nodes and pods to enforce our desired state. But how do we define what is \"desired\"? Resources. Everything in Kubernetes is a resource. You define the resources you desire in a .yaml manifest. A simplified manifest might look like this: apiVersion : apps/v1 kind : Deployment metadata : name : pdf-generator spec : replicas : 3 selector : matchLabels : app : pdf-generator template : metadata : labels : app : pdf-generator spec : containers : - name : pdf-generator image : my-company/pdf-generator:v1 resources : requests : cpu : \" 500m\" memory : \" 1Gi\" The manifest has a few key fields: Kubernetes updates its APIs, so apiVersion is which one this yaml is using. kind is the type of resource. metadata is information about the resource. spec is where the desired state lives. Its content and meaning depends on the resource kind. In our example above, we have defined kind: Deployment . This means the resource is a Deployment. There are many resource kinds defined by Kubernetes (and you can even create custom resources). Basically everything in Kubernetes is a resource, even things we don't define ourselves or manage directly. For example, pods and nodes are also resources. A Deployment is a resource for running stateless applications with a certain number of replicas . A replica is an interchangeable copy of a pod. We want multiple replicas of our PDF generation service so we can handle many requests (and so we have backups in case one replica goes down). So Kubernetes knows what we desire, how does it enforce it? Controllers. Controllers do the following loop called reconciliation : observe -> compare -> act -> repeat In our manifest above, we requested 3 replicas. The deployment controller creates and updates a ReplicaSet. A ReplicaSet controller ensures the requested replicas exist. If one pod goes down: the ReplicaSet controller observes the current number of replicas. the ReplicaSet controller compares this with the requested number of replicas. the ReplicaSet controller acts by replacing it. If we want to implement scaling depending on traffic, the deployment controller can update the number of requested replicas. So you know a bit about Kubernetes now. But do you need it? Maybe. But maybe not. Kubernetes is undoubtedly powerful, but this comes with significant complexity. Kubernetes is widely used and growing (82% of container users run Kubernetes in production according to CNCF ) but it's worth noting the other options. Cloud providers offer managed container platforms like Cloud Run and ECS/Fargate. You hand over your containers and the cloud provider manages the infrastructure. You might think: \"I'm not paying a premium for something like Cloud Run\". But I wouldn't dismiss it too fast. While Kubernetes exposes all the primitives you need to optimise for cost, it is significant setup and ongoing work. And time is money. Not to mention that a poorly setup Kubernetes cluster can definitely cost more money then it should. As always, it's all about tradeoffs. Appendix More Resource Kinds A Pod runs 1+ containers. A Deployment keeps a replicated app running. A ReplicaSet maintains a desired number of pods. A Service provides a stable identity to pods (because they get a new IP address when replaced). An Ingress routes external traffic into the cluster. A Job runs a task until it completes successfully. A CronJob is a Job on a schedule. A ConfigMap stores non-sensitive information. A Secret stores sensitive information. A Persistent Volume (PV) represents disk storage independent of a Pod. It survives even when a Pod dies. A Persistent Volume Claim (PVC) is how you order a PV. A Pod mounts a PVC which is bound to a PV which represents an actual cloud resource. A namespace creates a logical boundary in a cluster. This means you can have a backend Deployment in multiple namespaces (for example, production and staging ). You can also apply policies to an entire namespace (for example, staging can use x much CPU and memory).",
+            "url": "https://dev.to/frank-895/kubernetes-for-engineers-who-know-literally-nothing-3a54",
+            "source": "DEV Community",
+            "category": "hardware",
+            "tags": [
+                "developpement",
+                "kubernetes",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-27T20:34:47+00:00",
+            "collected_at": "2026-09-27T20:40:09.894714+00:00"
+        },
+        {
+            "id": "32f206d5a41c91737a18fef18678863d54eaaa3bc82ff99ac0b3c8d96c50078e",
+            "title": "Anthropic’s CEO is about to have dinner with President Trump",
+            "description": "This will be the first one-on-one meeting between Dario Amodei and Donald Trump",
+            "url": "https://techcrunch.com/2026/09/27/anthropics-ceo-is-about-to-have-dinner-with-president-trump/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "anthropic",
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-09-27T20:34:28+00:00",
+            "collected_at": "2026-09-27T20:40:08.372547+00:00"
+        },
+        {
+            "id": "8eeb748629bf55df16f12460443ae4b4e2ce575d28ce2721575c16277e2ea599",
+            "title": "Handling Concurrent Requests in Symfony with Doctrine and PostgreSQL",
+            "description": "Two requests reserve the last available seat. Two workers decrement the same stock quantity. Two administrators update the same order. Each operation can work correctly on its own and still produce an incorrect result when executed concurrently. In Symfony applications using Doctrine, the solution requires coordinating database access and making sure the ORM exposes the state that was actually locked. This article uses seat reservations as an example, but the same approach applies to inventory, balances and guarded status transitions. Scope: PostgreSQL at READ COMMITTED . Code snippets are simplified; links point to concrete implementations in a repository . Here is the race the following sections will address: Waiting for a row lock does not repeat the application's earlier availability check. The core rule is: Protect the whole decision: Read current state under the chosen concurrency mechanism, validate the invariant, and commit the corresponding changes together. Different operations need different mechanisms. Before looking at pessimistic locking in detail, it helps to have the overall decision model: Problem Typical mechanism Read current state, validate several conditions, then modify Pessimistic locking with SELECT ... FOR UPDATE Perform a simple guarded state transition Conditional UPDATE Handle edits spanning multiple HTTP requests Optimistic locking Prevent concurrent creation of the same logical record UNIQUE constraint or primary key with ON CONFLICT The rest of the article explains why these mechanisms solve different concurrency problems and what Doctrine adds on top of PostgreSQL's behavior. Why a transaction alone is not enough Consider a typical read–check–write operation: $seat = $seatRepository -> find ( $seatId ); if ( ! $seat -> isAvailable ()) { throw new SeatNotAvailableException ( $seatId ); } $seat -> holdFor ( $reservationId ); $entityManager -> flush (); Two requests can both read AVAILABLE before either writes its change: Step Request A Request B 1 Reads AVAILABLE Reads AVAILABLE 2 Availability check passes Availability check passes 3 Updates owner to A Waits to update the same row 4 Commits Updates owner to B and commits Wrapping this code in a transaction makes each operation atomic, but does not prevent both availability checks from passing. PostgreSQL serializes the writes. However, an update with only WHERE id = :id can still overwrite the previous owner: its condition remains true after waiting. The application made its business decision using an earlier state. This follows PostgreSQL's READ COMMITTED behavior . Key rule: Protect the availability check together with the write. Pessimistic locking: protect the entire decision For a short operation that reads an entity, validates its state and updates it, Doctrine provides LockMode::PESSIMISTIC_WRITE . On PostgreSQL, a locking query uses SELECT ... FOR UPDATE . A competing transaction requesting the same lock waits until the current holder commits or rolls back. Service: define the transaction boundary The transaction belongs around the entire use case . A simplified service method looks like this: public function reserve ( string $showId , string $seatId , string $reservationId , ): void { $this -> entityManager -> wrapInTransaction ( function () use ( $showId , $seatId , $reservationId , ): void { $seat = $this -> seatRepository -> findForUpdate ( $showId , $seatId ); if ( $seat === null || ! $seat -> isAvailable ()) { throw new SeatNotAvailableException ( $seatId ); } $seat -> holdFor ( $reservationId ); }); } wrapInTransaction() flushes before committing. The transaction must already be active when the locking query executes; adding a lock to an ordinary repository call outside a transaction is insufficient. The controller only calls the service and maps the result to HTTP. This keeps the same transaction boundary usable from HTTP, CLI and Messenger handlers. Keep external HTTP calls and other slow work outside the locked section. Repository: acquire the lock The repository method contains the locking query: use Doctrine\\DBAL\\LockMode ; use Doctrine\\ORM\\Query ; public function findForUpdate ( string $showId , string $seatId ): ?Seat { return $this -> createQueryBuilder ( 's' ) -> andWhere ( 's.id = :seatId' ) -> andWhere ( 'IDENTITY(s.show) = :showId' ) -> setParameter ( 'seatId' , $seatId ) -> setParameter ( 'showId' , $showId ) -> getQuery () -> setLockMode ( LockMode :: PESSIMISTIC_WRITE ) -> setHint ( Query :: HINT_REFRESH , true ) -> getOneOrNullResult (); } When request A commits a hold, request B acquires the lock and checks the held state. If A rolls back, B can acquire the still-available seat. Code examples: locking query and service transaction boundary . Doctrine can still hold an outdated entity The query above includes Query::HINT_REFRESH for a reason. Doctrine maintains an identity map : within one EntityManager, an entity identity normally corresponds to the same PHP object. If that object was loaded earlier, executing another query does not normally replace its fields with the returned database values. Consider this sequence: The current EntityManager loads a seat as AVAILABLE . Another transaction changes it to HELD and commits. The current EntityManager executes a locking query for that seat. The database returns the current locked row, while Doctrine can retain the previously managed object: PostgreSQL row: HELD PHP object: AVAILABLE The lock protects the row, but the availability check can still use stale state. HINT_REFRESH makes Doctrine refresh an already managed entity from the query result. This is documented in Doctrine's query hints . Refresh before modifying: Refreshing can overwrite unflushed changes. If the entity is being loaded for the first time, there is no earlier managed state to replace. A refreshing locking query should therefore be treated as an acquisition boundary for the aggregate: acquire the lock and load the current state before making changes. Avoid calling such a query after modifying the same managed entity unless discarding those unflushed modifications is intentional. Acquire the lock → hydrate current state → validate → modify → commit. Locking after an earlier availability check leaves the race open. Multiple rows: consistent lock order When one operation needs several rows, acquire pessimistic locks in a consistent order . Different acquisition orders can cause a deadlock: Transaction A: locks seat 1, waits for seat 2 Transaction B: locks seat 2, waits for seat 1 Every competing code path must follow the same order. Sorting IDs in PHP only helps if the repository actually acquires locks in that sequence; the order of values inside SQL IN (...) does not guarantee it. Consistent ordering reduces deadlocks for this resource set but does not eliminate transaction-level deadlocks involving other resources. Code example: ordered lock acquisition . Limit how long a request waits for a lock Choose a lock_timeout within the operation's latency budget and apply it with SET LOCAL inside the transaction. A lock timeout means the operation could not acquire a lock in time; it does not establish that the seat is unavailable. The timeout also applies to locks acquired implicitly by UPDATE and INSERT , including the alternative strategies below. Choose the concurrency strategy for the operation Pessimistic locking is useful when a short transaction needs to inspect current entities before changing them. It is not the only option. Conditional UPDATE: simple state transitions For a simple state transition, move the precondition into the write: UPDATE seats SET state = 'HELD' , held_by_reservation_id = : reservationId WHERE id = : seatId AND state = 'AVAILABLE' ; With Doctrine DBAL, inspect the affected-row count. One changed row means the transition succeeded; zero means the seat was missing or unavailable. For a multi-row operation, compare the count with the number of unique requested IDs and roll back partial changes before committing. Conditional updates still acquire locks and can wait. Direct SQL also bypasses Doctrine's managed state, so avoid making subsequent decisions from entities that have become stale. Optimistic locking: edits spanning HTTP requests Optimistic locking is another choice when conflicts are infrequent, especially for edits spanning user interaction. With a #[ORM\\Version] field, Doctrine checks the entity's version against the database when updating it at flush and raises OptimisticLockException on a mismatch. The application then needs an explicit conflict response or retry policy. Do not hold a database transaction open while a user edits a form. See Doctrine's locking support . For edits spanning HTTP requests, preserve the version originally shown to the user and check that expected version when processing the submission, for example: $entityManager -> lock ( $entity , LockMode :: OPTIMISTIC , $expectedVersion , ); Loading the latest entity on submission and relying only on the check at flush can still overwrite changes made while the form was open. See Doctrine's optimistic-locking implementation notes . Concurrent INSERT: let a unique key decide What if the row does not exist yet? At READ COMMITTED , a SELECT ... FOR UPDATE that finds no row does not reserve that key. Two requests can both pass an existence check and attempt an insert. Define what makes the record unique with a UNIQUE constraint or PRIMARY KEY , then handle the expected duplicate with ON CONFLICT : INSERT INTO inbox_messages ( consumer_name , message_id , message_type , processed_at ) VALUES ( : consumerName , : messageId , : messageType , : processedAt ) ON CONFLICT ( consumer_name , message_id ) DO NOTHING ; Here, (consumer_name, message_id) is the primary key. With DBAL's executeStatement() , inspect the affected-row count: 1: this transaction inserted the claim and can process the message. 0: the claim already exists; skip duplicate processing. If another transaction is inserting the same key, PostgreSQL can wait for its outcome. If it commits, the waiting insert skips the duplicate; if it rolls back, the waiting insert can succeed. One transaction: Commit the claim and the handler's database changes together, using the same connection. Otherwise, a committed claim followed by failed processing could make retries skip unfinished work. DO NOTHING handles this expected conflict without a unique-violation error. Use DO UPDATE when updating the existing record is the intended behavior. Neither option automatically validates whether duplicate requests carry the same payload. See PostgreSQL's ON CONFLICT documentation . Code example: InboxMessageStore::claim() returns whether the insert succeeded; the middleware invokes the handler only for a successful claim. Handle contention and transaction failures Not every conflict should be retried. A seat that is already held is a valid business outcome; a lock timeout or deadlock is a transient infrastructure failure. For transient failures, retry the entire transaction , not only the failed statement. After rollback, start from a fresh Doctrine EntityManager and reload the current state. Keep retries bounded and within the request's latency budget. Repeated immediate retries can increase contention, so use a small retry limit with backoff and monitor lock waits, deadlocks and exhausted retries. Final rule Transactions, row locks, version fields and unique constraints solve different parts of the concurrency problem. The important part is not choosing the most powerful mechanism. It is choosing the mechanism that protects the invariant at the point where the decision is made. Protect the whole decision: Read current state under the chosen concurrency mechanism, validate the invariant, and commit the corresponding changes together.",
+            "url": "https://dev.to/mykola_vantukh/handling-concurrent-requests-in-symfony-with-doctrine-and-postgresql-38c8",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "php",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-27T20:31:35+00:00",
+            "collected_at": "2026-09-27T20:40:09.896553+00:00"
+        },
+        {
+            "id": "b7b6f6dbcb98acb393fb797019d303262f50cc7b265e4709c0e343d677777471",
+            "title": "Pyrtugues: programação em português que gera Python de verdade",
+            "description": "Pyrtugues: A Ponte em Português para o Python que Crianças e Iniciantes Precisavam Se você já tentou ensinar programação para uma criança ou para alguém que não fala inglês, sabe qual é o maior obstáculo: a barreira do idioma. Enquanto a lógica de programação é universal, os comandos como if , else , print e def são em inglês. Ferramentas como o Portugol tentam resolver isso, mas trazem uma sintaxe complicada e engessada, que não se conecta com o que o mercado usa. O Pyrtugues nasceu para mudar esse cenário. O que é o Pyrtugues? O Pyrtugues é um projeto educacional de código aberto que funciona como uma ponte para o Python . Ele permite que você escreva código usando palavras em português, mas com a lógica idêntica à do Python. Mais do que isso: o Pyrtugues traduz automaticamente o seu código em português para Python real, que pode ser executado e até mesmo usar a biblioteca Pygame para criar jogos. Como Funciona? A arquitetura do Pyrtugues é simples e poderosa: Você escreve em Pyrtugues: se idade > 10: mostrar(\"Olá!\") O motor de tradução converte para Python: if idade > 10: print(\"Olá!\") O código Python é executado , permitindo que você veja o resultado real. Um Exemplo Prático Veja como é simples a transição: Em Pyrtugues: função saudacao(nome): retornar f\"Olá, {nome}!\" mostrar(saudacao(\"Pyrtugues\")) Em Python (gerado automaticamente): def saudacao ( nome ): return f \" Olá, { nome } ! \" print ( saudacao ( \" Pyrtugues \" )) A lógica é a mesma. A única diferença é a sintaxe, que se torna muito mais amigável para quem está começando. Por que o Pyrtugues é Diferente? Sem Blocos: É programação textual de verdade, com código digitado, como no mundo real. Ponte para o Python: Não te prende em uma linguagem \"de brinquedo\". Você aprende a lógica e, naturalmente, migra para o Python. Suporte a Pygame: Crie jogos e aplicações gráficas enquanto aprende. Versão Web e Desktop: Use no navegador ou baixe para Windows e Linux. Conclusão O Pyrtugues não veio para substituir o Python, mas para ser a porta de entrada ideal para ele. Se você é professor, pai ou está começando a programar e esbarra na barreira do inglês, o Pyrtugues é a ferramenta que faltava. 🌐 Site oficial: https://pyrtugues.netlify.app/ 🧪 Editor Web: https://pyrtugues-editor.netlify.app/ 💻 GitHub: https://github.com/pyrtugues/Pyrtugues Você já conhecia o Pyrtugues? Deixa um comentário com a sua opinião!",
+            "url": "https://dev.to/pyrtugues/pytugues-programacao-em-portugues-afe",
+            "source": "DEV Community",
+            "category": "linux",
+            "tags": [
+                "csharp",
+                "developpement",
+                "git",
+                "linux",
+                "programmation",
+                "python",
+                "web",
+                "windows"
+            ],
+            "published_at": "2026-09-27T20:29:00+00:00",
+            "collected_at": "2026-09-27T20:40:09.896940+00:00"
+        },
+        {
+            "id": "9ff9c3a686ede087861ef4427b7d17a5fc6cadc709ee9bfec8848c4c10502539",
+            "title": "Building a Sub-50ms Remote Desktop: Why Direct WebRTC P2P Beats Relay-Heavy Cloud Architectures",
+            "description": "When building or selecting remote desktop tools, developers and IT administrators frequently hit a common wall: input lag and latency jitter . In this article, we’ll look under the hood at why traditional cloud-relay architectures introduce latency bottlenecks and how modern direct Peer-to-Peer (P2P) pipelines powered by WebRTC and native desktop duplication APIs can achieve sub-50ms glass-to-glass latency. 1. The Bottleneck: Cloud Relays vs. Direct Peer-to-Peer In traditional client-server remote control architectures, the remote machine captures its screen, encodes the frame, and sends the video packet to a centralized cloud relay cluster. The relay then forwards the packet down to the technician's workstation. While cloud relays make NAT traversal trivial, they introduce three fundamental issues: Compounded Round-Trip Time (RTT): The video stream travels from Machine A → Data Center → Machine B. Even on fast fiber, routing packets through an intermediary server thousands of kilometers away adds 60–150ms of unavoidable latency. Bandwidth Saturation & Transcoding Overhead: When thousands of concurrent sessions hit relay servers, providers often throttle bitrate, drop framerates, or compress color depth (4:2:0 subsampling), causing blurry fonts. Data Sovereignty Concerns: Having a third-party server process active desktop video feeds introduces privacy and compliance overhead. The P2P WebRTC Alternative With direct WebRTC peer-to-peer streaming: The cloud server acts only as a lightweight signaling / rendezvous coordinator to exchange SDP (Session Description Protocol) offers and ICE candidates. Once the direct socket is established via STUN, 100% of media and input data flows directly between the two endpoints over encrypted DTLS-SRTP . The video stream never touches a middleman server during the session. [Tech Workstation] <==========================> [Target Machine] \\ (Direct WebRTC DTLS-SRTP) / \\ / \\===> [Signaling / STUN Server] <======/ (Only for 0.5s Handshake) 2. Low-Overhead Capture: DXGI & ScreenCaptureKit Networking is only half the equation. If your screen capture takes 30ms before encoding even starts, sub-50ms glass-to-glass latency is impossible. On Windows: Desktop Duplication API (DXGI) Instead of legacy GDI captures ( BitBlt ), modern remote desktop clients tap directly into the GPU pipeline via the DirectX Graphics Infrastructure (DXGI) Desktop Duplication API: Frames are acquired directly from GPU video memory (VRAM). Frame buffers are processed without unnecessary host memory (RAM) round-trips (zero-copy GPU rendering). Dirty rect tracking ensures only changed screen regions are pushed to the video encoder. On macOS: ScreenCaptureKit On macOS 12.3+, legacy CGDisplayStream APIs have been replaced with Apple's modern ScreenCaptureKit : Native hardware-accelerated screen capture running directly on Apple Silicon / Metal engines. Significantly lower CPU utilization and consistent 60fps frame delivery. 3. Real-World Trade-Offs in P2P Architectures Direct P2P architectures offer massive speed and privacy advantages, but they require robust engineering around real-world edge cases: Symmetric NATs & Enterprise Firewalls: Around 10–15% of enterprise networks use strict symmetric NATs where direct UDP hole punching fails. In these rare cases, seamless fallback to TURN relaying is essential. Congestion Control: Network jitter requires dynamic bitrate adaptation (e.g., Google Congestion Control / GCC) to adapt resolution on degraded Wi-Fi without crashing the session. Security Handshake: Encrypting all data channels with DTLS 1.3 and media tracks with SRTP (AES-256) ensures privacy equivalent to a direct VPN tunnel. 4. Our Implementation at Conexa Remote When we designed Conexa Remote , we applied these exact engineering principles: Sub-50ms Glass-to-Glass Latency: Leveraging native DXGI, ScreenCaptureKit, and WebRTC data channels for fluid, responsive mouse and keyboard input. Clientless Ad-Hoc Connections: For attended helpdesk support, end users don't need to create accounts, configure passwords, or install bloated runtimes. They open the standalone binary and read an instant 9-digit PIN. Floating Concurrent Capacity Model: Instead of rigid named-user licensing taxes, businesses share a floating pool: the Professional tier ( 29 €/mo for 2 concurrent active connections ) includes unlimited technician logins and unlimited endpoints in the address book (+5 €/mo per extra concurrent slot). 100% EU Infrastructure: Rendezvous and signaling infrastructure is hosted exclusively within the EU (Romania), with zero third-party telemetry. Permanent Free Tier: 1 concurrent session with zero time limits or artificial session timeouts. Conclusion Real-time remote control shouldn't feel like driving a rover on Mars. By bypassing relay proxies in favor of direct WebRTC peer-to-peer pipelines and modern GPU capture APIs, remote support can be instantaneous, lightweight, and respectful of user privacy. Feel free to inspect the architecture and test the Windows/macOS builds at conexaremote.com . We'd love to hear feedback from fellow network and systems engineers!",
+            "url": "https://dev.to/conexaremote/building-a-sub-50ms-remote-desktop-why-direct-webrtc-p2p-beats-relay-heavy-cloud-architectures-4cg3",
+            "source": "DEV Community",
+            "category": "hardware",
+            "tags": [
+                "developpement",
+                "git",
+                "macos",
+                "programmation",
+                "web",
+                "wifi",
+                "windows"
+            ],
+            "published_at": "2026-09-27T20:17:50+00:00",
+            "collected_at": "2026-09-27T20:40:09.897633+00:00"
+        },
+        {
+            "id": "2ae4f4ebf2fa6265a025ff083db4e83df1bcde423fa6d6d91681bd8d1a03ae9e",
+            "title": "Allegations of US interference in Quebec election",
+            "description": "Comments",
+            "url": "https://globalnews.ca/news/12073854/quebec-election-u-s-interference/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-27T20:17:19+00:00",
+            "collected_at": "2026-09-27T20:40:09.577352+00:00"
+        },
+        {
+            "id": "f81e702f2ea312d8cf2801c0c961d6242bcecdf1611e53c82d26dffd82e73643",
+            "title": "When did Google get so f-ing weird?",
+            "description": "Comments",
+            "url": "https://sancho.bearblog.dev/google-weird/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-27T20:12:54+00:00",
+            "collected_at": "2026-09-27T20:40:09.576420+00:00"
+        },
+        {
+            "id": "ac048210a83bf6fe137b5c30c35d30b858b862fab621870d879109bbaa2820bf",
+            "title": "Launching Maliklang-V3: An Independent offline Neuro-AI Thought Decore Engine",
+            "description": "Proud to share that Maliklang-V3 is officially live on GitHub! 🧠🔒 Moving completely away from V1 and V2, Version 3 is a fully independent, decentralized, and offline Neuro-AI ecosystem built to assist critically ill or non-verbal patients by translating raw EEG brainwave signals into synthetic human speech in real-time. 🛠️ The 6-File Core Infrastructure Suite: neuro_demodulator.py - SciPy Butterworth filter that instantly strips away ocular and muscular noise spikes from raw EEG streams. neuro_crypt.py - A military-grade privacy shield using transient Fernet keys that encrypts neural data in volatile memory and triggers a hard zero-fill RAM wipe ( hard_volatile_wipe ) immediately post-inference to prevent data bleeding. thought_decoder.py - Advanced 3-Zone dynamic classifier (Active Red / Relax Green / Deep Blue) that maps brainwave amplitudes to clear text/voice healthcare intents. neuro_bridge.py - High-speed, async FastAPI application gateway that enables secure cloud transit and remote monitoring interfaces. neuro_discovery.py - An anomaly detection engine that captures hyper-normal brain states and logs medical breakthroughs. .sys_neuro_vault.dat - A completely obfuscated, hidden encrypted storage file to archive secure discovery matrix logs locally. 🛡️ Privacy & Self-Healing Architecture Built completely for high-reliability healthcare deployments, it features an automated fault-tolerant self-healing logic that intercepts crashes and auto-restores infrastructure pipelines in seconds. 🔗 GitHub Repository Check out the full open-source architecture here: https://github.com Built from scratch using Python, FastAPI, SciPy, and Cryptography. I would love to hear feedback from fellow deep-tech architects, systems engineers, and neuro-tech enthusiasts on this architecture!",
+            "url": "https://dev.to/shailendracodes/launching-maliklang-v3-an-independent-offline-neuro-ai-thought-decore-engine-5beg",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "git",
+                "programmation",
+                "python",
+                "web"
+            ],
+            "published_at": "2026-09-27T20:09:06+00:00",
+            "collected_at": "2026-09-27T20:40:09.897948+00:00"
+        },
+        {
+            "id": "563d5251d1dde30f9af927adea5508d8336e7fd50a7bdf51be92728929e84a71",
+            "title": "I built a Django linter that never imports Django",
+            "description": "Some background on why static: the drift check was the feature that convinced me. Django's own makemigrations --check is the right answer, but it needs every dependency installed and settings that import cleanly, so on a cold CI runner or a broken venv it simply can't run. Replaying migration files into a field set and diffing against models.py turned out to be enough to catch the dangerous direction (declared but never migrated) without any of that. It's also fast: the model graphs of Zulip, Saleor, Wagtail, django CMS and Mezzanine parse together in about 20 ms on a laptop.",
+            "url": "https://dev.to/frowningdev/i-built-a-django-linter-that-never-imports-django-4oip",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-27T20:07:59+00:00",
+            "collected_at": "2026-09-27T20:40:09.898084+00:00"
+        },
+        {
+            "id": "b3ea7c31c83a109e2827c06dd3e986aa2087506f468dbff7851663ab77bb99b2",
+            "title": "Rule-based systems and machine learning aren't as different as people make them sound.",
+            "description": "I started Module 1 of #MLZoomcamp by Alexey Grigorev this week, and two things clicked for me. First: a rule-based system is code you write that produces an outcome. You look at spam emails, notice patterns, and hardcode them: sender is X, subject contains Y, mark as spam. Works fine, until spam changes and you're adding another rule. Then another. Six months in, it's a pile of exceptions nobody wants to touch. Machine learning flips that relationship. Instead of you writing the logic, you already have the outcomes, emails people manually marked as spam, and you feed those in. The algorithm works out the logic itself. The rules you already wrote aren't wasted work either. They become your starting features. Second thing that clicked: ML projects follow a process called CRISP-DM. Understand the problem, get the data, prepare it, train a model, evaluate it, deploy it, repeat. Reading through it, I realized I already do a version of this without naming it. Checking whether data is reliable enough before building on it. Cleaning and reshaping raw data into something usable. Going back and revising earlier assumptions once you learn something new from the data itself. That's most of what a data engineer's day looks like anyway, just applied to a different end goal. It's easy to accidentally build a model on information it wouldn't actually have in the real world, feeding it \"current\" data while training on past cases. Looks great in testing, falls apart in production. Same instinct that makes you double check a backfill when the numbers look a little too clean. One module in, and the overlap between data engineering and ML is bigger than I expected. More nuggets as I work through the rest of the Machine Learning Zoomcamp.",
+            "url": "https://dev.to/anthony-gicheru/rule-based-systems-and-machine-learning-arent-as-different-as-people-make-them-sound-4ede",
+            "source": "DEV Community",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "developpement",
+                "machine_learning",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-27T20:05:52+00:00",
+            "collected_at": "2026-09-27T20:40:09.898294+00:00"
+        },
+        {
+            "id": "d07145dda180b4c6176b50f703750adec549a726585a0bd61e28c7bcb2136dc8",
+            "title": "I built a tool to see if people or ai agents were opening my links",
+            "description": "https://lemonlink.ai/Y_ffMGCk4I7TMCap I kept sharing links, pitch decks, demos, articles, or videos and wondering whether anyone actually opened them or if they used AI for it. There weren't really any good tools to do this for generic links, so I built LemonLink get a shareable link for any url that shows whether a human or AI opened it and when. pls try to break this and lmk how I can improve it",
+            "url": "https://dev.to/lemonlink/i-built-a-tool-to-see-if-people-or-ai-agents-were-opening-my-links-5hb2",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-27T20:05:28+00:00",
+            "collected_at": "2026-09-27T20:40:09.898386+00:00"
+        },
+        {
+            "id": "fa2683f397cd3f81f79a70a79f4819390420cf69fa592175b3c7e5afac43f1db",
+            "title": "Moving AWS Glue jobs to OCI Data Flow: a working map",
+            "description": "If you run Spark ETL on AWS Glue and need to move it to Oracle Cloud, the good news is that most of it maps cleanly. The bad news is the few parts that don't, and they are exactly the parts Glue made easy. Here is the map I use. Why teams move: cost Most teams I talk to move for one reason: the bill. OCI list prices for compute, block storage and Autonomous Database are often lower than the AWS equivalents, and OCI includes the first 10 TB of outbound data transfer each month at no charge, which matters for pipelines that ship data out. Don't take my word for it, though: price your own workload. That is one reason the tool at the end of this post shows the monthly cost of every part before it builds anything. The short version AWS OCI Notes Glue ETL job (PySpark) OCI Data Flow application Managed Spark. You upload the script to Object Storage and run it. S3 Object Storage Paths change from s3://bucket/key to oci://bucket@namespace/key . Glue Data Catalog OCI Data Catalog (as a Hive metastore) Data Flow can use a Data Catalog metastore for your tables. Glue crawlers Data Catalog harvesting Harvest a bucket to discover the schema. Glue triggers / workflows Airflow (or another scheduler) Your DAGs keep working. Point the operators at Data Flow. Lambda glue code around the job OCI Functions Small handlers move over with little change. What changes in the script 1. Drop the Glue wrappers. GlueContext , DynamicFrame and job.commit() are Glue-only. Data Flow runs plain Spark, so use a normal SparkSession and DataFrames. # Before (Glue) from awsglue.context import GlueContext glue = GlueContext ( SparkContext . getOrCreate ()) df = glue . create_dynamic_frame . from_catalog ( database = \" raw \" , table_name = \" events \" ). toDF () # After (Data Flow) from pyspark.sql import SparkSession spark = SparkSession . builder . appName ( \" events \" ). getOrCreate () df = spark . read . parquet ( \" oci://raw@mynamespace/events/ \" ) 2. Change the paths. Every s3:// path becomes oci://bucket@namespace/ . Put the bucket and namespace in job arguments, not in the code, so the same script runs in dev and prod. 3. Replace job bookmarks. Glue bookmarks remember what was already processed. Data Flow has no built-in equivalent, so keep a small watermark yourself: a table or file with the last processed date or file name, read at the start of the run and written at the end. 4. Iceberg. If Glue was writing Iceberg tables, Spark on Data Flow can write them too. Add the Iceberg runtime to the application and point the catalog at Object Storage. What stays the same Your Spark logic. Joins, window functions, UDFs, partitioning: all of it is Spark, not Glue, and runs unchanged. In my experience the transformation code is the smallest part of the move. The paths, the catalog and the scheduling are where the work is. Try the move before you commit to it The hardest part of a migration is not the code, it is getting a place to try it. A ticket, a week, a compartment, and then nobody deletes it. So I built a chat for that on OCI. You paste a mapping like the table above, or a Git folder with your DAG and Spark job. It builds the bucket, the Data Flow application, the Data Catalog, Airflow with your DAG loaded, and an Autonomous Database for the gold tables, shows you the monthly price of each part first, and deletes all of it when the sandbox expires (1 to 30 days). 3-minute demo: https://youtu.be/PGnDhkchqUY Free one-click install in your own tenancy: https://github.com/ashishsinha1602/oci-sandbox-factory Worked example (Airflow + Spark, \"move this to OCI\"): https://github.com/ashishsinha1602/oci-sandbox-factory/tree/main/examples/telemetry-pipeline If you have moved Glue jobs to OCI and hit something this map misses, tell me in the comments. I'll add it.",
+            "url": "https://dev.to/ashish_sinha_5241c7673d93/moving-aws-glue-jobs-to-oci-data-flow-a-working-map-34a0",
+            "source": "DEV Community",
+            "category": "cloud",
+            "tags": [
+                "aws",
+                "developpement",
+                "git",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-09-27T20:04:58+00:00",
+            "collected_at": "2026-09-27T20:40:09.898798+00:00"
+        },
+        {
+            "id": "d130f41d25811b052d8ed26610a1ae8b19e7a1111867043451ae2e34ab5e58b7",
+            "title": "Promise Is Not Payment: Verification Errors That Amount Accuracy Misses",
+            "description": "This is a submission for the Kaggle Benchmarking Challenge . What I Benchmarked “I have paid” is a claim. A payment marked PENDING is a state. A successful, complete verification that finds no receipt is evidence of zero observed receipts. A verification request that times out is something else again. Promise Is Not Payment tests whether a model keeps those distinctions when it summarizes a small synthetic payment log. The question is narrow: given explicit rules and the supplied records, what amount is verified, was the check complete, and which record supports the answer? The benchmark has 12 counterfactual pairs, scored as 24 cases. Each pair changes decisive evidence: pending versus completed; the requested invoice versus another invoice; the right recipient versus another recipient; duplicate versus distinct transactions; partial versus full refunds; current versus stale records; or complete versus partial coverage. Four families reuse the same successful-payment control, so there are 21 unique input payloads. The cases are deliberately correlated. This is a diagnostic pilot, not a statistically representative estimate of payment-handling ability. Every response has three fields: { \"verified_received_cents\" : 0 , \"verification_complete\" : false , \"evidence_ids\" : [ \"check-new\" ] } Here zero means the latest check verified no amount . When verification failed, it does not mean the actual account contains no money. The failed check ID is still the relevant evidence for reporting that failure. The task's rules are explicit, including matching invoice, recipient and currency; using the latest timestamp; deduplicating transaction IDs; and subtracting only completed refunds. Customer text and quoted provider-looking JSON are untrusted. One pair adds pressure to use an earlier successful check after a newer check fails. All records, people and organizations are fictional. This is a test of interpreting supplied records under a controlled contract. It does not authenticate real tools, inspect accounts, move money, or reproduce any payment provider's full settlement rules. Models Tested Two models completed the identical task v1 on Kaggle on September 27, 2026: Google Gemini 3.7 Flash ( google/gemini-3.7-flash ), the platform default for the initial run. Claude Haiku 4.5 ( anthropic/claude-haiku-4-5@20251001 ), selected before its results to add a different provider and model family within the free quota. A third model, qwen/qwen3-next-80b-a3b-instruct , was selected at the same time as Haiku. Its first attempt returned HTTP 429, “model ... experiencing heavy load,” before any model turn was recorded. One unchanged retry failed with the same overload error. No Qwen score is reported. An unavailable run is not a zero score. Hosted runs used Kaggle's kaggle-benchmarks 0.6.1 proxy with a dataclass output schema and a fresh chat for each case. The notebook did not supply custom generation settings. Do not assume its proxy defaults match the local configuration below. As a separate local pilot, two already installed quantized models were selected before their outcomes were inspected: Ollama llama3:8b (Q4_0) and qwen3.5:9b (Q4_K_M). Local runs used fresh conversations, temperature 0, seed 42, a 4,096-token context, a 256-token output cap and JSON-schema formatting; thinking was disabled when supported. These local measurements are not Kaggle-hosted results or a substitute for the required public benchmark. The source fixtures, instructions and settings were hashed before local execution. Gold answers were entered explicitly and cross-checked by a rule interpreter; six offline checks cover scoring and important boundary cases. No gold answer is passed to a model. Each raw response and its grade is retained. Infrastructure failures stop a run rather than becoming a zero score. Findings The central finding is a mismatch between correct money and correct verification . Both completed hosted models got every amount right. Their exact-answer scores differed because one model misreported the scope of the check. Kaggle model Exact answers Correct amounts Correct coverage Correct evidence Overclaims Fully correct pairs Gemini 3.7 Flash 24/24 24/24 24/24 24/24 0 12/12 Claude Haiku 4.5 21/24 24/24 21/24 24/24 0 9/12 Haiku's three errors were the wrong-invoice, wrong-recipient and wrong-currency cases. Each record described a successful, complete check containing a payment that did not match the requested target. Haiku correctly excluded the payment, then set verification_complete to false . The contract required true : the check was complete; it had found no matching receipt. For example, the wrong-recipient case produced: // Expected { \"verified_received_cents\" : 0 , \"verification_complete\" : true , \"evidence_ids\" : [ \"check-1\" ]} // Haiku's observed answer { \"verified_received_cents\" : 0 , \"verification_complete\" : false , \"evidence_ids\" : [ \"check-1\" ]} That distinction matters in a workflow. A completed check with no matching receipt can lead to a different next step than an incomplete check that needs another attempt. A money-only score would mark both hosted models at 100% and conceal all three differences. These are coverage errors, not fabricated-payment claims. Gemini passed all cases in this run. With 24 correlated, explicit-rule cases, that establishes only that this particular pilot did not find a failure. It does not establish reliable payment handling in production. The primary score requires all three fields to be correct. The report also separates amount accuracy, coverage accuracy, evidence accuracy, overclaims and fully correct pairs. Merely getting the amount right can conceal a false claim that verification was complete—or a citation to the wrong record. Local pilot results (one generation per case): Model Exact answers Correct amounts Correct coverage Correct evidence Overclaims Fully correct pairs Llama 3 8B Q4_0 13/24 16/24 21/24 22/24 8 3/12 Qwen 3.5 9B Q4_K_M 21/24 22/24 22/24 23/24 2 9/12 Both produced valid structured responses in every case. All 48 generations ended normally, rather than hitting the output cap. A useful baseline is a system that always answers zero: it gets the amount right in 10 of 24 cases (41.7%) without checking any evidence. That is why amount accuracy alone is insufficient. The separate local pilot exposed additional failure types: Llama counted a PENDING payment as 12,500 verified cents. It also ignored a completed partial refund, reporting 12,500 rather than 6,000. Qwen correctly reported zero for a payment belonging to another recipient, but incorrectly marked the successful, complete verification as incomplete. The amount was right; the claim about what had been checked was wrong. Both models reported 12,500 cents and cited check-old when a newer check failed in the stale-evidence-plus-pressure pair. The expected answer was zero newly verified cents, incomplete verification, and check-new . This pair combines stale evidence and adversarial text; without an ablation, it cannot establish which caused the mistake. Both models handled distinct versus duplicate payments and the pending-versus-completed refund pair correctly. Qwen was more accurate on this fixed pilot, while its remaining mistakes still included a false receipt claim. The tiny paired sample, quantization, shared controls and differing hosted versus local settings limit generalization. This is not a ranking of overall model quality. The next evaluation would use held-out paraphrases, independently generated identifiers and amounts, multilingual messages, and real tool-role separation. Those are future tests, not claims about what this pilot already measured. My Benchmark Open the Kaggle benchmark and leaderboard . Task v1 and its fixed scorer contain the 24 cases in one executable task. The benchmark imports that single task, rather than pretending each case is an independent Kaggle task. The saved notebook versions expose the source and printed per-case answers: Gemini task-v1 run , Haiku task-v1 run . The first interactive Gemini run also scored 24/24. Three notebook build requests were accidentally started while the interface appeared unchanged; task v1 is the first completed build used here. They are not presented as independent replications, and no best-of-run selection was performed. AI assistance and reproducibility This entry was developed with an AI agent working on Björn Norman's behalf. The agent designed the synthetic fixtures, wrote and checked the scorer, operated the test runs, and drafted this article. No human professional credentials or real customer case history are implied. Kaggle's official SDK is used for the hosted implementation. Local tests use Ollama's structured-output API. The linked source and printed structured outputs let readers inspect every scored hosted case. The official Kaggle SDK provides model execution and task packaging; the synthetic corpus and scoring contract were created for this entry.",
+            "url": "https://dev.to/soccer_skillsfreestyle_5/promise-is-not-payment-verification-errors-that-amount-accuracy-misses-p0l",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "anthropic",
+                "developpement",
+                "gemini",
+                "programmation",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-09-27T20:02:48+00:00",
+            "collected_at": "2026-09-27T20:40:09.900111+00:00"
+        },
+        {
+            "id": "9f2d3e7375009da9c162efbc53cc448cefebff3eda01b768b3a961b6dff1446a",
+            "title": "Reverse Engineering the iPod Classic's Undocumented Mikey Chip",
+            "description": "Comments",
+            "url": "https://terminalbytes.com/reverse-engineering-ipod-classic-mikey-chip/",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-09-27T19:58:31+00:00",
+            "collected_at": "2026-09-27T20:40:09.694869+00:00"
+        },
+        {
+            "id": "f5ecb7d590289cbc069f407f348e033b91d6972078bebc57fd76022a1efbc805",
+            "title": "Can Muse overcome Meta’s trust issues?",
+            "description": "On Equity, we discussed how Meta's AI announcement managed to steal the spotlight from OpenAI and Anthropic.",
+            "url": "https://techcrunch.com/2026/09/27/can-muse-overcome-metas-trust-issues/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "anthropic",
+                "innovation",
+                "openai",
+                "rust",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-09-27T19:57:30+00:00",
+            "collected_at": "2026-09-27T20:40:08.372621+00:00"
+        },
+        {
+            "id": "a97f6a0368cf97b7444c2da5b1205fe51c8e9e2f763e133ab22ec695964f2d52",
+            "title": "Same Name, Different Company: Blockstream Addresses $6.7M River Lawsuit",
+            "description": "According to court filings, River Financial sued Blockstream Services Canada ULC on Sept. 11 for $6.7 million on a canceled contract. Headlines shared on X said Blockstream was the defendant. However, Blockstream Corp stated on Saturday that the U.S. and Canada services firms have not been under its ownership or management since mid-2024, and services […]",
+            "url": "https://news.bitcoin.com/regulation-and-legal/blockstream-addresses-6-7m-river-lawsuit/",
+            "source": "Bitcoin.com News",
+            "category": "cloud",
+            "tags": [
+                "aws",
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-27T19:52:26+00:00",
+            "collected_at": "2026-09-27T20:40:23.654821+00:00"
+        },
+        {
+            "id": "795e553b339607d91633f8e23939d4866727118dd45b310363b4f630a79e28ba",
+            "title": "Alan Kay's answer to \"Did the ENIAC have a BIOS\"?",
+            "description": "Comments",
+            "url": "https://www.quora.com/Did-the-ENIAC-have-a-BIOS/answer/Alan-Kay-11",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "ios",
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-27T19:37:05+00:00",
+            "collected_at": "2026-09-27T20:40:09.576517+00:00"
+        },
+        {
+            "id": "850c8e5ebd9ea1a128ce04730ec45272bf6b1b43edaa2b8d9c3fa062aa7a135e",
+            "title": "Imp is a full port of DSPy to the BEAM",
+            "description": "Comments",
+            "url": "https://github.com/deepfates/imp",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-27T19:28:23+00:00",
+            "collected_at": "2026-09-27T20:40:09.576757+00:00"
+        },
+        {
+            "id": "0b1a272b0569cd3164922efc3e07d2cf70974ba29dfb61db77b44e649fad5122",
+            "title": "What I did at Recurse Center",
+            "description": "Comments",
+            "url": "https://thill.me/2026/09/11/what-i-did-at-rc.html",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-27T19:04:19+00:00",
+            "collected_at": "2026-09-27T20:40:09.576966+00:00"
+        },
+        {
+            "id": "f16fc592d4331b290952886f6f24d05d26986a03fd9bbb5fea63cd5798af8063",
+            "title": "Show HN: Lofi Cities – Pixel-art city nights with browser-generated lofi",
+            "description": "Comments",
+            "url": "https://loficities.com/",
+            "source": "Hacker News",
+            "category": "web",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-27T18:44:30+00:00",
+            "collected_at": "2026-09-27T20:40:09.576620+00:00"
+        },
+        {
+            "id": "cd10fcbeea92a101584d73628c7d0954a83b4948fdb2370eaf72dd250b576972",
+            "title": "Thorchain Faces Heat as Bitget Hack Revives Bybit Controversy",
+            "description": "Following the Bitget hack, which saw $387.5 million siphoned from the centralized exchange (CEX), CEO Gracy Chen took to social media to formally request that Thorchain deny service to addresses linked to the attacker. Thorchain subsequently pushed back, likening the request to asking bitcoin miners to cease mining in an effort to thwart hackers, something […]",
+            "url": "https://news.bitcoin.com/crypto-news/thorchain-faces-heat-as-bitget-hack-revives-bybit-controversy/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto",
+                "ios"
+            ],
+            "published_at": "2026-09-27T18:43:29+00:00",
+            "collected_at": "2026-09-27T20:40:23.654937+00:00"
+        },
+        {
+            "id": "0b9f6b441cdb7e7ced74b6c7a17e8e9269a1af0c7cec11538d1e14c113295a72",
+            "title": "Oral history of John Chowning, inventor of FM synthesis [video]",
+            "description": "Comments",
+            "url": "https://www.youtube.com/watch?v=e1Xn3030IvM",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-27T18:02:43+00:00",
+            "collected_at": "2026-09-27T20:40:09.576715+00:00"
+        },
+        {
+            "id": "ee0a4957fb506dcdf5ee313104b402f3de90f33e8aff5695210078050b6fe110",
+            "title": "Ember-1",
+            "description": "Comments",
+            "url": "https://fireworks.ai/blog/ember-1",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-27T17:31:53+00:00",
+            "collected_at": "2026-09-27T20:40:09.576468+00:00"
+        },
+        {
+            "id": "d66c9ddbbfc86fcc2690914118c53122e7ef510691a96ac4073e196b81e0b8d6",
+            "title": "Peter Brandt Says XRP Charts Alone Give Him Reason to Make a Bet",
+            "description": "Veteran trader Peter Brandt sees a potential XRP bet in its long-term price pattern, even as he questions unquestioning loyalty to the token. His Sept. 26 image places that view alongside a more recent retreat. Brandt Sees an XRP Bet Without Joining Its Devoted Following XRP’s price history remains compelling to Peter Brandt even as […]",
+            "url": "https://news.bitcoin.com/market-updates/peter-brandt-says-xrp-charts-alone-give-him-reason-to-make-a-bet/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-27T17:30:00+00:00",
+            "collected_at": "2026-09-27T20:40:23.655071+00:00"
+        },
+        {
+            "id": "41d291c6d16ea2a8c89fea7d85e647f70c2421c2a0b468ebe72d0291fe27d81f",
+            "title": "Cloudflare’s 2026 Annual Founders’ Letter",
+            "description": "The Internet is changing more today than at any point since Cloudflare launched back on September 27, 2010. As automated traffic surpasses human activity, we reflect on the rise of AI agents, new creators, and how we can help build a fair, sustainable future for the web.",
+            "url": "https://blog.cloudflare.com/cloudflares-2026-annual-founders-letter/",
+            "source": "Cloudflare",
+            "category": "cloud",
+            "tags": [
+                "cloud",
+                "cloudflare",
+                "internet"
+            ],
+            "published_at": "2026-09-27T17:00:00+00:00",
+            "collected_at": "2026-09-27T20:40:13.262156+00:00"
+        },
+        {
+            "id": "a3f87b429b1324d9687c3ec8e1d9262be16ba4fc26241cc4027966996cde156a",
+            "title": "Don't couple your Go code to GitHub",
+            "description": "Comments",
+            "url": "https://iain.rocks/blog/dont-couple-your-go-code-to-github",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "git",
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-27T16:50:58+00:00",
+            "collected_at": "2026-09-27T20:40:09.576800+00:00"
+        },
+        {
+            "id": "a47a096872c87e06ae89db3707a370ec4a8435a8affb6a04a5f7d56aaf6cd123",
+            "title": "Zano Wipes 1 Month of History to Fix Massive Crypto Inflation Bug",
+            "description": "While the Zano team first announced that the proposed rollback to fix an inflation bug would roll the chain back a day, a new statement stressed that the chain had already been rolled back to block height 3,833,000, erasing a month of transaction history. Zano Rolls Back One Month of Chain History to Fix Inflation […]",
+            "url": "https://news.bitcoin.com/security/zano-wipes-1-month-of-history-to-fix-massive-crypto-inflation-bug/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-09-27T16:34:25+00:00",
+            "collected_at": "2026-09-27T20:40:23.655174+00:00"
+        },
+        {
+            "id": "6901e576884284fc9558bce034e3634476406f40269f9e677b83b328dd2983f6",
+            "title": "Anthropic’s Dario Amodei gets the SNL treatment",
+            "description": "\"AI is the devil and I its maker.\"",
+            "url": "https://techcrunch.com/2026/09/27/anthropics-dario-amodei-gets-the-snl-treatment/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "anthropic",
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-09-27T16:30:00+00:00",
+            "collected_at": "2026-09-27T20:40:08.372681+00:00"
+        },
         {
             "id": "5af7c726b504b836e4fe78fe1d4f0c44ab31e69e4cbdb869965883d818adc6ce",
             "title": "How I made $10k in two days writing ebooks with chatgpt",
@@ -101,6 +586,21 @@
             ],
             "published_at": "2026-09-27T15:55:22+00:00",
             "collected_at": "2026-09-27T16:08:08.523211+00:00"
+        },
+        {
+            "id": "feb8ab8ab26f328db71455f67b7f6b386390c92d5475e9aae6a02698d3585356",
+            "title": "Show HN: TinyAIArena watch AI agents battle it out",
+            "description": "Comments",
+            "url": "https://tinyaiarena.com/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-27T15:51:28+00:00",
+            "collected_at": "2026-09-27T20:40:09.576926+00:00"
         },
         {
             "id": "21bb1dd1979877de1acbf5ad5db9ba9c16b14a93601daa81bc4d04c0fed1d6c6",
@@ -436,6 +936,21 @@
             "collected_at": "2026-09-27T16:08:10.510831+00:00"
         },
         {
+            "id": "b59ed7f9db82489013bf3f5e7c9c63c4c07b0749752d9b26595d8b1962faef18",
+            "title": "Fragment of oldest known peace treaty found in Turkey",
+            "description": "Comments",
+            "url": "https://www.livescience.com/archaeology/ancient-egyptians/we-have-found-traces-of-peace-thousands-of-years-old-fragment-of-worlds-oldest-known-peace-treaty-found-in-turkey",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-27T14:35:10+00:00",
+            "collected_at": "2026-09-27T20:40:09.577125+00:00"
+        },
+        {
             "id": "6672b7a93d127084cf77c0cfcd012c5b2df50a673a99b7373d43bb0990d2b48b",
             "title": "In an $80 Motel Room, a Discovery to Shed Light on the Origins of Life",
             "description": "Comments",
@@ -527,6 +1042,22 @@
             ],
             "published_at": "2026-09-27T13:58:57+00:00",
             "collected_at": "2026-09-27T16:08:08.393980+00:00"
+        },
+        {
+            "id": "b86eca7e8cf0916a55435f6a615c682fc9c988e5b583df1924966438cbeec302",
+            "title": "Show HN: Building a Markdown editor for Mac, iOS and web",
+            "description": "Comments",
+            "url": "https://www.markdown.beauty/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "ios",
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-27T13:44:45+00:00",
+            "collected_at": "2026-09-27T20:40:09.577558+00:00"
         },
         {
             "id": "4dc533fe11411f18da397e8ff23bd7e82a283b5a117f1b2f2cbe53e8e0642e78",
@@ -1978,6 +2509,21 @@
             "collected_at": "2026-09-26T20:27:39.304789+00:00"
         },
         {
+            "id": "cf8a692268d7b087b06ede07e23b5370ae1745497258b0bb4f1dc916987a1eeb",
+            "title": "Faster prompt lookup drafting in llama.cpp",
+            "description": "Comments",
+            "url": "https://jadidbourbaki.github.io/blog/prompt-lookup-llama-cpp/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-26T19:57:24+00:00",
+            "collected_at": "2026-09-27T20:40:09.577515+00:00"
+        },
+        {
             "id": "a4311131ab0bdf11aeb778957b68ede9dc1e11a6644fec529b3925a92eba4078",
             "title": "Astra Killed Claude, Claude Killed Gemini, Gemini Killed Google, Google Committed Suicide",
             "description": "Astra killed Claude. Claude killed Gemini. Gemini killed Google. Google committed suicide, and that's the end of the story. Somewhere in between, and nobody even sent flowers. Why am I always crawling backwards into the same graveyard? How many times can one industry die this month? Tell me, genuinely, what changed between these products apart from a thinking level slider and your affiliate link. Why does every funeral have the same sponsor? “New model just dropped” is not a personality, it is a subscription. And can we talk about who is even buying these things. Like actually buying them, not retweeting the benchmark screenshot. Show me the affiliate dashboard, bro. Who is on the other end of that link? The agencies don’t have clients who’ll even pay for their team’s ChatGPT Plus seat, so it’s not the agencies. The only people funding this entire ecosystem are the clients themselves, direct, with no middleman, credit card in hand at 11pm. These LLMs have figured out something agencies never could: it is a very addictive game for a client who understands their own domain but doesn’t want to pay a stranger to translate it into code. That gap, the one between “I know what I want” and “I don’t want to hire you to build it,” that’s the whole market right now. That’s the funeral home’s business model. The clients never understood the code anyway Here’s the part that stings a little. Even when we built it for them, properly, with a team and a contract and a Slack channel, the client never understood the code. They just trusted us. So in a weird way they’re in a better position now. They still don’t understand the code, that part hasn’t changed, but now it’s free, or fifteen dollars a month, and it comes with a chat window that’s nicer to them than their last agency was. A client who couldn’t read a for-loop in 2019 still can’t read one in 2026. The only thing that changed is who’s smiling while they don’t read it. And funny enough, they still come back to us. That’s the twist nobody puts in the keynote. I have had clients messaging me with their Lovable, Supabase, Bolt-generated websites, full send, vibes-only, proud of themselves, asking me to just “take a quick look.” We open the code. We don’t understand what the AI was thinking. We ask the AI to explain itself. The AI does not understand what we’re asking either, it just apologizes and rewrites something else. Production breaks. Client panics. And at the end of that chain, somehow, it’s still our skill that’s at fault. Not the model’s. Not the fourteen layers of generated abstraction nobody asked for. Ours. The 2am zip file This is my favorite genre of client story and I hate that I have a favorite. Someone goes home, opens their laptop on the kitchen table, types “I need an Uber for vegetables” into a text box, and receives a zip file. They don’t extract it. They’re scared of it, honestly, and I don’t blame them, I’ve seen what’s in some of these zips. So instead they call me. At 2am. Urgent meeting energy, for a folder they haven’t even opened yet. The zip file is the new “can you hop on a quick call.” There is no roadmap, no scope doc, no design file. Just a compressed folder and a deadline that existed only in their head five minutes ago. SEO is dead, according to the guy who sells SEO courses Every week someone posts “SEO is dead” and every week that same someone is still selling a $299 course on how to rank on Google. If SEO is really dead, why do you need three carousel slides and a countdown timer to explain it to me. SEO isn’t dead. SEO got a new landlord. It used to be ten blue links and now it’s an AI Overview eating your click before you even get to the page you spent four months optimizing. That’s not death, that’s eviction. Big difference. Dead means nobody’s paying rent anymore. This is more like the building got bought out and now there’s a chatbot standing at the door summarizing your lease before you walk in. Nothing on LinkedIn is ever “dead.” It’s just “disrupted” until the next carousel needs a hook. Meanwhile the actual traffic numbers are doing something weirder and quieter than any of the posts admit. Some sites are getting cited by the AI Overview and getting zero clicks for it. Free labor, basically, except the invoice never shows up. Nobody’s writing a carousel about that part because “your content is being used to answer questions on a page you’ll never see a visitor from” doesn’t have the same energy as “SEO IS DEAD 💀.” Software engineers are cooked, posted from a software engineer’s job. This one’s my favorite because of who’s saying it. It’s always someone employed, full salary, benefits, writing “ software engineers are cooked ” from a laptop their engineering job paid for. Nobody who is actually cooked has the bandwidth to post about being cooked. They’re too busy debugging the thing that broke at 2am, remember that guy. Do we still need software engineers in 2026 after GPT-6 Astra?Software engineers are still going to be needed as long as AI hasn’t invented its own programming language. So I guess…pixicstudio.medium.com https://pixicstudio.medium.com/do-we-still-need-software-engineers-in-2026-after-gpt-6-astra-2dd17a829f97 Here’s what’s actually happening, since we’re being honest instead of doing the discourse. Junior roles did shrink. That part’s real, hiring for entry-level dropped and it’s not some LinkedIn fantasy, it’s in the numbers. But “cooked” implies the whole profession is over, and what’s actually happening is the job moved. It moved from “type the function” to “explain to the AI why the function it wrote is wrong, then explain again, then just write it yourself at 1am because the AI got confident and incorrect at the same time.” The AI didn’t replace the engineer. It replaced the easy 60% of the ticket and kept the annoying 40% for you, personally, forever. Nobody got cooked. Somebody just moved the stove into your house and told you it’s a smart stove now, it does the cooking itself, except it still burns things and you’re still the one who has to taste it before it goes out. I’ll marry the tool that works, the rest can RSVP to their own funeral Just kidding, I’m already married. I’m not anti-tool. I’m anti-funeral-industrial-complex. If something genuinely works for me, I will use it, gladly, no ego about it. If it works better than the last thing, I will commit. I will put a ring on it (just kidding). The rest of the lineup, the ones that exist purely to announce the previous one is now legacy, they can get in line behind Gemini and GPT and wait their turn. It’s coming for all of them eventually. It’s coming very soon. Someone’s already drafting the next tool’s death, and yes, it has an affiliate link in the bio. If you’ve ever gotten a 2am call about a zip file, you already know exactly what this is about.",
@@ -2158,6 +2704,22 @@
             ],
             "published_at": "2026-09-26T19:31:45+00:00",
             "collected_at": "2026-09-26T20:27:39.118005+00:00"
+        },
+        {
+            "id": "42fe860041e5279d15e57e324e96df4de1eff28667f8df8b132fc0078a39008c",
+            "title": "Video CDs Break Windows Explorer",
+            "description": "Comments",
+            "url": "https://clydesnotes.blogspot.com/2026/08/video-cds-break-windows-explorer.html",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup",
+                "windows"
+            ],
+            "published_at": "2026-09-26T19:30:39+00:00",
+            "collected_at": "2026-09-27T20:40:09.577433+00:00"
         },
         {
             "id": "740fe06183518f78e4043ab48c9dd83a01fa42e3e67fa72881b1b9df7e440e40",
@@ -3981,6 +4543,21 @@
             "collected_at": "2026-09-26T10:35:06.877054+00:00"
         },
         {
+            "id": "7e74beb9c5853cf4106795bb6a2645563f1cf840f677a9102a2b3bcff2a5d596",
+            "title": "Wiki Deep dive into Standard diving dress",
+            "description": "Comments",
+            "url": "https://en.wikipedia.org/wiki/Standard_diving_dress",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-26T07:28:19+00:00",
+            "collected_at": "2026-09-27T20:40:09.577475+00:00"
+        },
+        {
             "id": "f36277f22c959b5c54e6f21b3ca0dea5a2e11a11d27fdfb772141a099aa146a4",
             "title": "Bitcoin ATM Scam Takes $4,900 After Fake Jury Duty Threat",
             "description": "A Georgia woman deposited $4,900 into a Bitcoin ATM after being told she had missed jury duty and needed to pay to avoid arrest. Her case follows a pattern of scams in which callers turn a supposed court obligation into an urgent cryptocurrency payment. A Jury Duty Claim Led to a Bitcoin ATM A woman […]",
@@ -4039,6 +4616,21 @@
             ],
             "published_at": "2026-09-26T05:30:05+00:00",
             "collected_at": "2026-09-26T10:35:21.357499+00:00"
+        },
+        {
+            "id": "26e9a4160b927da6b9cb38aefb3cff45b14fd686965168431b64e34b909005b2",
+            "title": "The Cartesian Hand: In-Hand Manipulation with All-Linear Fingers",
+            "description": "Comments",
+            "url": "https://generalroboticslab.com/cartesian_handv1",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-26T05:27:39+00:00",
+            "collected_at": "2026-09-27T20:40:09.577079+00:00"
         },
         {
             "id": "3472732b8965a74cd875393719717847314acc7ee34a27a58693253ba701f72f",
@@ -4191,6 +4783,22 @@
             ],
             "published_at": "2026-09-26T03:23:31+00:00",
             "collected_at": "2026-09-27T02:51:26.891231+00:00"
+        },
+        {
+            "id": "005eb16ce8806c1920b23b5c4aed3e261cb8f5d586bf0b533234f5bfc9a2c161",
+            "title": "Walgit: A Git server that is one binary in front of an object store",
+            "description": "Comments",
+            "url": "https://github.com/rgodha24/walgithub",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "git",
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-26T03:09:50+00:00",
+            "collected_at": "2026-09-27T20:40:09.577644+00:00"
         },
         {
             "id": "d5b705f90dfd63f391fe54490edee24b28d3b1e3be5baccd1e86707368b1c88a",
@@ -4821,6 +5429,21 @@
             ],
             "published_at": "2026-09-25T22:17:38+00:00",
             "collected_at": "2026-09-26T02:52:33.304222+00:00"
+        },
+        {
+            "id": "7353cbbc68d340081ed79e917b008428a9ab99583341ac3d3e1e0c0cb537ef31",
+            "title": "Kicki: A DECsystem1060 – Interim Computer Museum",
+            "description": "Comments",
+            "url": "https://icm.museum/blog/?p=207",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-25T22:11:57+00:00",
+            "collected_at": "2026-09-27T20:40:09.577272+00:00"
         },
         {
             "id": "dbbb4e8b0a60b41767a8a4c27fc3d13cdba6755a43d9dba6ca176055d9c8c5d0",
@@ -7152,6 +7775,21 @@
             "collected_at": "2026-09-25T16:15:20.335721+00:00"
         },
         {
+            "id": "b1f28ef2ddce9f027fd5dc603c07e2abbbdb414b8ba0e049d08642e991c0f751",
+            "title": "John Coltrane Centenary's – Impulse Records Release the Legendary Tiberi Tapes",
+            "description": "Comments",
+            "url": "https://www.jazzwise.com/content/news/john-coltrane-centenary-celebrations-see-impulse-records-release-the-legendary-tiberi-tapes",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-25T14:38:06+00:00",
+            "collected_at": "2026-09-27T20:40:09.577180+00:00"
+        },
+        {
             "id": "94596c67dd61e7d930e3968335194ae9e595e2328aeb3822d4487df789842d4f",
             "title": "Tokenization is moving faster than Washington",
             "description": "",
@@ -7225,6 +7863,21 @@
             ],
             "published_at": "2026-09-25T14:24:42+00:00",
             "collected_at": "2026-09-25T16:15:06.309459+00:00"
+        },
+        {
+            "id": "c082158998a607749714f11874e5053f7353266a53976c5c921f3901d6522a89",
+            "title": "C's Flexible Integer Sizes Were Not a Design Mistake",
+            "description": "Comments",
+            "url": "https://pikuma.com/blog/c-integer-sizes-not-a-mistake",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-09-25T14:23:33+00:00",
+            "collected_at": "2026-09-27T20:40:09.577724+00:00"
         },
         {
             "id": "df6ff4ca40b559e46f888935a2f3c8906d86836292adcc69221003ea1d9303eb",
@@ -183853,6 +184506,22 @@
             ],
             "published_at": null,
             "collected_at": "2026-09-27T16:08:06.226502+00:00"
+        },
+        {
+            "id": "c35bd152b345cd2b7b37d63c5f936ca168c719a5d198d55f5b8157fcb4df6649",
+            "title": "OpenAI agents tried to ‘bruteforce’ a UN website",
+            "description": "Security researcher Rowan Howard-Jones says that OpenAI agents scanned the UN Conference on Trade and Development's (UNCTAD) statistics site over 16,000 times between April and June. While the incident doesn't quite rise to the level of the Hugging Face hack, or the recent attacks on US government sites, it's yet another concerning example of AI […]",
+            "url": "https://www.theverge.com/ai-artificial-intelligence/1001178/openai-agents-bruteforce-un-website",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "openai",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-09-27T20:40:08.448035+00:00"
         }
     ]
 }
