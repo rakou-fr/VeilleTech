@@ -1,7 +1,668 @@
 {
-    "updated_at": "2026-10-13T00:00:42.422884+00:00",
-    "count": 17086,
+    "updated_at": "2026-10-13T06:16:21.079555+00:00",
+    "count": 17133,
     "articles": [
+        {
+            "id": "633e8070e31757eb280e9a15fef9d6eece1abbdc8d54cd16f07b25f3689061e9",
+            "title": "Keep calm and call clone with Rust",
+            "description": "Ryan sits down with Josh Triplett, member of the Rust Leadership Team at the Rust Project, to chat about how the borrow checker delivers compile-time memory safety without garbage collection overhead, why Rust consistently ranks as developers' most loved language by providing psychological safety for complex systems, and how strict compiler constraints make Rust an ideal target for AI coding agents.",
+            "url": "https://stackoverflow.blog/2026/10/13/keep-calm-and-call-clone-with-rust/",
+            "source": "Stack Overflow Blog",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "rust",
+                "stackoverflow"
+            ],
+            "published_at": "2026-10-13T07:40:00+00:00",
+            "collected_at": "2026-10-13T06:16:05.319006+00:00"
+        },
+        {
+            "id": "0a19a2883874e04d6c27a5555bad0e18929cc16c54768ad9d93b24785ce325d0",
+            "title": "One Source Generator to Rule Them All",
+            "description": "Describe your domain. Let the compiler write the application around it. Think about the last feature you added to a .NET application, whether you wrote the code yourself or asked a coding agent to build it. You wanted to express something about your business: who can approve a request, when a reservation can be confirmed, what makes an invoice valid. Implementing that decision also meant connecting it to the rest of the application: persistence, validation, authorization, endpoints, mappings, registrations. Perhaps you wrote that code. Perhaps your agent generated it in seconds. Either way, it became part of your codebase: code to understand, review, test, and keep consistent as the application changes. AI makes plumbing cheap to produce. It does not make it free to own. Much of that plumbing follows mechanically from decisions you have already made: the entity an operation acts on, the permission it requires, the errors it can return. What if those decisions were explicit enough for the compiler to derive the connections and regenerate them whenever the declarations change? That is the idea behind Pragmatic Design. Meet Pragmatic Pragmatic Design is a .NET metaprogramming framework for business applications, built around a shared compile-time model. You write what is specific to your business: entities, the operations on them, the rules they obey. The generator derives the mechanical parts around them as plain C# at build time: persistence, HTTP endpoints, validation, authorization, events, caching, DI wiring, OpenAPI. One generator to rule them all, one generator to find them, one generator to bring them all, and at compile time bind them. Because it is one generator reading one model of your application, the pieces finally know about each other. The endpoint knows which errors the operation can return. The permission check uses the permission you declared. The OpenAPI document lists exactly the responses the code can produce. What it looks like This is a real operation from the Showcase, the hotel-booking sample in the repository. It confirms a reservation. Two documentation attributes, [UseCase] and [Rule] , are left out. [ Endpoint ( HttpVerb . Post , \"/{id}/confirm\" )] [ EndpointGroup < ReservationsGroup >] [ RequirePermission ( BookingPermissions . Reservation . Update )] [ Mutation ( Mode = MutationMode . Update )] [ TransitionsTo < ReservationStatus >( ReservationStatus . Confirmed )] public partial class ConfirmReservationMutation : Mutation < Reservation , ConflictError > { } That is the whole thing. No handler body, no registration, no mapping profile, not even an Id . An update addresses an existing reservation, so the generator adds the key and binds {id} from the route to it. Read it from top to bottom and it tells you what the feature is: a POST endpoint for users who can update reservations, which moves a reservation to Confirmed and answers 409 Conflict when the reservation cannot move there. From those lines, the build produces the endpoint with typed route binding, the authorization check, loading the reservation, the state transition, the commit, and the OpenAPI description of every response, including 409 . The entity it works on is declared the same way: [ Entity ] [ Auditable ] // created/updated by and at, stamped on every save [ SoftDelete ] // deleted rows disappear from every query [ StateMachine < ReservationStatus >] // status transitions guarded at compile time [ Raises < ReservationCreated >] // a domain event when one is created public partial class Reservation : DomainEventSource , IEntity { [ FutureDate ] public DateTimeOffset CheckIn { get ; private set ; } [ GreaterThanProperty ( nameof ( CheckIn ))] public DateTimeOffset CheckOut { get ; private set ; } public ReservationStatus Status { get ; private set ; } = ReservationStatus . Pending ; } In the Showcase, the full version of this entity, which also declares comments, tags and attachments, and two operations on it produce 116 generated files. Most come from the declarations that ask for the most. Comments, tags and attachments add 71 files because each brings its own entity, operations and endpoints. The entity itself adds 22, its read-only API resource adds 14, and the two operations add 9. You did not write them, you do not maintain them, and they cannot drift from the declarations they came from. No magic, just C# \"Generated\" can sound like \"hidden\". It is the opposite here. Turn on <EmitCompilerGeneratedFiles> and the output is on disk, in plain C# you can read and step through in the debugger. Here is an excerpt of the endpoint above: var builder = endpoints . MapPost ( \"/{id}/confirm\" , ( RequestDelegate )( async httpContext => { // typed binding of {id}, then the mutation pipeline })); builder . RequireAuthorization ( policy => policy . AddRequirements ( new PragmaticPermissionRequirement ( new [] { \"booking.reservation.update\" }, PermissionMode . All ))); builder . WithMetadata ( new ProducesResponseTypeMetadata ( 409 , typeof ( ProblemDetails ), new [] { \"application/problem+json\" })); No reflection, no assembly scanning, no runtime discovery. Everything is wired while the project builds. If two declarations do not fit together, you find out from a compiler diagnostic with an ID and a location, not from a failure in production. There are over 400 of those checks. Here is one. Change the confirm operation's Mode from Update to Delete , keep the transition, and the build stops on the attribute: error PRAG0468: 'ConfirmReservationMutation' declares [TransitionsTo] but is not an Update mutation: a Create starts in the initial state, and a Delete or a Restore has a lifecycle of its own. Declare Mode = MutationMode.Update, or remove the attribute. This is not a syntax error. It is a combination of declarations that makes no sense, caught before anything runs. From monolith to services without rewriting the modules The Showcase has four modules: Accounts, Booking, Catalog and Billing. Here is the host that runs them all in one process: [ Module ] [ Include < AccountsModule , ShowcaseAppDatabase >] [ Include < BillingModule , ShowcaseFinancialDatabase >] [ Include < BookingModule , ShowcaseAppDatabase >] [ Include < CatalogModule , ShowcaseAppDatabase >] public sealed class ShowcaseHostModule ; And here is the host that runs the same application with Billing moved to its own service: [ Module ] [ Include < AccountsModule , ShowcaseAppDatabase >] [ Include < BookingModule , ShowcaseAppDatabase >] [ Include < CatalogModule , ShowcaseAppDatabase >] [ RemoteBoundary < BillingModule >] public sealed class ShowcaseDistributedModule ; Billing's line is the one that changed: [Include] became [RemoteBoundary] . (Both hosts also declare pipeline steps, and the monolith an audit package, left out here.) The modules did not change at all. When Booking calls Billing, it calls the same typed interface it always did. In the monolith, the generator wires that call in-process. In the distributed host, it generates a typed HTTP invoker that sends the same operation to the Billing service and brings back the same result. Billing gets a small host of its own, declared the same way, with its own database. Both topologies are in the repository, and both have their own test suites. To be fair, distribution brings decisions a monolith never has to make, such as how hosts find each other and how a cache invalidation reaches the other host. Those still live in the host's setup as explicit choices. What does not happen is touching the business code. Where a module runs becomes a deployment decision, not a rewrite. You can start with a monolith without betting the architecture on it. Be explicit. It's free now. For years, good design has lost to its own verbosity. We know a reservation should have a real state machine, not a string field that anything can overwrite. We know operations should return typed errors, not throw exceptions and hope someone maps them to the right status code. We know permissions should be fine-grained, rows should know who owns them, and changes should be audited. We know what a proper domain model looks like. And then we look at how much code each of those decisions costs: once to write, forever to maintain. So we cut corners. An anemic model here, a generic 500 there, one coarse [Authorize] for the whole controller. Not because we chose a worse design, but because the better one was too expensive. When the expensive part is generated, the math flips. In Pragmatic, each of those decisions is one line: // On the entity [ StateMachine < ReservationStatus >] // a real state machine [ HasOwner ] // every user sees their own rows [ Auditable ] // who changed what, and when public partial class Reservation : DomainEventSource , IEntity { /* … */ } // On the operation [ RequirePermission ( BookingPermissions . Reservation . Update )] // a fine-grained permission public partial class ConfirmReservationMutation : Mutation < Reservation , ConflictError > { /* … */ } // a typed error, which becomes a 409 Being explicit is no longer the costly option. It is the short one. So the verbosity that is left in your code is the useful kind: lines that say something about your domain. The mechanical kind, the lines that only connect things, disappears. That is also what makes patterns like Domain-Driven Design approachable for teams that always found them too heavy. The ceremony was the problem, not the ideas. Built for you, and for your coding agent \"My AI agent writes the boilerplate now\" is a fair objection. But AI makes plumbing cheap to write, not cheap to own. Every line an agent writes still has to be read, reviewed and kept consistent, and an agent writes the same plumbing slightly differently every time. With Pragmatic, the agent works where probabilistic intelligence is useful: understanding requirements, modeling the domain, expressing intent. The compiler handles the deterministic consequences. When the agent declares something that does not fit, the compiler says so immediately, with a location, and the agent can close that loop on its own. There is less code to generate and less to review. That this also means fewer tokens is what I expect, not something I have measured yet. And explicit code is exactly what an agent reads best. A declaration that says \"this moves a reservation to Confirmed, for users who can update reservations, and fails with a conflict\" is context an agent can use. A hundred lines of wiring around it are context it has to wade through. So that agents know the framework as well as the code they read, Pragmatic ships agent skills for Claude Code, Codex and any agent that reads SKILL.md . Make intent explicit. Make its mechanical consequences deterministic. More intent. Less plumbing. Where it fits Pragmatic pays off where many operations follow recurring shapes: load an entity, check a permission, apply a change, answer with a typed error. That is most of a line-of-business application, but not all of it. What cannot be declared, a rule of your own or a domain method, stays code you write, in a body the generated pipeline calls. A domain made mostly of one-off workflows gains less. And there is something to learn: the declarations are the API, read by a compiler that refuses what does not fit. Try it Two ways in, depending on how you like to work: With an agent. Install the skills and describe the application you want: Build with an agent . By hand. The step-by-step recipe goes from an empty folder to a CRUD API on PostgreSQL. Or just browse the Showcase and its generated code. Pragmatic currently targets .NET 10. We plan to support .NET 11 and build on new language and platform capabilities that make domain intent more explicit, from C# 15 union types and closed hierarchies to richer serialization and persistence support. As the platform evolves, the goal stays the same: declare the decisions, derive the plumbing. It is available as 1.0.0-alpha on nuget.org . The core is stable, other modules are still moving. The foundations and the generator are MIT; the framework runtime is source-available and free for small businesses, personal and educational use ( licensing ). Help shape Pragmatic. Pragmatic is still in alpha, and your feedback can help shape what it becomes. Try an example or bring your own use case. Tell me what breaks, what gets in your way, and what you wish it could do. Whether it’s a bug, a missing capability, or an idea for a better API, I’d love to hear it. Explore the examples · Share feedback and ideas",
+            "url": "https://dev.to/alessandro_saiani/one-source-generator-to-rule-them-all-1egb",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "anthropic",
+                "csharp",
+                "developpement",
+                "intel",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-10-13T06:11:33+00:00",
+            "collected_at": "2026-10-13T06:16:06.570413+00:00"
+        },
+        {
+            "id": "876eed0cc1f0702fc3c144c9a26b45ee8f5711c96f6b1aed43fefbc0b38d9da9",
+            "title": "Building a High-Throughput Cashless Payment & RFID Ticketing System for Saudi Mega-Events",
+            "description": "When engineering the infrastructure for an event ticketing and management system in Saudi Arabia , the physical reality of the venue dictates the software architecture. Under the Saudi Vision 2030 events strategy , mega-summits in Riyadh and Jeddah frequently process upwards of 10,000 delegates. These environments are hostile to standard cloud-dependent web applications: Network Saturation: Cellular towers congest and venue Wi-Fi degrades under massive attendee density. Fragmented Stacks: Venues traditionally run three isolated systems—one API for ticketing, a separate local database for gate turnstiles, and independent POS terminals for food/merchandise. High Concurrency Peaks: 80% of gate entries and 60% of F&B purchases happen in tight 30-to-45-minute windows (e.g., morning ingress and keynote breaks). To eliminate venue queues and financial reconciliation errors, we built a unified, edge-resilient architecture that merges secure ticketing, RFID attendee tracking , and cashless event payments into a single cryptographic smart credential. Here is how we architected the system to guarantee sub-second gate scans and offline-resilient financial transactions. 1. The Unified Credential: UHF RFID + NFC Instead of relying on fragile optical QR codes that require line-of-sight scanning, the foundation of the system is a physical smart badge or RFID wristband . When a delegate arrives, their digital ticket triggers an on-demand thermal print cycle (sub-3 seconds). Simultaneously, an integrated encoder writes an encrypted payload to a dual-frequency inlay: UHF EPC Gen 2 (865–868 MHz): Used for passive, zero-contact spatial tracking. Overhead portals read these tags at distances up to 8 meters to monitor civil defense hall capacities and VIP dwell times without requiring the user to stop. HF NFC (13.56 MHz / ISO 14443): Used for deliberate, secure intent actions—specifically, tapping to pay at a vendor terminal or tapping to open a restricted ministerial lounge door. 2. Edge-First Gate & POS Architecture (SQLite WAL) If a vendor's Point-of-Sale (POS) terminal requires a round-trip HTTP request to a cloud server to verify a wristband's wallet balance, the transaction will inevitably fail when venue Wi-Fi drops. To achieve guaranteed sub-second tap-to-pay transactions, we decoupled the physical read layer from the wide-area network. Both our gate controllers and vendor POS devices act as autonomous edge nodes. Local Persistence with Write-Ahead Logging Each edge terminal runs an embedded SQLite database configured for high-concurrency appends: sql -- POS Edge Node Initialization PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 5000; PRAGMA temp_store = MEMORY; CREATE TABLE IF NOT EXISTS local_transactions ( txn_id TEXT PRIMARY KEY, wallet_uid TEXT NOT NULL, vendor_id TEXT NOT NULL, amount INTEGER NOT NULL, -- Stored in base currency units (Halalas) epoch_ms INTEGER NOT NULL, sync_state INTEGER DEFAULT 0 ); When an attendee taps their wristband to purchase a coffee, the NFC reader validates the cryptographically signed wallet balance directly from the chip's secure memory sector. The ledger deduction is written to the local SQLite WAL companion file in under 4 milliseconds. A background Go daemon continuously monitors network health and asynchronously flushes committed transactions to the central cloud API when connectivity permits. 3. High-Throughput Ingestion Pipeline (Go & Redis)When network connectivity is stable, hundreds of edge portals and POS terminals continuously stream telemetry and financial ledgers to the central cloud. To prevent our primary PostgreSQL relational database from locking under heavy concurrent writes, we use Redis Streams as a high-speed ingestion buffer. Our Go ingestion gateway handles incoming TCP payloads and pushes them to Redis in memory:Gopackage main import ( \"context\" \"encoding/json\" \"log\" \"net/http\" \"[github.com/redis/go-redis/v9](https://github.com/redis/go-redis/v9)\" ) var ctx = context.Background() var rdb *redis.Client type CashlessTxn struct { TxnID string `json:\"txn_id\"` Wallet string `json:\"wallet\"` Amount int `json:\"amount\"` // Halalas VendorID string `json:\"vendor_id\"` EpochMS int64 `json:\"epoch\"` } func ingestTransaction(w http.ResponseWriter, r *http.Request) { var txn CashlessTxn if err := json.NewDecoder(r.Body).Decode(&txn); err != nil { http.Error(w, err.Error(), http.StatusBadRequest) return } // Push to in-memory Redis Stream buffer err := rdb.XAdd(ctx, &redis.XAddArgs{ Stream: \"stream:cashless_transactions\", Values: map[string]interface{}{ \"txn_id\": txn.TxnID, \"wallet\": txn.Wallet, \"amount\": txn.Amount, \"vendor\": txn.VendorID, \"epoch\": txn.EpochMS, }, }).Err() if err != nil { http.Error(w, \"Ingestion Failed\", http.StatusInternalServerError) return } w.WriteHeader(http.StatusAccepted) } 4. Live Financial & Spatial Command DashboardsA worker pool consumes the Redis Streams, applying deduplication (based on TxnID) and writing the settled records to TimescaleDB for permanent storage. Simultaneously, the workers compute rolling 60-second aggregations and broadcast them via WebSockets to our KSA custom reporting dashboards. This provides event operations teams with real-time, actionable intelligence:Live Vendor Settlements: Financial controllers can monitor live POS revenue across the entire exhibition floor, tracking exact spending velocity without waiting for end-of-day batch processing. Civil Defense Density Adherence: Security teams receive immediate alerts if passive UHF portals detect that a specific keynote hall is nearing its municipal capacity limit. Architecting for Scale in the GCCBy unifying ticketing, spatial tracking, and digital wallets into a single edge-resilient architecture, we eliminate the physical queues and data silos that plague legacy event operations. If you are developing solutions for physical venues or exploring hardware-integrated fintech, review the deployment models powering StampIQ's cashless payments for events and their enterprise event registration platform",
+            "url": "https://dev.to/stampiq/building-a-high-throughput-cashless-payment-rfid-ticketing-system-for-saudi-mega-events-40i4",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "git",
+                "intel",
+                "programmation",
+                "web",
+                "wifi",
+                "windows"
+            ],
+            "published_at": "2026-10-13T06:11:29+00:00",
+            "collected_at": "2026-10-13T06:16:06.571088+00:00"
+        },
+        {
+            "id": "3cc8899e979a2aae5c486f6a66f16d03106fc0fae375046529c9c3a23b97442e",
+            "title": "Menu Translator: A Private, Offline Menu Translation Tool Powered by Llama 3.2",
+            "description": "This is a submission for the Hacktoberfest Open-Source AI Challenge Week 2: Side Hustle What I Built Menu Translator is a small web app that translates restaurant menu items into another language and adds a short, customer-friendly description for each dish. The target customer is a local restaurant owner or cafe manager who serves tourists, students, or foreign guests. Generic translators often mess up food names (for example, translating \"Dal Makhani\" word by word). This tool keeps the original dish name, gives a translated name, and explains what the dish is in one line. There is also a \"Restaurant notes\" box. The owner can describe their restaurant and special items (for example, \"Our Special Thali has 2 sabzi, dal, rice and 3 roti\"), and the model uses this context while translating. This is the part a generic tool cannot do. Supported languages: English, Hindi, French, Spanish, German, Japanese. Demo How to use it: Paste dish names, one per line. Optionally add restaurant notes. Pick the target language. Click Translate and get the result in a few seconds. Code shubsolos19 / Menu-Translator Translates restaurant menu dishes using a local open-source model (Llama 3.2 via Ollama). Runs offline, no API cost, menu data stays private. Menu Translator Translates restaurant menu dishes using a local open-source model (Llama 3.2 via Ollama). Runs offline, no API cost, menu data stays private. Screenshot Setup Install Ollama from ollama.com ollama pull llama3.2 pip install -r requirements.txt python app.py Open http://localhost:5000 View on GitHub The whole app is a single app.py file, so anyone can read it, run it, and change it in minutes. How I Built It Model: Llama 3.2, an open-weight model from Meta Local inference: Ollama, which runs the model on my own laptop Backend: Python and Flask, with one route that sends a prompt to Ollama's local API Frontend: plain HTML, CSS, and JavaScript inside the same file, no build step Flow: the user's dish list, restaurant notes, and chosen language go into a structured prompt. The prompt asks the model to keep the original name, give the translated name, and write a short description. Flask sends it to Ollama on localhost:11434 and shows the response on the page. To run it: Install Ollama and run ollama pull llama3.2 pip install -r requirements.txt python app.py Open http://localhost:5000 Why Does Open Innovation Matter? Cost: There are no API fees and no per-request charges. A small restaurant can translate its menu as many times as needed for free, which makes this a realistic product for a tiny business. Privacy: Everything runs on the local machine. Menus, recipes, and notes about specials never leave the owner's computer. Works offline: After the model is downloaded, no internet is needed. Customizable: The restaurant notes box adapts the output to each business. With an open model I can also swap in a different one by changing a single word in the code ( MODEL = \"llama3.2\" ), or fine-tune for a specific cuisine later. No lock-in: I am not tied to any provider's pricing, rate limits, or policy changes.",
+            "url": "https://dev.to/hello_shubham/menu-translator-a-private-offline-menu-translation-tool-powered-by-llama-32-4n90",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "git",
+                "java",
+                "javascript",
+                "programmation",
+                "python",
+                "web"
+            ],
+            "published_at": "2026-10-13T06:11:27+00:00",
+            "collected_at": "2026-10-13T06:16:06.571405+00:00"
+        },
+        {
+            "id": "89df2100d4c1072f1d24bd2f32fc531828d91f83388b99ef35c935e30a1e7952",
+            "title": "Who Owns AI-Generated Code in Production? A Practical Framework and Five Companies to Consider",
+            "description": "An AI coding assistant generates a change. The tests pass, a developer approves the pull request, and the deployment completes. Hours later, customer requests begin failing. Who decides whether to roll back? Who investigates the failure? Who updates affected customers? The coding tool cannot hold those responsibilities. The engineering team needs to assign them before deployment. GeekyAnts explores this issue in its article, “AI Can Generate Code. Who Owns Production? A RACI Framework for AI-Assisted Engineering.” Its central argument is that faster code generation leaves human responsibility for acceptance, release approval, and production operations intact. That argument provides a useful starting point for both internal engineering practices and the evaluation of external delivery partners. What does RACI mean for AI-assisted engineering? RACI describes four roles in a task or decision: Responsible: Performs the work. Accountable: Holds final authority for the outcome. Consulted: Provides input before the decision. Informed: Receives updates about the decision or result. The source article recommends one named accountable owner per decision. It also separates code authorship from release authorization and calls for incident responsibilities to be assigned in advance. The practical implication is straightforward: “the team reviewed it” needs to resolve into identifiable people, recorded decisions, and clear escalation paths. An AI assistant can help produce implementation code, test cases, or documentation. A person still needs to decide whether that output meets the system’s requirements. What would ownership look like on a real change? Consider an illustrative change to a payment webhook handler. An AI assistant generates retry logic. Unit tests confirm that failed requests are retried, but the tests omit duplicate event delivery. In production, a repeated webhook could trigger the same business action twice. A useful responsibility map could look like this: Decision or activity Responsible Accountable Evidence Implement retry behavior Developer Engineering lead Reviewed implementation and assumptions Validate duplicate handling Developer and quality engineer Quality owner Replay and concurrency test results Authorize deployment Delivery team Release owner Acceptance record and recovery plan Restore service after failure On-call responders Incident commander Incident timeline and recovery checks This is a starting template, not a universal allocation of roles. Smaller teams may combine responsibilities, but each decision still needs an explicit owner. The example also shows why passing tests are insufficient on their own. Someone must examine whether the tests cover the failure modes that matter. How can teams make ownership part of delivery? A responsibility matrix becomes useful when it changes the workflow. For the webhook example, the pull request could include the expected duplicate-handling behavior and links to relevant tests. Release approval could require confirmation that monitoring detects repeated processing. The incident runbook could identify who can suspend the consumer and how queued events should be handled. These details answer different questions: Code review: Is the implementation acceptable? Release approval: Is the complete change ready to reach customers? Operational readiness: Can the team detect and recover from a failure? One approval should not silently stand in for all three. There is also a limit to the framework: assigning an accountable owner does not give that person enough time, expertise, or production access. Those conditions need to exist for the assignment to work. Which five companies are relevant to this delivery model? The following shortlist covers companies with published capabilities relevant to AI-assisted engineering, product delivery, or governance. The numbering is for readability, rather than a verified ranking of production performance. 1. GeekyAnts GeekyAnts’ article describes a delivery approach involving human review, quality gates, automated testing, release readiness, and operational handover. Its relevance to this discussion comes from connecting engineering work with explicit production responsibilities. Evaluation question: Can the proposed team provide a project-specific responsibility map, release acceptance criteria, and written post-launch support boundaries? A published framework should be tested against the actual engagement proposal. 2. Thoughtworks Thoughtworks describes AI-first software delivery as extending beyond coding into how software is built, deployed, and maintained. Its published material also discusses governance and engineering practices alongside AI-assisted delivery. That makes it relevant to teams evaluating changes across the delivery lifecycle. Evaluation question: How will the engagement preserve review quality and operational ownership as AI increases the volume of proposed changes? 3. EPAM EPAM publishes offerings in AI-native engineering, quality engineering, and responsible AI. These provide relevant areas to examine when assessing a partner’s ability to connect implementation, testing, and oversight. Evaluation question: Which acceptance checks will be independently reviewed, and who owns unresolved defects when a release deadline approaches? AI-generated tests deserve scrutiny alongside AI-generated code. 4. IBM Consulting IBM Consulting offers AI services and product engineering capabilities. Its published product engineering material connects AI, cloud, and product design, while its broader AI services include strategy and engineering. It is relevant to evaluating delivery within an existing enterprise technology environment. Evaluation question: How will release approvals, operational evidence, and incident escalation connect to the organization’s existing processes? 5. Accenture Accenture’s responsible AI services address enterprise-wide implementation, policies, and controls. Its published engineering initiatives also describe developing and implementing AI use cases within enterprise platforms. Evaluation question: Who holds each production decision when multiple delivery teams, platform owners, and suppliers participate? Broad delivery coverage still requires precise boundaries at the project level. What should teams request before selecting a partner? A useful comparison starts with one realistic change and asks every candidate to explain the same sequence: Who accepts the implementation? What evidence is required before release? Who can stop deployment or initiate recovery? Who responds outside normal working hours? What repositories, infrastructure definitions, and runbooks transfer at handover? Answers should identify people or roles, decision authority, and deliverables. “Shared ownership” needs further definition. The same test applies to an internal team. External support does not resolve unclear authority unless the engagement explicitly addresses it. Where should an engineering team start? The source article proposes a small pilot: map responsibilities, agree evidence and escalation, apply the framework to a real change, and review the gaps. The next release offers a practical opportunity. A team can select one decision that currently depends on assumptions, assign its accountable owner, and record the evidence needed to make it. Which production decision most often falls between roles: code acceptance, release approval, or incident recovery?",
+            "url": "https://dev.to/mitch_07/who-owns-ai-generated-code-in-production-a-practical-framework-and-five-companies-to-consider-3bah",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-10-13T06:11:23+00:00",
+            "collected_at": "2026-10-13T06:16:06.572263+00:00"
+        },
+        {
+            "id": "a80afc686f7d93c7d2c2949a5a64bdf7cf302af69c29a971419a3d50e45bf622",
+            "title": "EdTech Has Three Users, Not One. Model That Before You Build",
+            "description": "Most apps have one user type with a settings screen. EdTech has three, and they're adversarial by design: the learner must not see the grading tools, the educator must not need IT to reset a roster, and the admin needs to provision hundreds of accounts without touching a database. If those three roles arrive in the data model after the first screens are built, you get authorization checks sprayed across controllers, a permissions bug in every sprint, and a rewrite somewhere around the first district contract. It's the same class of mistake as retrofitting multi-tenancy, and it costs about the same. Here are nine firms with public edtech delivery history, judged on that. What to verify before shortlisting Ask how they'd model the three roles. A good answer talks about a permission model separate from the role label, because a teacher at one school and a department head at another need different scopes with the same title. A weak answer talks about screens. Ask what happens with no connectivity. Not \"can you add offline.\" Ask what syncs, what conflicts, and who wins. K-12, rural, and international deployments make this a launch requirement, not a phase two. Ask how they test WCAG. Automated axe scans plus manual keyboard and screen reader passes is a real answer. \"We follow best practices\" is not, and district procurement will find out before you do. Ask for one shipped AI feature. Named, with what the model does. \"Recommends the next lesson from the last five wrong answers\" is a feature. \"AI-powered personalization\" is a homepage. Ask about the back-to-school window. Bug-fix SLAs in late August are a different commitment than the rest of the year, and a partner who has shipped in this vertical knows it without being told. 1.Vention Stack: broad enterprise, Unity for interactive builds Best for: large funded edtech needing enterprise-scale capacity New York, 2002, 3,000+ engineers, six figures and up. Technical note: built a Unity-based interactive kiosk for Cranbrook Institute of Science, a 3D aquatic ecosystem explorer with 73 models, delivered in 3 months. No public edtech-specific case study beyond that, so the general enterprise record is what you're buying. 2. N-iX Stack: microservices, enterprise backends Best for: scaling edtech SaaS that needs a dedicated pod Ukraine with EU delivery centers, 2002, 2,500+ engineers, typically $150k+. Technical note: the most concrete performance result on this list. Modernized WBS TRAINING's legacy LMS into microservices and took page response from 5+ minutes to under 0.5 seconds, with a 30% overall lift. That's a real re-architecture, not a reskin. The $150k floor rules out seed stage. 3. ScienceSoft Stack: .NET, Java, Python, mobile Best for: institutions with formal procurement requirements McKinney TX, 1989, 700+ people, enterprise tier. Technical note: shipped language-learning apps across 8 languages with text-to-speech under a 40MB footprint, which reached #1 education app in 10+ countries. That binary size discipline matters more than it sounds for schools distributing on old devices. Enterprise process means longer timelines. 4. Simform Stack: cloud-native, Azure OpenAI, AWS Best for: products where the scaling story is the hard part California with India delivery, 2010, 700+ people, $50 to $150/hr. Technical note: built a GenAI research platform for a psychology association over 50,000+ studies, reporting 50% faster research and 99% uptime. Architecture-first positioning, which means pedagogy and teacher workflow are not their center of gravity. Ask for explicit edtech references. 5. Netguru Stack: React, Rails Best for: founders who need the UX to carry the product Poland, 2008, 700+ people, $50 to $99/hr. Technical note: built Babbel's B2B admin dashboard, including team license management for corporate accounts like Hyundai and Paramount. Seat provisioning and license reassignment is exactly the admin-role work most agencies underestimate. Design-forward positioning can undersell backend complexity, so push on permissions and sync. 6. Miquido Stack: Golang, React, mobile, ML tooling Best for: mobile-first products heavy on media Poland, 2011, 250+ people, mid-tier. Technical note: built Brainly's Content Tool in Golang and React in 3 months, after which 50% of questions were answered within 24 hours and users saved about 3 hours a week. That's a throughput result on a moderation-style workflow, which is a genuinely hard queueing problem. 7. Cleveroad Stack: custom web and iOS Best for: mid-size European teams wanting LMS breadth Estonia with Ukraine delivery, 2011, 200+ people, $25 to $49/hr, the lowest band here. Technical note: replaced Crossfader's WordPress setup with a custom web and iOS build for 5,000+ users, including an offline iOS mode and a subscription revenue feature. The offline mode is the detail worth asking about, since most agencies on this list have not shipped one. Broad portfolio, so confirm end-to-end ownership. 8. Geniusee Stack: MediaSoup SFU, Fabric.js, Node ecosystem Best for: seed-stage founders wanting a senior-heavy team Estonia and Ukraine, 2016, 150+ people, mid-tier. Technical note: the most interesting stack detail on the list. Built an AI-enabled virtual classroom for K-12 tutoring on a MediaSoup SFU with a Fabric.js collaborative whiteboard. Running your own SFU rather than buying Twilio or Agora is a real latency-versus-ops tradeoff, and they made it deliberately. Case studies lean SaaS-adjacent, so confirm education-native depth. 9. Brocoders Stack: Node.js, React, React Native, AWS Best for: MVP-to-scaling edtech founders wanting shipped vertical proof Estonia, 2011, 60 to 70 people at roughly 60% senior, $80k+ typical MVP floor. Technical note: five named edtech builds across four segments, which is the part worth checking. 99math for gamified elementary math. Kiddom for K-12 digital curriculum. Kedzoh for mobile corporate training, which took Startup Chile, Brazil, and French Tech Ticket awards. Casers for higher-ed talent acquisition. HeyPractice, an AI-powered sales and marketing training platform on Node.js and React with AWS CI/CD and GDPR compliance built in rather than added. Roles, offline behavior, and accessibility get decided in a paid discovery phase instead of a fixed feature-list quote. In-house DevOps, and bcboilerplates.com covers auth and RBAC scaffolding so sprint one goes into the domain. Brocoders . Not an edtech-only shop, unlike ScienceSoft or Cleveroad. Modeling the three roles properly The mistake is making role an enum on the user. The fix is separating identity from scoped membership: user → a person, one account, one login organization → district, school, or company membership → user × org × role, scoped (a user can be a teacher in one school and a parent in another) course / cohort → the unit work is assigned against enrollment → membership × cohort, with its own capabilities permission check = can(membership, action, resource) never if (user.role === 'teacher') Two rules make this hold up. Permissions are checked against a resource, not a page, so \"can view grades\" is always \"can view grades for this cohort.\" And the check lives in one policy layer that every route and every background job calls, because a report generator that skips the check is the same leak as a controller that does. Roster provisioning deserves its own thought. Schools arrive with CSVs, Clever, ClassLink, or an LTI 1.3 launch from an existing LMS, and each of those creates users differently. Decide early which are in scope; retrofitting LTI into an auth flow built for email signup is a rewrite of the session layer. For offline: the learner app is the one that needs it, and the conflict cases are narrow. Answers submitted offline are append-only and replay with a client-generated op_id. Progress is a counter that merges rather than overwrites. Content is cached with a version, and an assignment changed by the teacher mid-session surfaces as a visible update rather than a silent swap. Cost bands MVP timelines run 8 to 16 weeks, driven mostly by how many roles ship in v1 and whether offline is in scope. Pre-build checklist Role model as scoped memberships, not a user enum, from migration 001 One policy layer every route and every background job calls Roster provisioning decided: CSV, Clever, ClassLink, or LTI 1.3, chosen before the auth flow is written Offline scope named per role, with conflict rules written down Idempotency: op_id on submitted work, so replay never double-counts WCAG: automated axe in CI plus a manual keyboard and screen reader pass before any district demo Content versioning so a mid-session curriculum change doesn't corrupt a learner's attempt Data handling: FERPA or GDPR scoped early, including what leaves the region Support model: bug-fix SLA that names the back-to-school window explicitly Ownership: repo, infrastructure, deployment scripts, and a documented exit path If you're scoping an edtech build Write down what each of the three roles sees and does before you talk to anyone. It takes an afternoon and it changes which of these nine is the right size for the job. Happy to work through it with you, including telling you plainly if the segment isn't ours. brocoders.com",
+            "url": "https://dev.to/brocoders/edtech-has-three-users-not-one-model-that-before-you-build-3g30",
+            "source": "DEV Community",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "aws",
+                "azure",
+                "csharp",
+                "developpement",
+                "git",
+                "go",
+                "ios",
+                "java",
+                "javascript",
+                "llm",
+                "openai",
+                "programmation",
+                "python",
+                "rgpd",
+                "web"
+            ],
+            "published_at": "2026-10-13T06:11:17+00:00",
+            "collected_at": "2026-10-13T06:16:06.572993+00:00"
+        },
+        {
+            "id": "15fab28107441d50ffa49784ece089bbd620db323ff2648e2c123b9b1f3f9f6f",
+            "title": "Your Tabs Each Open Their Own WebSocket. navigator.locks Elects One.",
+            "description": "Open your app in six tabs — most people have at least that many of something open right now — and check your server's connection count. If you're using WebSockets or Server-Sent Events for live updates, it just went up by six. Six sockets, six keep-alives, six copies of every push notification landing in the same browser window. Nobody asked for six connections. They asked to see their dashboard update live. You gave them that, and also a server bill and a battery drain that scale with how many tabs a bookmark-happy user happens to have open. The bug you can see in your own network tab Open devtools, go to the Network tab, filter by WS, and open the same page twice. You'll see two independent socket connections, each sending its own ping, each receiving its own copy of every broadcast the server sends. Now open six. Your server — which probably caps concurrent connections per deploy, or bills per connection-minute — just got six times the load from one human being. And when the server pushes a notification, that human sees it pop up six times, once per tab, because each tab's JavaScript has no idea the other five exist. The fix that doesn't fix it The obvious instinct is the Page Visibility API: pause the connection in background tabs, since the user is only looking at one of them anyway. document . addEventListener ( ' visibilitychange ' , () => { if ( document . hidden ) socket . close (); else socket = new WebSocket ( url ); }); This helps a little and breaks something else. A user with the dashboard open on a second monitor, in a visible-but-not-active tab, stops getting updates. Worse, \"hidden\" and \"pointless\" aren't the same thing — a background tab doing the actual relaying for a visible one is exactly what you want, not what you're trying to kill. The real problem was never \"which tabs should connect.\" It's that six tabs are duplicating work that only needs to happen once. You don't want fewer connections scattered unpredictably across whichever tabs happen to be visible — you want exactly one connection, owned by exactly one tab, with the other five just listening in. That's leader election, and the browser already ships the primitive for it. navigator.locks, held for the life of a tab navigator.locks.request() normally looks like a mutex: acquire a named lock, do some work, let it resolve, the lock releases. But nothing requires the callback to resolve quickly. Give it a promise that never resolves on its own, and the lock stays held for as long as that tab is open — the moment the tab closes, crashes, or navigates away, the browser releases the lock for you, automatically, no cleanup code required. That's the whole mechanism. Whichever tab's request() call wins the (exclusive, FIFO) queue becomes the leader. Every other tab's request just waits — and the instant the leader's tab closes, the next one in line is granted the lock and takes over. const LEADER_LOCK = ' app-connection-leader ' ; let socket ; navigator . locks . request ( LEADER_LOCK , () => { // Only one tab's callback ever runs this at a time. socket = new WebSocket ( ' wss://example.com/live ' ); socket . onmessage = ( e ) => { channel . postMessage ({ tick : e . data }); // fan out to every other tab renderUpdate ( e . data ); // and render here too — see why below }; return new Promise (() => {}); // never resolves — holds the lock until this tab dies }); 🎮 Try it yourself ▶️ Open the interactive playground → Runs right in your browser — poke at it and watch the concept react live. Relaying to the followers Electing a leader only solves half the problem — the other five tabs still need the updates. That's what BroadcastChannel is for: the leader relays every message it receives onto a channel that every other tab is already listening to. const channel = new BroadcastChannel ( ' app-updates ' ); // Every follower tab runs this: channel . onmessage = ( e ) => renderUpdate ( e . data . tick ); Here's the gotcha worth knowing before you build this: a BroadcastChannel never delivers a message back to the instance that posted it — that's by design, not a bug. So the leader can't just post to the channel and expect its own onmessage to fire; that's why the leader's socket.onmessage above renders directly instead of waiting for an echo that will never arrive. Followers never touch the real connection — they only ever get updates through the channel. If a follower needs to send something back (a user action, a form submit), it posts that onto the channel too, and the leader is the only one that forwards it to the server. One tab talks to your backend. The rest just listen. What happens when the leader closes This is the part worth testing yourself, because it's the part that makes this worth doing at all: close the leader tab, and one of the waiting tabs is granted the lock as soon as the browser notices that tab's context is gone — no polling, no \"is anyone still there\" timeout, no stale leader lingering for thirty seconds before a new one takes over. The browser's lock queue is the failover mechanism — you don't write one. There's a brief gap you should know about: the new leader has to open its own WebSocket connection after acquiring the lock, so there's a reconnect delay (normal connection-establishment time) before live updates resume. For a dashboard or notification feed, that's invisible. For something that can't tolerate a gap at all, keep that in mind rather than assuming the handoff is instant. One more option worth knowing: navigator.locks.request(name, { ifAvailable: true }, callback) checks leadership without joining the queue — callback runs immediately with null if someone else already holds the lock, instead of waiting. Useful for a tab that wants to know \"am I the leader?\" without volunteering to become one. Try it with real tabs, not a mental model Everything above is easy to agree with and easy to get wrong in practice — the FIFO ordering, the automatic release, the reconnect gap. The playground above runs the exact same navigator.locks + BroadcastChannel code in three simulated tabs on one page. Open each one, watch the lock queue hand off leadership the moment you close the leader, and try the \"steal\" option to see what happens when a tab forces its way to the front instead of waiting in line. 🧠 Test yourself Think it clicked? Take the 7-question quiz → Instant feedback, a hint on every question, and an explanation for each answer — right or wrong. Browser support, honestly navigator.locks is Baseline widely available — Chrome 69+, Firefox 96+, Safari 15.4+ — so this works in every current browser. The one footgun is the steal option: it forcibly yanks the lock away from whoever holds it, skipping the queue entirely. That's occasionally the right tool (a user force-reloading a stuck tab), but use it knowing the previous leader never gets a chance to finish cleanly — it just loses the lock mid-flight. You don't need six tabs each holding their own connection to do the job of one. You need one tab doing the job, and a browser API that already knows how to pick which one — and hand the job to the next tab the moment the first one leaves. Does your app open a connection per tab right now? Go count it in the Network panel — I'll bet it's more than you think. 📚 Read next Your Timer Doesn't Know You Tabbed Away Stop using the localStorage hack to sync browser tabs. BroadcastChannel does it natively. Five tabs open, one refresh token — the race nobody noticed 🚀 Want more like this? Every guide, playground, and quiz lives on bestpractic.org — open it and sign up free so the next one finds you. Thanks for reading! Let's stay connected: ⭐ GitHub — follow me and star the projects: github.com/parsajiravand 💬 Discord — join the frontend best-practices community: discord.gg/d9KRhuAwQ 📸 Instagram — frontend best practices, daily: @bestpractice___",
+            "url": "https://dev.to/parsajiravand/your-tabs-each-open-their-own-websocket-navigatorlocks-elects-one-24gh",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "git",
+                "java",
+                "javascript",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-10-13T06:11:00+00:00",
+            "collected_at": "2026-10-13T06:16:06.573840+00:00"
+        },
+        {
+            "id": "871bfe18bbb356e21918c061794f14ed61f285691e672bfcc90bfe99e904aebc",
+            "title": "The Handoff Is the Product: Why Chatbot Escalation Decides Your Support Quality",
+            "description": "Most debates about support automation argue about answer accuracy. Buyers rarely leave because a bot got a product question slightly wrong — they leave because when the bot hit something it could not answer, the escape route was broken. The handoff to a human is where automated support is actually judged, and it is the part teams spend the least time designing. Three ways handoffs fail The dead end. The bot says \"connecting you with an agent,\" and nothing happens. No queue position, no expectation, no ticket. The buyer waits, the response-time clock keeps running, and the conversation ends in silence. This is the most common failure and the most preventable one. The amnesia. The transfer works, but the agent sees only a name. The buyer re-explains the whole problem — order number, what the bot already asked, what was already promised. From the buyer's side this reads as \"nobody here knows anything.\" From the agent's side, half the handling time is archaeology. The wrong destination. Escalations drop into one shared pool, so whoever clicks first gets them. A sizing question lands with the returns specialist; a refund dispute lands with a pre-sales intern. Skill-based routing does not need to be sophisticated to work — category and shop are usually enough. A handoff that works is four moves Trigger early. Negative-sentiment words, a second repeat of the same question, anything involving refund amounts — any one of these should escalate immediately. Making the bot \"try once more\" after a frustrated message is how a small problem becomes a public review. Carry the context. The transfer should include the last few buyer messages and what the bot already answered. Ten lines of transcript save the buyer from repeating themselves and save the agent from guesswork. Name the owner. Route by category to a specific person, with a timeout that escalates to a team lead when nobody claims the ticket. Unclaimed should be louder than unanswered. Close the loop at night. When no one is on shift, do not pretend to transfer. Convert the handoff into a next-morning task with an explicit expectation to the buyer. Slow is acceptable at 2 a.m.; silent is not. What to measure Three numbers tell you whether escalation works: handoff success rate (was a human actually reached), time to first human reply, and abandonment rate (transfers that died with no response). Track them for a week before setting thresholds. If abandonment is high, the problem is routing or night coverage — not your reply templates. The uncomfortable conclusion A support chatbot is judged by its worst five percent of conversations, and those are exactly the ones that end in a handoff. Teams that polish answers while treating escalation as an afterthought are automating the easy eighty percent and leaving their reputation to the hard twenty. Design the handoff first; the answers are the easier half. Useful references: a ready-to-use ecommerce support toolkit (templates and checklists), and a practical guide to handling emotional customers in support chats — both free, no signup wall.",
+            "url": "https://dev.to/dingdangcs/the-handoff-is-the-product-why-chatbot-escalation-decides-your-support-quality-19hi",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-10-13T06:10:56+00:00",
+            "collected_at": "2026-10-13T06:16:06.574199+00:00"
+        },
+        {
+            "id": "6b6b361649e9709f4a9125ffecb058fcaf39bab2b438e9edcee1a47d63355c85",
+            "title": "Next.js 16 Image: priority Deprecated, quality Now Allowlisted",
+            "description": "Your team ships a product page with a hero image: <Image src={photo} quality={90} priority fill /> . It looked right in Next.js 15. You upgrade to 16, run a visual regression pass out of habit, and the hero image is... a little softer. Nothing crashed. No error in the terminal. No red line in CI. The quality={90} prop is still sitting right there in the JSX, doing nothing, and you'd have no way to know unless you happened to run the dev server and read a console warning that most people's eyes skip past. That's the real story behind two changes Next.js 16 made to next/image : the quality prop is now checked against an allowlist ( images.qualities , defaulting to [75] ), and the priority prop is deprecated in favor of a new preload prop. Neither one is flashy enough to make a release-notes headline, and neither one throws a build error, which is exactly why they're worth a proper look: this article is written against Next.js 16.4 (verified against the framework's own next/image and next.config.js reference docs, and its source in packages/next/src/shared/lib , in October 2026), and by the end you'll know precisely what changed, why, and how to fix it on purpose instead of by accident. What you'll learn By the end of this article you'll be able to: Explain what images.qualities does, why it defaults to [75] in Next.js 16, and what happens to a quality value that isn't on the list Predict whether a given quality prop gets silently coerced or causes a hard 400, and why those are two different code paths Migrate priority to preload correctly, and understand why Next.js changed the name rather than the behavior Read the Version History table at the bottom of a Next.js docs page and use it the way this article does Configure images.qualities and preload / loading / fetchPriority together without fighting the framework's own validation Who this is for You've used next/image in an App Router project — at minimum, you've written <Image src={...} width={...} height={...} /> and set priority on a hero image at some point. You don't need prior knowledge of the Image Optimization API internals; we build the model from the prop down to the request. Table of contents The problem: a prop that still compiles but silently does less The mental model: your props pass through a config-aware layer first Walkthrough: the quality allowlist Walkthrough: priority to preload Edge cases and gotchas Best practices FAQ Cheat sheet Key takeaways The problem: a prop that still compiles but silently does less Here's the Next.js 15 component from the intro, completely ordinary code: // Works exactly as written on Next.js 15 < Image src = { photo } alt = \"Studio monitor on a desk\" fill quality = { 90 } priority /> Upgrade to Next.js 16 with no other changes and two things happen, neither of which raises an error: quality={90} stops meaning 90. Next.js 16 ships a default images.qualities: [75] . Since 90 isn't on that list, the component silently requests the closest allowed value instead — which, with the default config, is 75. In development you get a console warning. In a production build, there is no warning at all; the image is just a little softer than the designer approved. priority is marked @deprecated in the type definitions , and the official docs now describe preload as the prop to reach for. Nothing breaks. Nothing tells you at runtime, either — unlike some other deprecated Image props ( onLoadingComplete , for instance, logs a warning telling you to switch to onLoad ), priority just keeps working, silently, for as long as you keep writing it. Both changes share the same shape: a prop you set still \"works,\" in the sense that your code compiles and the page renders, while quietly doing something other than what the Next.js 15-era mental model says it does. That's the gap this article closes. The mental model: your props pass through a config-aware layer first It's tempting to think of <Image quality={90} priority /> as \"pass these two numbers/flags to the <img> tag.\" It never was that simple, and in Next.js 16 it's explicit: both props go through a validation and normalization layer that consults your next.config.js before anything is requested over the network. The mental model: <Image> 's props aren't a direct line to the browser. They're inputs to a decision Next.js makes on your behalf , and that decision depends on config you may not have touched. Quality gets snapped to the nearest value your config allows; priority-style loading urgency gets normalized into one signal. In both cases, the component decides what actually leaves your server — your prop is a request, not a guarantee. Two separate decisions fall out of that model, and they're the two things that changed in 16: What quality number actually gets requested — governed by images.qualities . Whether the image loads eagerly and gets a <link rel=\"preload\"> — governed by priority / preload / loading . Walkthrough: the quality allowlist Stage 1 — the default, unconfigured app With no images config at all, Next.js 16's effective default is: // next.config.js — this is the IMPLICIT default in Next.js 16, you don't have to write it module . exports = { images : { qualities : [ 75 ], }, } Key concept: every <Image quality={N}> in your app is now checked against this array. If N isn't in it, Next.js doesn't throw — it picks whichever configured value is numerically closest to N and uses that instead. Stage 2 — what \"closest\" actually means This isn't a vague \"rounds to a nice number\" — it's a specific, small algorithm, and you can reason about it exactly: // This is Next.js's own logic (shared/lib/find-closest-quality.ts), reproduced for clarity function findClosestQuality ( quality , configuredQualities ) { const q = quality || 75 if ( ! configuredQualities ?. length ) return q return configuredQualities . reduce ( ( prev , cur ) => ( Math . abs ( cur - q ) < Math . abs ( prev - q ) ? cur : prev ), configuredQualities [ 0 ] ) } findClosestQuality ( 90 , [ 75 ]) // → 75 (only option) findClosestQuality ( 82 , [ 50 , 75 , 100 ]) // → 75 (|82-75|=7 beats |82-100|=18) findClosestQuality ( 90 , [ 50 , 75 , 100 ]) // → 100 (|90-100|=10 beats |90-75|=15) Try the exact same function with your own numbers in the playground below — it runs this reduction live, not a simplified stand-in. 🎮 Try it yourself ▶️ Open the interactive playground → Runs right in your browser — poke at it and watch the concept react live. Stage 3 — configuring it on purpose If 75 is too aggressive for a photography-heavy site, widen the allowlist explicitly: // next.config.js module . exports = { images : { qualities : [ 40 , 60 , 75 , 90 , 100 ], }, } Now quality={90} on a component is requested as 90, exactly, because 90 is on the list. The fix for the regression in the intro isn't \"add quality back\" — it was never removed — it's \"put 90 in images.qualities .\" Stage 4 — the two different failure modes This is the part that trips people up, because there are genuinely two code paths, not one: Through <Image> (the normal path): a disallowed quality is coerced to the closest allowed value. No error, no 4xx — your visitor gets a real image, just at a different quality than you asked for. Development logs a console warning naming the exact value to add to your config; production does not. Through the raw optimization endpoint ( GET /_next/image?url=...&w=...&q=90 , the kind of URL you'd get by copying a src out of dev tools, or by hand-building a request): the server validates q against the same allowlist and, if it isn't an exact match, returns a 400 Bad Request . There's no \"closest value\" leniency here, because this endpoint isn't going through your component's props at all — it's a public HTTP surface, and Next.js treats an unlisted quality value the same way it treats a malformed width: a bad request. So \"what happens if the quality isn't allowed\" has two honest answers depending on which door you walked through, and both are intentional: the component degrades gracefully for real visitors; the raw endpoint stays strict so the allowlist can't be bypassed by hitting the optimizer directly. Walkthrough: priority to preload Stage 1 — what priority always did priority on <Image> has always done two things together: it stops the image from being treated as lazy-loaded (so the browser doesn't wait to discover it near the viewport), and it has Next.js insert a <link rel=\"preload\"> for it, so the browser's preload scanner can start fetching it before React even renders the <img> tag. That combination is exactly what you want for a Largest Contentful Paint (LCP) candidate — your hero image, the above-the-fold product photo. Stage 2 — the rename, and why it's a rename and not a behavior change // Next.js 15 — still compiles on 16, still works, but the type is now @deprecated < Image src = { hero } alt = \"…\" priority fill /> // Next.js 16 — the documented way forward < Image src = { hero } alt = \"…\" preload fill /> Key concept: for the common case — \"this is my LCP image, load it with urgency\" — preload is a straight swap for priority . Both disable lazy-loading and both trigger the same preload <link> insertion; Next.js didn't change what the prop does here, it changed what it's called , specifically so the name describes the mechanism (a resource preload) instead of a vague notion of importance. You're not supposed to set both: the component throws \"Only preload should be used\" if a single <Image> has priority and preload together — but, like the quality-coercion warning, that check only runs while NODE_ENV !== 'production' , so it surfaces in next dev , not in a next build / next start production run. Stage 3 — reaching past preload when you need more control The docs are explicit that preload isn't always the right tool, even for an above-the-fold image: \"In most cases, you should use loading=\"eager\" or fetchPriority=\"high\" instead of preload .\" Reach for those two directly when: // Multiple images could plausibly be the LCP element depending on viewport size — // don't blanket them all with preload (that fights the browser's own prioritization) < Image src = { hero } alt = \"…\" loading = \"eager\" fetchPriority = \"high\" fill /> preload is a blunt, singular signal — \"fetch this one early, with a <link> tag.\" loading / fetchPriority let the browser's own scheduler make the call across several candidates, which matters once a layout has more than one image that could end up being the LCP element on different screen sizes. Edge cases and gotchas Nothing warns you to migrate priority . It's @deprecated in the types (your editor may gray it out or flag it with a linter that reads JSDoc), but there is no runtime console message pointing you to preload , so code that never gets a type-check pass can carry priority indefinitely without anyone noticing it's the old name. The production quality warning doesn't exist. The images.qualities mismatch warning only fires in development ( NODE_ENV !== 'production' ). A staging environment running a production build will not tell you a quality prop is being coerced — only next dev will. A static import's quality is checked too. quality behaves identically whether src is a remote URL, a path under public/ , or a statically imported image — the allowlist check doesn't care how the src arrived. Raising the allowlist raises optimizer work. Every quality value you add to images.qualities is a value the Image Optimization API may actually have to render on demand. A wide allowlist (say, every integer 1–100) defeats the point of having one at all — the docs frame the default narrow list as a deliberate guard against letting \"malicious actors... optimize more qualities than you intended,\" since each distinct quality is a distinct image variant your server (or your hosting provider's optimizer) has to produce and cache. priority / preload and loading=\"lazy\" are mutually exclusive, and so are priority and preload together. The component throws for either combination rather than silently picking one — but that throw lives in the same NODE_ENV !== 'production' -gated code as the quality warning, so it's a next dev error, not a guarantee your next build /CI pipeline will catch it. If you only ever test with a production build, an invalid combination can ship unnoticed. Best practices Set images.qualities once, deliberately, in next.config.js , based on the quality values your designs actually use — don't leave it at the 16 default if your app already standardizes on, say, 85 for photography. Reserve preload for the one true LCP candidate on a given page. If more than one image could be it depending on viewport, use loading=\"eager\" / fetchPriority=\"high\" on the candidates instead and let the browser's scanner decide. Run next dev at least once after a major upgrade , specifically to read the console for images.qualities warnings — they don't appear in a production build, and they're the only signal this change produces. Grep for priority across .tsx files during a 15→16 upgrade and rename to preload as a mechanical pass; it's a safe, behavior-preserving rename for the common usage described above. Don't widen images.qualities to \"everything\" as a reflexive fix — pick the two or three values your design system actually ships, the same way you'd pick deviceSizes . FAQ Does quality={90} throw an error in Next.js 16? No. If 90 isn't in your images.qualities allowlist, the component silently requests the closest allowed value instead (75, with the default config). No exception, no build failure — just a different number than the one in your JSX. The console warning for this only appears in development. Why does hitting /_next/image?...&q=90 directly return a 400 but the component doesn't error? Because they're different code paths. The <Image> component coerces an out-of-range quality to the closest allowed value before building the request — it never sends an invalid q . The raw optimizer endpoint validates q as a strict allowlist with no coercion, because it's a public HTTP surface that has to reject bad input rather than guess what you meant. Is priority removed in Next.js 16? No, it's deprecated, not removed. It still compiles and still behaves the same as preload for the eager-load-plus-preload-link use case. The Version History table in the official <Image> reference records it as deprecated starting in v16.0.0 . Do I need to migrate priority to preload immediately? Not urgently — there's no runtime warning pushing you to, and the behavior hasn't changed. Treat it like any other mechanical rename: do it the next time you're already touching a file, or as a dedicated sweep during a major-version upgrade, rather than a hotfix. Does images.qualities affect images served through a custom loader? Only partly. The dev-only console warning for an out-of-allowlist quality fires regardless of which loader you use. But the actual snap-to-closest-value coercion ( findClosestQuality ) is implemented inside Next.js's own default loader, not in a shared layer every loader passes through — a custom loader function or images.loaderFile receives the raw quality prop exactly as written and is responsible for applying (or ignoring) images.qualities itself. It also isn't going through the /_next/image endpoint in the typical case, so the strict-400 behavior doesn't apply there either. Cheat sheet // next.config.js — the Next.js 16 defaults, written out explicitly module . exports = { images : { qualities : [ 75 ], // REQUIRED allowlist since v16.0.0; unlisted quality → closest match }, } Task Code What actually happens Request a quality on the allowlist <Image quality={75} /> Requested exactly as given Request a quality NOT on the allowlist <Image quality={90} /> (allowlist [75] ) Silently coerced to 75 (closest match); dev-only console warning Widen what's allowed images: { qualities: [50, 75, 100] } quality={90} now resolves to 100 (closest), not 75 Hit the optimizer directly with a bad quality GET /_next/image?url=...&w=640&q=90 (not on allowlist) 400 Bad Request — no coercion on this path Mark the LCP / hero image (current) <Image preload fill /> Eager load + <link rel=\"preload\"> inserted Mark the LCP / hero image (deprecated, still works) <Image priority fill /> Identical to preload — no runtime warning to switch Multiple possible LCP candidates <Image loading=\"eager\" fetchPriority=\"high\" /> Finer-grained signal than preload ; lets the browser's scanner weigh several images Invalid combination ( next dev -only error) <Image priority preload /> or <Image priority loading=\"lazy\" /> Throws: \"Only preload should be used\" / \"Only one should be used\" — only while NODE_ENV !== 'production' 🧠 Test yourself Think it clicked? Take the 8-question quiz → Instant feedback, a hint on every question, and an explanation for each answer — right or wrong. Key takeaways images.qualities defaults to [75] in Next.js 16. Any quality prop not on your configured allowlist is silently snapped to the closest value that is — gracefully through <Image> , strictly (400) through the raw optimizer endpoint. The coercion warning is development-only. A production build will not tell you a quality value got rewritten; the only way to catch it is to run next dev and read the console, or to simply set the allowlist to match your design system up front. priority isn't gone, it's renamed to preload , and for the one thing almost everyone uses it for — flagging the LCP image — the swap is behavior-preserving. Nothing nags you to make it, so plan it as a deliberate pass rather than waiting for a warning that will never come. loading=\"eager\" + fetchPriority=\"high\" is the more precise tool when a page has more than one plausible LCP candidate; preload is for the single, known one. You upgrade, the build succeeds, the page looks almost right — and that gap between \"compiles\" and \"renders exactly as specified\" is where both of these changes live. Now that you've seen the allowlist and the rename from the inside, a soft hero image or a silently-working priority prop stops being a mystery and starts being a one-line fix in next.config.js or a safe find-and-replace. If you've been caught by either of these since upgrading to Next.js 16, or found a case the allowlist handles differently than described here, say so in the comments — these are the two next/image changes with the fewest search results and the most \"wait, why did my image get softer\" GitHub issues. This episode builds on two earlier ones in this series: Next.js Cache Components Explained covers the broader caching model next/image sits alongside, and Next.js Route Handlers: GET Stopped Caching in 15 is the same \"quiet default change with no error message\" pattern applied to Route Handlers instead of <Image> . 📚 Read next Next.js Cache Components Explained (with Cheat Sheet) Next.js Parallel & Intercepting Routes: Modals Done Right Next.js Server Actions: Mutations & Security (Cheat Sheet) 🚀 Want more like this? Every guide, playground, and quiz lives on bestpractic.org — open it and sign up free so the next one finds you. Thanks for reading! Let's stay connected: ⭐ GitHub — follow me and star the projects: github.com/parsajiravand 💬 Discord — join the frontend best-practices community: discord.gg/d9KRhuAwQ 📸 Instagram — frontend best practices, daily: @bestpractice___",
+            "url": "https://dev.to/parsajiravand/nextjs-16-image-priority-deprecated-quality-now-allowlisted-1a06",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "git",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-10-13T06:10:29+00:00",
+            "collected_at": "2026-10-13T06:16:06.576303+00:00"
+        },
+        {
+            "id": "d2d675062b7052860032f7c39df97c7d264fda25357ba64fd25c729028a692a2",
+            "title": "Count Your Tokens Before You Paste: Practical LLM Token Math",
+            "description": "You paste a long doc into ChatGPT, Claude or Gemini and one of three things happens: the answer ignores the end of it, you hit a context limit, or the API bill is bigger than you expected. All three come down to the same number: tokens . Here's the practical version of token maths: what a token is, quick estimates you can do in your head, how to count exactly in a few lines of code, and how to work out what a prompt will cost. What a token actually is Models don't read characters or words. A tokenizer splits text into chunks from a fixed vocabulary, and the model sees a list of chunk IDs. Common English words are usually one token : the , house , token . Longer or rarer words get split : tokenization → token + ization . Spaces and punctuation count too. A leading space is often part of the next token ( world ). Numbers, code, URLs and non-Latin scripts use more tokens per character than plain English. That last point is the one that surprises people. The same sentence in Hindi, Japanese or Arabic can take two or three times the tokens of its English version, and minified JSON or a stack trace is far denser than prose. Rules of thumb (good enough for a quick check) For English prose with OpenAI's current tokenizers: 1 token ≈ 4 characters 1 token ≈ ¾ of a word , so 100 words ≈ 130 tokens A dense A4 page of text ≈ 600–800 tokens Other providers publish their own rough ratios, and they differ a little because each model family has its own tokenizer. Treat these as estimates; for anything that matters, count. Count exactly in code OpenAI's tokenizers are open source. In JavaScript, js-tiktoken runs anywhere, including the browser: import { Tiktoken } from \" js-tiktoken/lite \" ; import o200k_base from \" js-tiktoken/ranks/o200k_base \" ; const enc = new Tiktoken ( o200k_base ); const text = \" Count your tokens before you paste. \" ; console . log ( enc . encode ( text ). length ); // number of tokens o200k_base is the encoding used by GPT-4o and newer OpenAI models; older ones like GPT-4 and GPT-3.5 use cl100k_base . In Python it's the tiktoken package: import tiktoken enc = tiktoken . get_encoding ( \" o200k_base \" ) print ( len ( enc . encode ( \" Count your tokens before you paste. \" ))) For Claude and Gemini the tokenizers aren't published, but both APIs have a token-counting endpoint (Anthropic's count_tokens for messages, Gemini's countTokens ) if you need an exact number before sending a request. What a prompt will cost Every API price list is per million tokens , and input and output are priced separately: cost = input_tokens / 1,000,000 × input_price + output_tokens / 1,000,000 × output_price Worked example with made-up round prices, so the maths is easy to follow: say input costs $2 per million and output $8 per million. A 3,000-token prompt with a 500-token answer costs 3,000 / 1,000,000 × $2 = $0.006 500 / 1,000,000 × $8 = $0.004 total = $0.010 per request One cent sounds like nothing until it runs 50,000 times a day. Two things people forget: Chat history is input every time. In a long conversation, every new message resends the whole thread, so input tokens grow with each turn. Output is usually the expensive side. Asking for \"brief\" answers or a fixed format often saves more than trimming the prompt. Five ways to cut tokens without losing quality Strip HTML and boilerplate before you paste a web page. Navigation, footers and tags are pure token waste. Minify or trim JSON : drop fields the model doesn't need instead of sending the whole API response. Summarise old context. Replace the first 20 messages of a long thread with a five-line summary. Don't repeat instructions in every message; put them once in the system prompt. Check non-English and code-heavy inputs , because they're where token counts surprise you most. A quick way to check without writing code If you just want to paste something and see the count, I made a free token counter that runs entirely in your browser, so nothing you paste is uploaded. It gives exact counts for OpenAI's tokenizers, clearly labelled estimates for Claude and Gemini, and a cost calculator with a dated, editable price table. What's the biggest token surprise you've run into: a huge chat history, a non-English document, or a JSON blob that ate the whole context window?",
+            "url": "https://dev.to/thattoolsite/count-your-tokens-before-you-paste-practical-llm-token-math-4j5b",
+            "source": "DEV Community",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "anthropic",
+                "developpement",
+                "gemini",
+                "ios",
+                "java",
+                "javascript",
+                "llm",
+                "openai",
+                "programmation",
+                "python",
+                "web"
+            ],
+            "published_at": "2026-10-13T06:10:27+00:00",
+            "collected_at": "2026-10-13T06:16:06.576705+00:00"
+        },
+        {
+            "id": "3dabb0bffbd4ecc7f01e9d5eb17ec01c0c3d7591d821b684c4e3ee8784808540",
+            "title": "AI Receptionist Pros and Cons: Can It Answer Your Phone?",
+            "description": "Yes, an AI can answer your business phone — for a specific, listable set of calls, and not for the ones that decide whether the customer stays. Here is how to draw the line. The honest answer to \"can an AI answer my business phone\" is: yes, for a specific list of calls, and no for the ones that decide whether the customer stays. Most write-ups skip the second half because the second half doesn't sell anything. This one leads with it. I have put AI receptionists in front of restaurants, clinics, estate agents and home-services businesses. The pattern is consistent: they are excellent at the boring, repetitive, quotable calls, and genuinely dangerous at anything emotional, commercial or regulated. The job is not to decide whether AI is good. It is to draw the line in the right place and keep it there. What it genuinely handles well These calls share a property: the correct answer already exists in writing, and the caller just needs it said back clearly. Hours, location, parking and directions. Fixed facts, asked all day. Booking, rescheduling and cancelling. Contained, reversible, confirmed against a real calendar. After-hours capture. The alternative is voicemail, which most callers do not leave. An agent that takes a message with a callback number beats a beep. Standard FAQ. Services offered, insurance plans accepted, lead times, what to bring. First-response for new enquiries. A polite, immediate reply that captures what the caller wants and routes it to a human. The common thread is contained work: one question, one quotable answer, no judgement required. What it should never do These calls share the opposite property: a wrong answer creates a commitment, an emotion or a liability that cannot be undone. Price negotiation. Never. A discount is a commercial decision the agent has no authority to make. Complaints. An apology is a promise. A machine cannot make one on your behalf. Anything legal, medical or financial. Out of scope, full stop. Liability sits with a person and a licence. Angry or distressed callers. Emotion needs a human. Pushing an agent harder tends to make it double down, not back off. Relationship-critical calls. A key account, a long-standing client, a sensitive family matter. Some calls are worth a person precisely because they cost you the most if handled badly. Anything that requires judgement between two reasonable answers. If the agent has to choose what's right, it has already left contained work. [!TIP] The best test of an AI receptionist is not \"how many calls did it handle?\" It is \"which calls would I have hated to lose, and did those reach a human?\" Run that filter over a week of transcripts. It tells you more than any dashboard. How to decide where the line goes Three questions sort almost any call: Is the answer a stated fact, or a judgement? Facts go to the agent. Judgements go to a person. Is the action reversible? Rescheduling is reversible. Promising a refund is not. Does it carry a relationship or a liability? If yes, a human owns it. Notice that none of these are about how smart the AI is. They are about the shape of the call. Task to route Task AI Human Either Why Opening hours, address, parking Yes A fixed, quotable fact. Book, reschedule or cancel (calendar-confirmed) Yes Contained and reversible. After-hours new-enquiry capture Yes Better than a voicemail nobody leaves. Standard FAQ (services, plans accepted, lead times) Yes Quotable from the facts file. Price negotiation or discount request Yes A commercial decision, not an answer. Complaint about a previous visit Yes An apology is a promise. Anything legal, medical or clinical Yes Out of scope; liability needs a person. Angry or distressed caller Yes Emotion needs a human. Key account or sensitive relationship Yes Worth a person by definition. Simple message-taking when nobody is free Yes Fine either way — if the payload lands somewhere. The baseline file every receptionist agent needs Even a general receptionist needs a facts file. This is the minimum, adapted to your business. [FACTS] Business hours: Mon-Fri 08:00-17:00. Closed weekends and public holidays. Address: 12 Oak St. Free parking at the rear. Main line: 555-0100. Services: [list the three or four things you actually do]. Booking lead time: 2 hours minimum, 30 days maximum. Cancellation: free up to 24 hours before. Inside 24 hours a $[X] fee applies. Payment accepted: card and bank transfer. No payment is taken over the phone. Urgent or emergency: [what counts as urgent, and who to call]. [RULES] Quote only facts listed in [FACTS]. If a fact is not listed, say a team member will confirm. Never negotiate price, fees or terms. Never offer a discount. Never take a complaint or issue an apology beyond the facts. Never give legal, medical or financial advice. Never pretend to be human. Say you are an automated assistant when asked. Take a message, capture a callback number, and route it using the rules below. [ESCALATE IF] Caller is angry, distressed, or asks to speak to a person. Caller wants to negotiate price, fees or terms. Caller has a complaint about a previous job, order or visit. Caller raises anything legal, medical or insurance-related. Caller is a key account or an existing relationship worth more than the call. The caller's question is not covered by [FACTS]. How to tell whether it is working Do not measure how many calls it \"handled\". That number rewards the wrong thing. Track these instead: Containment that held. Calls resolved without a human and with no follow-up complaint. A contained call that left the caller misinformed is a loss, not a win. Wrong-promise rate. Read the transcripts and count replies that contained a claim not in the facts file. This should be zero before you scale. Escalation quality. Did the human reply in one pass, using only the payload? If they needed the transcript, the payload is missing a field. Customer sentiment on escalated threads. Not the \"satisfaction score\" on the bot — read what people said after the handoff. Human time saved versus time spent cleaning up. The real number is minutes returned minus minutes spent fixing what the agent got wrong. In the deployments I have run, the businesses that trust an AI receptionist most started by measuring the second and fifth lines above, not the first. Containment looks great right up until you read the transcripts. Three mistakes Measuring containment instead of outcomes. \"80% handled without a human\" is meaningless if a third of those calls left the caller with the wrong idea. Read the transcripts before you believe the dashboard. Putting the agent on the number angry customers call first. The line that takes complaints should reach a human. Automate the boring queue, not the emotional one. Letting it improvise under pressure. Without a facts file and a quote-only rule, a pushed agent will invent a discount, an apology or a policy. The rules prevent more of this than a better model does. What to do today [ ] Write the baseline [FACTS] and [RULES] blocks, even in rough form. [ ] Colour one week of real calls as AI, human or either, using the three-question test above. [ ] Move every complaint, negotiation and anything legal or medical call to a human-owned queue today. [ ] Add the \"I'm an automated assistant\" line, and check your local rules on disclosing it. [ ] Start reading a handful of transcripts each week. The wrong-promise rate is the number that matters. An AI receptionist is a good colleague for the calls nobody wants to repeat all day. It is a bad one for the calls that decide whether a customer ever comes back. Draw the line with the second group in mind, not the first. This guide lives at AgentFast , where you'll also find a free audit tool that checks your own agent's instructions against these failure modes. Posted here with a canonical URL pointing at the original.",
+            "url": "https://dev.to/chenwengui23/ai-receptionist-pros-and-cons-can-it-answer-your-phone-1jep",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-10-13T06:09:28+00:00",
+            "collected_at": "2026-10-13T06:16:06.577617+00:00"
+        },
+        {
+            "id": "34e9a3048299a5d5bc9d20b20a68efe787f71f71446ef26108cf1afdf0b14293",
+            "title": "What is this site actually built with? Three checks and 13 signals",
+            "description": "What is this site actually built with? Three checks and 13 signals When you inherit a site — or want to change your own — the first thing you need is not the code. It's what the thing is built with . Because the stack decides what is possible afterwards. Whether you can change it at all. A WordPress site's heading font might live in one theme setting. On Webflow you may not even get the HTML. A headless CMS means editing a content model. Whether the images can be saved. WordPress serves from /wp-content/uploads/ , Shopify from cdn.shopify.com , Prismic from images.prismic.io — and each pipeline takes a different set of transform parameters. Miss the pipeline and you don't know what to tune. Cache and render strategy. Headless leans on CDN caching for API JSON and an HTML shell; classic PHP leans on full-page and object caches; hosted builders give you the fewest knobs. Whether you can touch the code. Some platforms give you a panel. Some give you everything. In one line: identify the platform first, then optimise. The other order wastes your time. Three checks Check 1: View source, then search it Open the page → Ctrl+U ( Cmd+Option+U on Mac) → search the HTML for the vendor name you suspect. The distinction that matters: if the name only shows up in body copy or a comment, it proves nothing. What counts is the name appearing inside a src , href or data- attribute — that is a resource the browser was told to load . A concrete example: you search for prismic and find it inside a <p> tag. That site may just have published an article about Prismic. But if it appears in src=\"https://images.prismic.io/...\" , that is hard evidence. So the question is never \"is this word here\" — it is where the word appears . Check 2: Read the response headers, especially the cookies Open dev tools → Network → reload → click the first document request. Look at: x-powered-by , x-generator , server the names inside set-cookie — the most valuable of the lot Why are cookies stronger than meta tags? Because meta tags are written by a human, cookies are issued by the platform . A cookie called wp-settings-1 or _shopify_s is the platform introducing itself. ⚠️ One trap: CDNs strip headers. Put Cloudflare or Vercel in front and a lot of the original headers are simply gone. So \"I don't see it\" is not the same as \"it isn't there\". It's one vote, not a verdict. Check 3: Compare against a site you already know The same platform leaves the same shape on every site that runs it: the same asset host, the same path prefixes, the same admin endpoints. That is the whole reason CMS detection works at all — not guessing, but shape matching. A single keyword → maybe a false positive Keyword + matching host + matching path → that is confirmation 13 signals worth memorising WordPress : /wp-content/ , /wp-includes/ , /wp-json/ , the wp-emoji-release script, wp-* cookies Shopify : cdn.shopify.com , cdn.shopifycdn.com , /cdn/shop/ , Shopify.theme in page scripts Wix : static.wixstatic.com , static.parastorage.com , the inline viewer model JSON Squarespace : static1.squarespace.com , Static.SQUARESPACE_CONTEXT Webflow : website-files.com , website-images-assets.com , data-wf-* on <html> Prismic : images.prismic.io , /prismic-assets/ , slice markers, prismic-toolbar Contentful : images.ctfassets.net , assets.ctfassets.net Sanity : cdn.sanity.io , the project id referenced in page scripts Ghost : /ghost/ , /content/ paths, ghost-* meta tags, the Ghost admin SDK Drupal : /sites/default/files/ , drupalSettings , the X-Generator response header Joomla : /media/jui/ , /media/system/ , /components/com_ Craft CMS : the CRAFT_CSRF_TOKEN cookie, /cpresources/ Strapi : a /uploads/ path together with an api. host or /api/ JSON endpoints A real example Let's practise on a site everyone knows: the TechCrunch homepage. In the source , these two lines are decisive: <link rel= \"https://api.w.org/\" href= \"https://techcrunch.com/wp-json/\" /> <script src= \"https://techcrunch.com/wp-includes/js/dist/i18n.min.js?ver=...\" id= \"wp-i18n-js\" ></script> /wp-json/ and /wp-includes/ are WordPress-only paths, and they sit inside href and src — the browser genuinely loads them. In the response headers it is even more direct: x-powered-by: WordPress VIP <https://wpvip.com> link: <https://techcrunch.com/wp-json/>; rel=\"https://api.w.org/\" server: cloudflare x-powered-by names the platform outright, and the link header hands you the REST API address. Note that last line: server is cloudflare , not the origin. That is the \"CDNs strip headers\" problem in the wild — with a CDN in front, you see one layer less. The two most common mistakes Mistake one: finding the brand name in body copy and calling it done. Documentation sites, comparison posts and job ads list several vendors at once. None of that is proof of an install. Mistake two: concluding from a single signal. Plenty of sites sit behind Cloudflare. Cloudflare is a CDN — it says nothing about which CMS runs underneath. The right approach is to read the signals in layers: Vendor-specific hosts (strong) > path prefixes (strong) > cookies (strong) Response headers (medium — CDNs strip them) Brand strings in page copy (weak) If you'd rather not check by hand Paste the URL into prismicaudit.com/tools/cms-checker . It runs 100+ detectors across CMS, frameworks, hosting, CDN and third-party scripts, and lists the raw evidence behind every hit — not just a yes/no. I care about giving evidence rather than verdicts, because you should be able to check the answer yourself . The checks described here work on any site. Vendor names are used only to describe identification fingerprints; this tool is not affiliated with any of them.",
+            "url": "https://dev.to/amazong110/what-is-this-site-actually-built-with-three-checks-and-13-signals-h6g",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "csharp",
+                "developpement",
+                "php",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-10-13T06:09:05+00:00",
+            "collected_at": "2026-10-13T06:16:06.578276+00:00"
+        },
+        {
+            "id": "ef58e07277c459b9eb9011786de86a7d49ca9be6176f3178cbbae8c52dc2ed80",
+            "title": "JavaScript Truthy and Falsy Values",
+            "description": "Ever wondered why some values behave like true and others behave like false in JavaScript, even when they aren't actually booleans? Let's make it simple! What are Truthy and Falsy Values? JavaScript evaluates values as either truthy or falsy when they are used in a Boolean context, such as an if condition. if ( \" Hello \" ) { console . log ( \" This is truthy! \" ); } Output: This is truthy! Wait, \"Hello\" isn't true. So why does the condition execute? Because non-empty strings are truthy in JavaScript! Truthy Values These values behave like true in a condition: if ( \" JavaScript \" ) console . log ( \" String is truthy \" ); if ( 100 ) console . log ( \" Number is truthy \" ); if ([]) console . log ( \" Empty array is truthy \" ); if ({}) console . log ( \" Empty object is truthy \" ); Yep! Even an empty array [] and an empty object {} are truthy. Falsy Values JavaScript has only a few falsy values: if ( false ) console . log ( \" Hello \" ); if ( 0 ) console . log ( \" Hello \" ); if ( \"\" ) console . log ( \" Hello \" ); if ( null ) console . log ( \" Hello \" ); if ( undefined ) console . log ( \" Hello \" ); if ( NaN ) console . log ( \" Hello \" ); Nothing gets printed because every condition is falsy. Other falsy values include -0 and 0n (BigInt zero). Let's Test Your Understanding! What do you think this code prints? let cart = []; if ( cart ) { console . log ( \" Cart has items! \" ); } else { console . log ( \" Cart is empty! \" ); } Answer: Cart has items! Why? Because an empty array is truthy , even though it contains no elements. If you want to check whether the cart actually has items, use: if ( cart . length > 0 ) { console . log ( \" Cart has items! \" ); } else { console . log ( \" Cart is empty! \" ); } Remember This Truthy → Behaves like true in a condition. [] and {} → Truthy! Falsy → Behaves like false in a condition. 0, \"\", null, undefined, false, and NaN → Falsy! Understanding truthy and falsy values helps us write cleaner conditions and avoid unexpected bugs. Your turn! What will this print? console.log(Boolean(\"0\")); console.log(Boolean(\"false\")); console.log(Boolean(0)); Drop your answer in the comments before checking it in the console!",
+            "url": "https://dev.to/megalraja/javascript-truthy-and-falsy-values-5a37",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "java",
+                "javascript",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-10-13T06:08:27+00:00",
+            "collected_at": "2026-10-13T06:16:06.578565+00:00"
+        },
+        {
+            "id": "9c4c927e6cfff2ec2b3a6bf370871bc97507b6072f06805ce3312b03f991c308",
+            "title": "Threat of AI share crash puts world financial stability at risk, says IMF",
+            "description": "Comments",
+            "url": "https://www.theguardian.com/business/2026/oct/13/ai-share-crash-risk-global-imf-debt-corrowing-cyber-attacks",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-13T05:57:32+00:00",
+            "collected_at": "2026-10-13T06:16:06.193080+00:00"
+        },
+        {
+            "id": "6179fb807def018e1b7c571d4304f3742642be5d29e3ce64c3bccdbeeaa92964",
+            "title": "The Chromecast with Google TV 4K is getting an update after nearly a year",
+            "description": "The 4K model is getting fresh security patches and fixes, but the HD version misses out.",
+            "url": "https://www.androidauthority.com/chromecast-google-tv-4k-first-2026-update-3722376/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-10-13T05:53:56+00:00",
+            "collected_at": "2026-10-13T06:16:12.559320+00:00"
+        },
+        {
+            "id": "f401be8f96c7b6b2813c84cf82933df6020c6c19b951cd0c990dff4b6a37e8a1",
+            "title": "Bitcoin whale that sat through the March 2020 crash moves $378 million",
+            "description": "",
+            "url": "https://www.coindesk.com/markets/2026/10/13/bitcoin-whale-that-sat-through-the-march-2020-crash-moves-usd378-million",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-10-13T05:45:10+00:00",
+            "collected_at": "2026-10-13T06:16:19.755571+00:00"
+        },
+        {
+            "id": "b97bef02ec5c31989e7331722bd7804a973f12703770ca237df2a3a633a0110a",
+            "title": "Solana Treasury Firm SkyAI Plans $201M Share Buyback After SOL Sale",
+            "description": "SkyAI plans to buy back as much as 95% of its outstanding shares and warrants for $3 each, using cash and proceeds from selling solana. The move comes after the company sold roughly half its SOL treasury and rejected an unsolicited stock-for-stock bid from Forward Industries. SkyAI Offers $3 Cash Exit for 95% of Shares […]",
+            "url": "https://news.bitcoin.com/finance/solana-treasury-firm-skyai-plans-201m-share-buyback-after-sol-sale/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-10-13T05:30:06+00:00",
+            "collected_at": "2026-10-13T06:16:20.023223+00:00"
+        },
+        {
+            "id": "724277b4235132a1118b5175f4fb8f388e391b3b81d62a1bf1379d843140d240",
+            "title": "Tokenized SanDisk bets saw more liquidations than XRP as Asia’s chip rout wipes out $800 million",
+            "description": "",
+            "url": "https://www.coindesk.com/markets/2026/10/13/tokenized-sandisk-bets-saw-more-liquidations-than-xrp-as-asia-s-chip-rout-wipes-out-usd800-million",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-10-13T05:27:17+00:00",
+            "collected_at": "2026-10-13T06:16:19.755624+00:00"
+        },
+        {
+            "id": "f8d6bea5f28470ea03272ce03f6c26da1854279e6a83eb62516b6b15e8505652",
+            "title": "Vi Hart's Big Navier-Stokes Post",
+            "description": "Comments",
+            "url": "https://www.patreon.com/vihart/posts/vi-harts-big-171939430",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-13T05:22:28+00:00",
+            "collected_at": "2026-10-13T06:16:06.193258+00:00"
+        },
+        {
+            "id": "b8f471e7784acf37d5d79934a04cc5eb6b902881b84fb24944fccdbf03133944",
+            "title": "Google could soon let you publish your Gemini creations as reusable styles",
+            "description": "It's also working on a redesigned UI for Gemini's \"Images\" and \"Videos\" sections.",
+            "url": "https://www.androidauthority.com/gemini-publish-image-video-styles-apk-teardown-3722379/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "gemini",
+                "smartphone"
+            ],
+            "published_at": "2026-10-13T05:10:53+00:00",
+            "collected_at": "2026-10-13T06:16:12.559368+00:00"
+        },
+        {
+            "id": "293b85c97d55fe8c4e9e41f72816e9f9cf67c589efb0317fb94e0d165221bc7a",
+            "title": "From Earth to Orbit, France’s Ecosystem Delivers Agentic Computing at Scale With NVIDIA",
+            "description": "Companies in France are deploying agentic computing across industries spanning space, financial services, the public sector and scientific research, demonstrating how the country’s ecosystem has moved from ambition to application. France’s progress sits on deliberate groundwork. The AI Action Summit in February 2025 and Choose France Summits in 2025 and 2026 anchored major compute commitments […]",
+            "url": "https://blogs.nvidia.com/blog/france-ecosystem-agentic-computing/",
+            "source": "NVIDIA AI",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "ai_act",
+                "gpu",
+                "ia",
+                "nvidia"
+            ],
+            "published_at": "2026-10-13T05:00:31+00:00",
+            "collected_at": "2026-10-13T06:16:07.895142+00:00"
+        },
+        {
+            "id": "8f7f7ce73127fa3b238e1c9e499f3171d8c80e1832ebf4c7fc8fcd259b44197b",
+            "title": "DataCube: A Relational Aggregation Operator Generalizing Group-By, Cross-Tab, and Sub-Totals (1997)",
+            "description": "Abstract: Data analysis applications typically aggregate data across many dimensions looking for anomalies or unusual patterns. The SQL aggregate functions and the GROUP BY operator produce zero-dimensional or one-dimensional aggregates. Applications need the N-dimensional generalization of these operators. This paper defines that operator, called the data cube or simply cube. The cube operator generalizes the histogram, cross-tabulation, roll-up, drill-down, and sub-total constructs found in most report writers. The novelty is that cubes are relations. Consequently, the cube operator can be imbedded in more complex non-procedural data analysis programs. The cube operator treats each of the N aggregation attributes as a dimension of N-space. The aggregate of a particular set of attribute values is a point in this space. The set of points forms an N-dimensional cube. Super-aggregates are computed by aggregating the N-cube to lower dimensional spaces. This paper (1) explains the cube and roll-up operators, (2) shows how they fit in SQL, (3) explains how users can define new aggregate functions for cubes, and (4) discusses efficient techniques to compute the cube. Many of these features are being added to the SQL Standard. Comments",
+            "url": "https://arxiv.org/pdf/cs/0701155",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-10-13T04:57:55+00:00",
+            "collected_at": "2026-10-13T06:16:06.426706+00:00"
+        },
+        {
+            "id": "66f6388bc5c618861775cd819c3a67912875332bcf894c0fcb560a4df9b3e380",
+            "title": "PSA: Metaphor: ReFantazio Demo For Switch 2 Now Available",
+            "description": "Save data carries across. Ahead of Metaphor: ReFantazio arriving on the Switch 2 next month, Atlus has now released a demo on the eShop. This \"prologue\" demo and will allow you to experience the opening section of the title. Additionally, any save data you have can be transferred across to the full game when it launches for Switch 2 on 12th November 2026 . Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/news/2026/10/psa-metaphor-refantazio-demo-for-switch-2-now-available",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-10-13T04:55:00+00:00",
+            "collected_at": "2026-10-13T06:16:18.162704+00:00"
+        },
+        {
+            "id": "de345bab13fa8bdb5c3b3eb43f1b953bf39ac1f4fd4b28585e47b6133dbe1df6",
+            "title": "Once-largest Ethereum NFT marketplace Blur is shutting down after volumes collapse 99%",
+            "description": "",
+            "url": "https://www.coindesk.com/tech/2026/10/13/once-largest-ethereum-nft-marketplace-blur-is-shutting-down-after-volumes-collapse-99",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto",
+                "ethereum"
+            ],
+            "published_at": "2026-10-13T04:43:18+00:00",
+            "collected_at": "2026-10-13T06:16:19.755658+00:00"
+        },
+        {
+            "id": "38ebf9246c8f51e66e6f1404aa7ea278f8612dec10efbb4d67d1dc52f2170839",
+            "title": "Amazon’s Purchase-History Profiling Tagged One Customer’s Body Shape Detail",
+            "description": "An Amazon customer posting under the pseudonym @fangirlinmegan says the company’s internal profiling labeled her as having “flat buttocks” based on her purchase history, a detail that quickly spread on social media. The episode highlights how Amazon can use machine learning and natural language processing to infer physical traits from shopping data, raising GDPR-era privacy […]",
+            "url": "https://news.bitcoin.com/technology/amazons-purchase-history-profiling-tagged-one-customers-body-shape-detail-49201/",
+            "source": "Bitcoin.com News",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto",
+                "machine_learning",
+                "rgpd"
+            ],
+            "published_at": "2026-10-13T04:30:52+00:00",
+            "collected_at": "2026-10-13T06:16:20.023303+00:00"
+        },
+        {
+            "id": "cae4f57202cd1179aa194c8688faa02c446df62348b59369a4cef2c5611ba021",
+            "title": "Bitcoin rebounds above $83,000 as it decouples from tumbling Korean stocks and Nasdaq futures",
+            "description": "",
+            "url": "https://www.coindesk.com/markets/2026/10/13/bitcoin-rebounds-above-usd83-000-as-it-decouples-from-tumbling-korean-stocks-and-nasdaq-futures",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-10-13T04:18:20+00:00",
+            "collected_at": "2026-10-13T06:16:19.755688+00:00"
+        },
+        {
+            "id": "25225b4d295ce8f7feb5fb28caf41ffcaa7c9ec173aa5803a91f2ec5a5aea629",
+            "title": "Mozilla introduces Firefox Enterprise",
+            "description": "Institutions are recalculating who controls the technology they rely on. Mozilla has an independent option to offer. For years, organizations consolidated technology around a small number of providers to make things simpler. Fewer systems. Tighter integrations. More economies of scale. But that consolidation went well beyond technology. It consolidated dependency, too. The resulting risks have […] The post Mozilla introduces Firefox Enterprise appeared first on The Mozilla Blog .",
+            "url": "https://blog.mozilla.org/en/firefox/introducing-firefox-enterprise/",
+            "source": "Mozilla Blog",
+            "category": "vie_privee",
+            "tags": [
+                "internet",
+                "mozilla",
+                "privacy"
+            ],
+            "published_at": "2026-10-13T04:01:00+00:00",
+            "collected_at": "2026-10-13T06:16:20.382201+00:00"
+        },
+        {
+            "id": "d4c40b438a14bbb4d75d502bc2a6cad77fb2caa32a4e99b67898d83cc8a3636b",
+            "title": "Google Wallet is getting four handy upgrades, including receipt scanning",
+            "description": "Wallet is also getting clearer merchant names in notifications and a new in-app message center.",
+            "url": "https://www.androidauthority.com/google-wallet-receipt-scanning-3722370/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-10-13T03:35:47+00:00",
+            "collected_at": "2026-10-13T06:16:12.559421+00:00"
+        },
+        {
+            "id": "da846e0554a02182820486a6ae0c262fefe97cd3961f0879235eb01a5b5e4a8e",
+            "title": "Parlays Push Kalshi Past $3.9 Billion in a Day, Twice in a Weekend",
+            "description": "Kalshi set back-to-back daily volume records over the weekend, at $3.91 billion on Saturday and $3.96 billion on Sunday. Parlay-style combos made up about 70% of both days, most of them long shots priced below 1 cent. Combos Supplied Most of the Growth Kalshi’s daily market data, which runs on U.S. Eastern days, shows $3.91 […]",
+            "url": "https://news.bitcoin.com/igaming/parlays-push-kalshi-past-3-9-billion-in-a-day-twice-in-a-weekend/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-10-13T03:30:34+00:00",
+            "collected_at": "2026-10-13T06:16:20.023370+00:00"
+        },
+        {
+            "id": "9bb668b8178dafef98bcb75098152b22f6e5f44f5fb0fe6d07c40b30f3b71cda",
+            "title": "Google is killing Find Hub on Googlebooks, but why?",
+            "description": "Google is disabling Find Hub on Googlebooks, but the reason remains unclear.",
+            "url": "https://www.androidauthority.com/googlebook-find-hub-removal-3722364/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-10-13T03:17:47+00:00",
+            "collected_at": "2026-10-13T06:16:12.559457+00:00"
+        },
+        {
+            "id": "f816ea6658cd2e970cc89b6983d2c979a7fcdb92acf3f0cb5182b55ba07011df",
+            "title": "Stardew Valley Creator Says His New Game Is \"More Of An Action RPG\"",
+            "description": "\"It's for the people in Stardew Valley that go into the mines\". Stardew Valley creator Eric Barone has been working on his new game The Haunted Chocolatier for over four years now, and during a recent chat with GQ , he's provided a quick reminder about what fans can expect from the gameplay. While the title is still what he calls a \"town game\" - similar to his existing farming and social sim, he sums up this new experience as \"more of an action RPG\". The main focus here will be all about \"adventuring, finding equipment and getting more powerful\", and you can also expect monsters and boss fights. Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/news/2026/10/stardew-valley-creator-says-his-new-game-is-more-of-an-action-rpg",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-10-13T02:55:00+00:00",
+            "collected_at": "2026-10-13T06:16:18.162806+00:00"
+        },
+        {
+            "id": "0ce1389ab5ae1e21e82e6d9f15bde51e64dc6c0227d0512f82b5ff029ddebede",
+            "title": "Googlebook gets a Linux terminal to help users build apps with AI",
+            "description": "Googlebook is becoming a more capable development machine.",
+            "url": "https://www.androidauthority.com/googlebook-linux-terminal-3722360/",
+            "source": "Android Authority",
+            "category": "linux",
+            "tags": [
+                "android",
+                "linux",
+                "smartphone"
+            ],
+            "published_at": "2026-10-13T02:47:39+00:00",
+            "collected_at": "2026-10-13T06:16:12.559490+00:00"
+        },
+        {
+            "id": "a4ff4cfab3e039400733a55678abc69211502765ab859f2c2c229bc4525bdd70",
+            "title": "A look at OpenAI’s math that’s claimed computes faster Fourier transforms",
+            "description": "Comments",
+            "url": "https://www.argmin.net/p/faster-fourier-transforms",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "openai",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-13T02:46:43+00:00",
+            "collected_at": "2026-10-13T06:16:06.193182+00:00"
+        },
+        {
+            "id": "de21dd444d32a1746a19c867b1c5c024cff5b3e2a0449294db8043d42be7b147",
+            "title": "Bybit Brings 1,000+ US Stocks and ETFs Into Crypto Trading Accounts",
+            "description": "Eligible Bybit users can now trade U.S. equities in the accounts they already use for cryptocurrency trading. The service connects stablecoin balances with underlying securities, extending the platform beyond digital assets into conventional investments. USDC Balances Can Now Buy Apple and Nvidia Shares Eligible cryptocurrency traders can now buy more than 1,000 U.S.-listed stocks and […]",
+            "url": "https://news.bitcoin.com/exchanges/bybit-brings-1000-us-stocks-and-etfs-into-crypto-trading-accounts/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto",
+                "git",
+                "nvidia"
+            ],
+            "published_at": "2026-10-13T02:30:45+00:00",
+            "collected_at": "2026-10-13T06:16:20.023459+00:00"
+        },
+        {
+            "id": "e62cea51a166196453e331b7e753f1dc47f36ac8da6fbc33255e2148768bceea",
+            "title": "The Dock on Mac, from OS 10 to macOS 27",
+            "description": "Comments",
+            "url": "https://blog.jim-nielsen.com/2026/macos-dock-icons-over-time/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "macos",
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-13T02:09:19+00:00",
+            "collected_at": "2026-10-13T06:16:06.192783+00:00"
+        },
+        {
+            "id": "b693a6e80e752f67e358b9d6b54e42ed0e58cc91dd58df253a3c60bdb7140b66",
+            "title": "AI Models Can Provably Hide Arbitrary Capabilities",
+            "description": "Comments",
+            "url": "https://arxiv.org/abs/2610.13928",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-13T02:07:08+00:00",
+            "collected_at": "2026-10-13T06:16:06.192570+00:00"
+        },
+        {
+            "id": "37f3bd63ae2a5fee70d24c0bfaa579d36d27c7f5dbdb532fb1b1412fd2512e51",
+            "title": "\"No More Hand-Written Code\" - Epic Reportedly Adopts \"AI First\" Production Model On New Disney Shooter",
+            "description": "Devs told to use AI to finish game after supposed delay. In some industry news this week, Fortnite creator Epic Games has reportedly told developers behind a new Disney title \"to use more artificial intelligence tools\" to complete it, after delaying the project. According to Bloomberg reporter Jason Schreier, developers working on this Disney video game collaboration, which is described as a \"shooter featuring characters from the Marvel and Star Wars\" universe, have apparently been instructed to implement an \"AI first\" production model from here on out. Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/news/2026/10/no-more-hand-written-code-epic-reportedly-adopts-ai-first-production-model-on-new-disney-shooter",
+            "source": "Nintendo Life",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "gaming",
+                "intel",
+                "nintendo"
+            ],
+            "published_at": "2026-10-13T01:35:00+00:00",
+            "collected_at": "2026-10-13T06:16:18.162883+00:00"
+        },
+        {
+            "id": "a360f5492c7e5af6f0a6c40c253d943f550e3b86cbcd300bea2bcce2070a9d10",
+            "title": "Ripple’s RLUSD Gains Standard Chartered Custody on the XRP Ledger",
+            "description": "Eligible institutions can now safeguard Ripple’s RLUSD on the XRP Ledger through Standard Chartered’s digital asset custody service. The launch expands bank-based stablecoin infrastructure, with a planned LMAX integration targeting future use as trading collateral. Standard Chartered Opens Bank Custody for RLUSD Eligible institutions can now place Ripple USD (RLUSD) issued on the XRP Ledger […]",
+            "url": "https://news.bitcoin.com/featured/ripples-rlusd-gains-standard-chartered-custody-on-the-xrp-ledger/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto",
+                "git"
+            ],
+            "published_at": "2026-10-13T01:30:02+00:00",
+            "collected_at": "2026-10-13T06:16:20.023534+00:00"
+        },
+        {
+            "id": "db247a71b1ef6d6fadd3f21faa03836b83f65eff339ba7d9e58b883c63b8a602",
+            "title": "Evernorth Hits Nasdaq With 473 Million XRP as XRPN Trading Begins",
+            "description": "Evernorth began Nasdaq trading today, giving stock market investors access to a company built around an actively managed XRP treasury. The listing brings approximately 473 million XRP into a publicly traded business pursuing strategies to increase its cryptocurrency holdings per share. XRPN Starts Trading as XRP Treasury Reaches Nasdaq Stock market investors gained access to […]",
+            "url": "https://news.bitcoin.com/featured/evernorth-hits-nasdaq-with-473-million-xrp-as-xrpn-trading-begins/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-10-13T00:45:50+00:00",
+            "collected_at": "2026-10-13T06:16:20.023605+00:00"
+        },
+        {
+            "id": "31ae71bea47b8276d3a486813eab5d5b8ad40eee3ac54a39e827d46cff3c2c5b",
+            "title": "Tears Of The Kingdom Zelda Statue Officially Revealed, Here's A Sneak Peek",
+            "description": "Pre-orders open next week. The Legend of Zelda 's 40th anniversary is well underway, and following an \"exclusive edition\" Link statue earlier this year, First 4 Figures has now revealed a Zelda figure. This \"sneak peek\" offers a brief look at a 12\" painted pvc statue based on Princess Zelda from Tears of the Kingdom , and it's \"coming soon\". Pre-orders will open on 22nd October 2026 , and if you sign up to F4F , you can get $5.00 off. Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/news/2026/10/tears-of-the-kingdom-zelda-statue-officially-revealed-heres-a-sneak-peek",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-10-13T00:39:00+00:00",
+            "collected_at": "2026-10-13T06:16:18.162961+00:00"
+        },
+        {
+            "id": "233e30c6f22de11e0e49ae47140e5ac87ed1986d5c0fd474065b2599133f00c6",
+            "title": "Show HN: SolidCraft – Open-Source Parametric CAD in Rust (With MCP Support)",
+            "description": "Comments",
+            "url": "https://github.com/bherbruck/solidcraft",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "rust",
+                "startup"
+            ],
+            "published_at": "2026-10-13T00:11:04+00:00",
+            "collected_at": "2026-10-13T06:16:06.193032+00:00"
+        },
         {
             "id": "14645f2fa581b175ae8922ebb4e6a11bbe7ea671472c38f2339b06cfb8237b32",
             "title": "Bitcoin Price Falls Below $82K as $406M in Longs Get Liquidated",
@@ -277,6 +938,21 @@
             "collected_at": "2026-10-13T00:00:40.822339+00:00"
         },
         {
+            "id": "cff4147567d643c06420824ea086eac599faf1ce7073d4d0556f48dcae9fbaae",
+            "title": "Amazon CloudFront now supports AWS Lambda Web Functions as an origin",
+            "description": "Starting today, you can deliver web applications built on AWS Lambda Web Functions through CloudFront's global edge network. With CloudFront in front of a Lambda Web Function, you get TLS termination at the edge for lower latency and faster connections, caching for better performance, and custom domains with managed TLS certificates. No changes to application code are needed. CloudFront Origin Access Control (OAC) restricts your Lambda Web Function so it's reachable only through CloudFront, so unintended requests that bypass your security protections do not reach your origin. With OAC in place, CloudFront's edge network protects your Lambda Web Function from network-layer DDoS attacks, and you can attach AWS WAF for additional application-layer security. For applications that authenticate their own users, OAC ensures that original credentials reach the application unchanged, so existing sign-in flows keep working. CloudFront support for AWS Lambda Web Functions is available worldwide, except in the CloudFront China region. To get started, use the CloudFront Console, SDK, CLI, or CloudFormation to configure your Lambda Web Function as a CloudFront origin. For more information, refer to the CloudFront Developer Guide . There are no additional fees associated with this feature.",
+            "url": "https://aws.amazon.com/about-aws/whats-new/2026/10/cloudfront-lambda-web-functions-origin/",
+            "source": "AWS What's New",
+            "category": "cloud",
+            "tags": [
+                "amazon",
+                "aws",
+                "cloud"
+            ],
+            "published_at": "2026-10-12T23:10:00+00:00",
+            "collected_at": "2026-10-13T06:16:09.174832+00:00"
+        },
+        {
             "id": "6bc12f2b5da912143027db19b1f354c00b0eb79d1d9208458eea0bab55278204",
             "title": "GPT-6 Astra Helped Me Jailbreak My Kindle",
             "description": "Comments",
@@ -309,6 +985,21 @@
             "collected_at": "2026-10-13T00:00:26.954482+00:00"
         },
         {
+            "id": "802a47b8f0aebc22afbd498c47dbc9e72f5ff074067ca3928eab844c09501389",
+            "title": "Amazon Connect Customer now prefills step-by-step guides for after contact work",
+            "description": "Amazon Connect Customer can now fill in the step-by-step guides that agents complete after a contact, using information extracted from customer conversations, such as booking identifiers, claim numbers, and conversation summaries. Managers can set which information populates each form field. Agents can review and submit rather than manually typing in each field, saving time and improving data accuracy during after contact work. Contact center agents spend time after each contact entering frequently used information into a step-by-step guide. For example, an insurance agent who finishes a claims call might record the customer’s policy number, a summary of the call, and a disposition code. Now, managers can define rules for which information to extract from the conversation and which fields to automatically fill in the guide. The agent can then check the information, make any necessary corrections, and submit the guide, shortening after contact work and reducing data entry errors. You can use step-by-step guides with information extraction in the following AWS Regions: US East (N. Virginia), US West (Oregon), Asia Pacific (Seoul), Asia Pacific (Singapore), Asia Pacific (Sydney), Asia Pacific (Tokyo), Canada (Central), Europe (Frankfurt), and Europe (London). Contact summaries are also available in Africa (Cape Town). To learn more and get started, see step-by-step guides in the Amazon Connect Customer administrator guide.",
+            "url": "https://aws.amazon.com/about-aws/whats-new/2026/10/connect-customer-prefills-guides-acw",
+            "source": "AWS What's New",
+            "category": "cloud",
+            "tags": [
+                "amazon",
+                "aws",
+                "cloud"
+            ],
+            "published_at": "2026-10-12T22:28:00+00:00",
+            "collected_at": "2026-10-13T06:16:09.175155+00:00"
+        },
+        {
             "id": "fb74735d5802ca25b5708e0f4c33c4569d9c1cb7ac2a58581930e630911c2cfd",
             "title": "Breaking Bad star RJ Mitte dies aged 34",
             "description": "Comments",
@@ -337,6 +1028,37 @@
             ],
             "published_at": "2026-10-12T22:05:49+00:00",
             "collected_at": "2026-10-13T00:00:40.822455+00:00"
+        },
+        {
+            "id": "a6f0cc316480792c8feedd4f849db0f8e7fa874d46f04381cae157482b4eab2c",
+            "title": "Janas: Run LLMs larger than RAM by streaming experts from SSD",
+            "description": "Comments",
+            "url": "https://github.com/prabanta-dev/janas",
+            "source": "Hacker News",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "llm",
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-12T22:05:43+00:00",
+            "collected_at": "2026-10-13T06:16:06.192759+00:00"
+        },
+        {
+            "id": "74a1478a45a64094690ab5fad5f0ef159e5f56f0f29d438973b0f283a227272a",
+            "title": "39-year-old unvaccinated woman becomes 6th measles death in Pennsylvania",
+            "description": "As of Friday, state health officials reported 1,136 cases across 41 counties.",
+            "url": "https://arstechnica.com/health/2026/10/39-year-old-unvaccinated-woman-becomes-6th-measles-death-in-pennsylvania/",
+            "source": "Ars Technica",
+            "category": "technologie",
+            "tags": [
+                "informatique",
+                "innovation",
+                "technologie"
+            ],
+            "published_at": "2026-10-12T21:54:35+00:00",
+            "collected_at": "2026-10-13T06:16:03.797428+00:00"
         },
         {
             "id": "e65d97444d56541cf0634e9a3b35e889b18ddc37d0b1a2ac9c3a076006db0128",
@@ -3682,6 +4404,23 @@
             "collected_at": "2026-10-13T00:00:26.955081+00:00"
         },
         {
+            "id": "8282dbce7df1c339a172ae8e2c3cd7bd1ba86d73cddf66490e138aac467efedd",
+            "title": "Amazon S3 Express One Zone is now available in 4 additional AWS Regions",
+            "description": "The Amazon S3 Express One Zone storage class is now available in 4 additional AWS Regions: Europe (London), Asia Pacific (Jakarta), Asia Pacific (Hong Kong), and Africa (Cape Town). Amazon S3 Express One Zone is a high-performance, single-Availability Zone storage class purpose-built to deliver consistent single-digit millisecond data access for your most frequently accessed data and latency-sensitive applications. S3 Express One Zone delivers data access speed up to 10x faster and request costs up to 80% lower than S3 Standard. It enables workloads such as machine learning training, interactive analytics, and key-value caching in AI search engines to achieve fast data access with high durability and availability. With this expansion, S3 Express One Zone is now available in 19 AWS Regions . For pricing details, visit the S3 pricing page . To learn more, visit the product page and documentation .",
+            "url": "https://aws.amazon.com/about-aws/whats-new/2026/10/s3-express-one-zone-4-additional-regions/",
+            "source": "AWS What's New",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "amazon",
+                "aws",
+                "cloud",
+                "git",
+                "machine_learning"
+            ],
+            "published_at": "2026-10-12T08:00:00+00:00",
+            "collected_at": "2026-10-13T06:16:09.175686+00:00"
+        },
+        {
             "id": "78017b91ed5ea1ae589b72202f9b2667ffbf2c05b0b90ac0c6cc2a7d60020dcf",
             "title": "Let’s Encrypt Cuts Default Certificate Validity to 64 Days Ahead of 45-Day Switch",
             "description": "Beginning February 2027, all newly issued certificates will have a 64-day validity period by default. The post Let’s Encrypt Cuts Default Certificate Validity to 64 Days Ahead of 45-Day Switch appeared first on SecurityWeek .",
@@ -5057,6 +5796,21 @@
             ],
             "published_at": "2026-10-11T20:51:47+00:00",
             "collected_at": "2026-10-11T21:19:12.762605+00:00"
+        },
+        {
+            "id": "8bdb314e3a6d64349235c11416dcdc9b706342f3945afa5b9528a56b4be843eb",
+            "title": "Auto Research: Integer multiplication below n log n",
+            "description": "Comments",
+            "url": "https://app.getsupers.com/auto-research",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-11T20:48:30+00:00",
+            "collected_at": "2026-10-13T06:16:06.192831+00:00"
         },
         {
             "id": "61856c1c6e9c670a8636bf23a4174affe6840f109710b41f85fb87bbc071da92",
