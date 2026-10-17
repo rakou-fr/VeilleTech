@@ -1,7 +1,653 @@
 {
-    "updated_at": "2026-10-17T14:45:12.992557+00:00",
-    "count": 18900,
+    "updated_at": "2026-10-17T19:55:41.729285+00:00",
+    "count": 18959,
     "articles": [
+        {
+            "id": "4372540583edc1372ad845b181c0df6ab4d7d90a482f43f1da7d42ab3c254942",
+            "title": "Dissecting Open WebUI's FastAPI Architecture: SSE Streaming and Multi-Provider Routing",
+            "description": "Dissecting Open WebUI's FastAPI Architecture: SSE Streaming and Multi-Provider Routing When evaluating Open WebUI ( https://github.com/open-webui/open-webui ) for a self-hosted AI gateway project, I needed to understand how it handles concurrent LLM provider connections and server-sent event (SSE) streaming without blocking the event loop. Here's what I found digging through the codebase and running integration tests. The Multi-Provider Abstraction Layer Open WebUI acts as a unified interface over Ollama, OpenAI-compatible APIs, and other providers. The routing logic sits in backend/apps/ollama/main.py and backend/apps/openai/main.py , both mounted as sub-applications under the main FastAPI instance. Key architectural decision: provider clients are instantiated per-request , not as global singletons. This avoids shared mutable state across async tasks but requires careful connection pool tuning. # Simplified pattern from their codebase from fastapi import APIRouter , Request from fastapi.responses import StreamingResponse import httpx router = APIRouter () @router.post ( \" /api/chat \" ) async def proxy_chat ( request : Request ): body = await request . json () provider_url = get_provider_url ( body [ \" model \" ]) async with httpx . AsyncClient ( timeout = 120.0 ) as client : async with client . stream ( \" POST \" , f \" { provider_url } /v1/chat/completions \" , json = body , headers = { \" Authorization \" : f \" Bearer { get_api_key () } \" } ) as response : async def generate (): async for chunk in response . aiter_bytes (): yield chunk return StreamingResponse ( generate (), media_type = \" text/event-stream \" ) Battle-Tested SSE Streaming Pattern The SSE implementation follows a clean async generator + StreamingResponse pattern. Critical detail: they use aiter_bytes() instead of aiter_lines() to avoid UTF-8 decoding overhead on the proxy layer. Pitfall I Hit During Load Testing Initial integration tests with 50 concurrent requests caused connection pool exhaustion . The root cause: Default httpx.AsyncClient() limits to 100 connections. Long-lived SSE streams hold connections open for 30-60 seconds. No explicit connection pool configuration = hard limit at ~20 concurrent streams. Fix : Explicit connection limits in the client factory: import httpx def create_provider_client (): limits = httpx . Limits ( max_connections = 200 , max_keepalive_connections = 50 , keepalive_expiry = 30.0 ) return httpx . AsyncClient ( timeout = httpx . Timeout ( 120.0 , connect = 10.0 ), limits = limits , http2 = True # Open WebUI enables HTTP/2 for multiplexing ) Pydantic v2 Validation in Request Pipeline Open WebUI uses Pydantic v2 for request/response validation. Their ChatCompletionRequest model includes custom validators for provider-specific quirks: from pydantic import BaseModel , Field , field_validator from typing import Optional , List class ChatMessage ( BaseModel ): role : str content : str class ChatCompletionRequest ( BaseModel ): model : str messages : List [ ChatMessage ] temperature : Optional [ float ] = Field ( default = 0.7 , ge = 0.0 , le = 2.0 ) stream : bool = False @field_validator ( \" model \" ) @classmethod def validate_model_format ( cls , v : str ) -> str : # Normalize provider prefixes (e.g., \"ollama:llama2\" -> \"llama2\") if \" : \" in v : return v . split ( \" : \" , 1 )[ 1 ] return v model_config = { \" json_schema_extra \" : { \" example \" : { \" model \" : \" gpt-4 \" , \" messages \" : [{ \" role \" : \" user \" , \" content \" : \" Hello \" }], \" stream \" : True } } } Event Loop Blocking War Story During initial load tests, I saw 200ms+ tail latencies on simple requests. Profiling with py-spy revealed a synchronous database query inside an async endpoint: # WRONG: Blocking call in async context @router.get ( \" /models \" ) async def list_models (): models = db . query ( Model ). all () # Synchronous SQLAlchemy call! return models # CORRECT: Use async database driver from sqlalchemy.ext.asyncio import AsyncSession @router.get ( \" /models \" ) async def list_models ( session : AsyncSession ): result = await session . execute ( select ( Model )) return result . scalars (). all () Configuration for Self-Hosted Deployment Open WebUI expects these environment variables for production: # Backend/.env OLLAMA_BASE_URL = http://localhost:11434 OPENAI_API_BASE_URL = https://api.openai.com/v1 OPENAI_API_KEY = sk-... DATABASE_URL = postgresql+asyncpg://user:pass@localhost/openwebui WEBUI_SECRET_KEY = $( openssl rand -hex 32 ) Key insight: They use asyncpg for PostgreSQL (not psycopg2), which is essential for non-blocking database I/O. Takeaways for FastAPI Architects Connection pool limits matter : Default httpx settings will bottleneck at 20-30 concurrent long-lived streams. Async all the way down : One synchronous database call will block the entire event loop under load. Provider abstraction cost : Each proxy hop adds 5-15ms latency; measure before adding layers. HTTP/2 multiplexing : Enabling http2=True in httpx cuts connection overhead by 40% when proxying to HTTP/2 backends. Open WebUI's codebase is a solid reference implementation for multi-provider AI gateways . The SSE streaming pattern is production-ready, but you'll need to tune connection pools and ensure strict async discipline across the stack.",
+            "url": "https://dev.to/leo_martinez/dissecting-open-webuis-fastapi-architecture-sse-streaming-and-multi-provider-routing-3l71",
+            "source": "DEV Community",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "developpement",
+                "git",
+                "llm",
+                "openai",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-10-17T19:54:03+00:00",
+            "collected_at": "2026-10-17T19:55:23.308399+00:00"
+        },
+        {
+            "id": "9779703b1c778f86b34ddfecf33eb2f1428785ae6f6362e40e399bd5907787c4",
+            "title": "Meta removes scraping language from commercial terms after backlash",
+            "description": "Meta just quietly removed language from its commercial terms that would have given it a broad license to scrape content — including from news sites — to train its AI models. If you build anything that relies on Meta's AI infrastructure or that publishes content on the open web, this change matters. Here's what happened and why you should care. What they removed Meta's commercial terms previously included this phrase: \"Meta may use any content from such domains, web pages, or URLs to provide, develop, improve, and personalize our products and services.\" That language is now gone, according to a report from The Verge. The removal follows public backlash from publishers and site owners who interpreted the clause as giving Meta permission to scrape their content for AI training without consent. Why it matters for developers If you publish content , this change removes one explicit legal hook Meta could have used to scrape your site for AI training without a separate agreement. If you build on Meta's platforms , the terms around how your users' content gets used for model training just got more restrictive. You can no longer assume Meta has a blanket license to consume everything on commercial domains. If you're evaluating AI vendors , this episode is a reminder to read the fine print on data usage clauses. A single sentence in commercial terms can override privacy promises elsewhere. The bigger picture Meta's move is a response to growing pushback from publishers who watched their content get scraped by AI companies with little recourse. But it's also a signal: the terms-of-service battle over training data is far from settled. Other platforms may follow or backtrack depending on regulatory pressure. For now, if you run a site that Meta might want to scrape, this change gives you slightly more clarity. But the fundamental tension between open web content and AI training remains unresolved. Keep watching the terms pages. Source: The Verge - Meta removes language that may have allowed it to scrape news sites Source: https://www.theverge.com/tech/1013409/meta-removes-language-that-may-have-allowed-it-to-scrape-news-sites",
+            "url": "https://dev.to/chandan_kumar_1afaffcf991/meta-removes-scraping-language-from-commercial-terms-after-backlash-3j4c",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-10-17T19:53:34+00:00",
+            "collected_at": "2026-10-17T19:55:23.308780+00:00"
+        },
+        {
+            "id": "12bb7aed93be39a20dba1e7d4b35e8f3b19cfa66a798fc3f0bdc1adf3c9d07b7",
+            "title": "Turning a 3D configurator into a real quote - price and lead time, not just a pretty model",
+            "description": "Most Three.js configurator demos stop at the visual. The customer rotates a nice model, picks a color, and that is the whole show. But the manufacturers I build for do not sell models. They sell a product with a price and a delivery date. The question that closes a sale is not \"does it look good\". It is \"what does THIS configuration cost, and when do I get it\". That second half is the part nobody puts in a demo. Here is how I build it. The configuration is the only thing that matters The whole system hangs off one structured object: the config. Not the price, not the Three.js scene state. Just the choices the customer made. const config = { product : ' horizon ' , width_mm : 4200 , height_mm : 2800 , panels : 6 , glass : ' frosted ' , finish : ' anodized-black ' , soundproofing : ' acoustic-42db ' , track : ' top-hung ' , } Everything else is derived from this, server-side. The browser owns the preview. The server owns the truth. I wrote about why a client-side price is a 5-second DevTools hack in a separate post . The exact same principle applies to lead time: never let the page be the source of a number the customer acts on. Price is a server-side function of config Price is the easy half. Given a raw config, the backend recalculates from scratch and ignores whatever the frontend thinks: function calculateFinalPrice ( array $config ): float { $price = self :: BASE_PRICE [ $config [ 'product' ]]; $price += self :: GLASS_PRICING [ $config [ 'glass' ]] ?? 0 ; $price += ( $config [ 'width_mm' ] * $config [ 'height_mm' ] / 1_000_000 ) * self :: PER_SQ_METER ; $price += self :: SOUNDPROOFING [ $config [ 'soundproofing' ]] ?? 0 ; return round ( $price , 2 ); } The frontend still shows a live estimate as the customer drags sliders, because that is good UX. It is just labeled an estimate, and it is never what gets charged. Lead time is pricing's harder cousin Price is mostly a lookup plus arithmetic. Lead time depends on moving parts: base production time per product line option surcharges (custom glass adds days, acoustic seals add more) stock components vs made-to-order the factory's current backlog Model it as rules, server-side, the same way as price: function leadTimeDays ( array $config , Capacity $cap ): int { $days = self :: BASE_LEAD [ $config [ 'product' ]]; if ( $config [ 'glass' ] === 'custom' ) $days += 10 ; if ( str_starts_with ( $config [ 'soundproofing' ], 'acoustic' )) $days += 5 ; // queue pressure from live capacity, not a hardcoded guess $days += $cap -> currentBacklogDays (); return $days ; } That currentBacklogDays() is what makes the number real. A hardcoded \"4 to 6 weeks\" becomes a lie the moment the factory is busy. If the manufacturer can feed you a backlog figure, even a weekly spreadsheet export or a single field in an admin panel, the lead time stops being marketing and becomes a commitment the customer can plan around. The output is a quote, not a number The customer configured something real. Give them something to act on: the price (server-calculated) the lead time (server-calculated) a snapshot of their exact configuration: the 3D view rendered to an image, plus the spec list a reference id, so sales and the customer talk about the same thing That is a quote. Generate it as a PDF or an order record, email it, and the configurator just did a salesperson's first hour of work before anyone picked up the phone. This is the 80% nobody demos The visual is 2 to 3 weeks of work. The quote engine (pricing rules, lead-time rules, a capacity input, PDF or order generation, and an admin UI for the manufacturer to maintain all of it) is the larger half. It is also the half that turns a toy into a tool. When I quote a configurator project, I price the engine, not the screens. Live configurators if you want to see the visual foundation this sits on: pergola3d.grodev.pl - bioclimatic pergola, instanced louvres basen3d.grodev.pl - pool configurator with Draco and PWA I am Dominik Groński / GroDev , a studio in Poznan, Poland building custom 3D configurators and Laravel back-ends for manufacturers. If you are putting a price and a lead time behind a configurator, that back half is the part I work on.",
+            "url": "https://dev.to/gronskideveloper/turning-a-3d-configurator-into-a-real-quote-price-and-lead-time-not-just-a-pretty-model-3pe0",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-10-17T19:53:31+00:00",
+            "collected_at": "2026-10-17T19:55:23.309508+00:00"
+        },
+        {
+            "id": "d7163cae401916a3d6374a52918b4b15f7f116a5b3b300df2e6873ea461d3b53",
+            "title": "We Did It: Our First Client Project Is Live",
+            "description": "We did it. TTMCHANGE just delivered our first project for a real client, Tacliin Online. A few months ago this was just an idea between a few young Somali developers in Mogadishu. We had skills, late nights, and a lot of ambition, but no clients. Today a business is actually using something we built. Honestly, that feeling is hard to describe. Getting that first yes was the hardest part. A lot of businesses here are still unsure about trusting a young local tech team, and we understand why. So we listened, we worked hard, and we made sure what we delivered actually fit their needs. Big thanks to Tacliin Online for trusting us first. You took a chance on a new team and we won't forget it. This is client number one. We're already working on what's next, including AI. More soon, insha'Allah. If you're a developer building in Somalia, East Africa, or any market where tech is still growing, I'd love to hear your story in the comments.",
+            "url": "https://dev.to/eng_abdullah_2331143c2d5a/we-did-it-our-first-client-project-is-live-2ke3",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-10-17T19:52:24+00:00",
+            "collected_at": "2026-10-17T19:55:23.309677+00:00"
+        },
+        {
+            "id": "a495735f8150412ac9fff30874ed39aa534f6df6dacc10515fd17824c5868752",
+            "title": "My site publishes a blog post a day while I sleep — no cron, no CMS (week 6 build-log)",
+            "description": "Part 3 of building PipAtlas in public. Part 2 covered the first five weeks of real search data. This week I wired the thing every content site eventually needs: a blog that publishes on schedule, generates its own illustrations, and heals its own broken links — running inside a single Node process, no cron jobs, no CMS, no AI slop. The constraint that shaped everything The blog had one job: one post per day, from a queue of markdown drafts, published to static HTML with a regenerated index and sitemap. The obvious tool is cron. I built it on cron first — and then watched it do nothing for a day because a hosting panel quietly didn't save the crontab entry. Lesson: if uptime of a feature matters, put it in the process that's already supervised by your host. The app server restarts when I deploy, gets watched by the panel, and logs somewhere I actually look. So the scheduler moved inside the server: JavaScript (function at30(){ const now = new Date(); const t = new Date(now); t.setMinutes(30, 0, 0); if (t <= now) t.setHours(t.getHours() + 1); setTimeout(function(){ runBlog(); setInterval(runBlog, 3600000); }, t - now); })(); Aligned timers, busy-flags to prevent overlap, and a boot burst 90 seconds after every restart so pending drafts publish immediately. The child process gets the site root handed to it explicitly: JavaScript const env = folderMode ? { ...process.env, GROWTH_PUB: SITE_ROOT } // never let bots guess paths : process.env; execFile(process.execPath, [botPath], { cwd: growthDir, env }); That GROWTH_PUB handoff exists because of my favorite failure this week: the publishing bot spent days failing with public_html not found — because I'd assumed a directory layout the host doesn't use. Folder-mode hosting serves the site from the app folder itself. One log line from the owner's screenshot, one env variable, fixed. Bots should never infer paths when the running process knows them. Illustrations without an image API Every post gets a chart — generated, not stock. A tiny SVG module renders bar charts, curve charts and session clocks in the site's exact brand palette (navy/teal/gold), writing static files the posts reference. No API keys, no rate limits, no 40 KB of chart library shipped to readers — the whole figure is ~2 KB of markup that scales perfectly. The drafting side is deliberately not an AI text spinner. Topic packs are hand-authored (real numbers, real tables, an FAQ, an internal link plan); the bot assembles, illustrates and runs hard validation — minimum word count, mandatory internal links, a placeholder sweep — and refuses to queue anything that fails. An optional LLM pass exists behind a config flag, but it's gated by the same validation and falls back to the authored blocks. Quality is a floor, not a hope. The bug the users caught before I did Two days in, a link check found posts 404ing from the blog index. Cause: the index was served at both /blog.html and the clean URL /blog, and the card links were relative — so at /blog (no trailing slash) the browser resolved them against the site root. Classic. The durable fix was to make every internal link in bot-generated pages root-absolute, plus a self-healing reskin pass that relinks older published pages on every run. And because some broken URLs were already loose in the wild, the server now 301s any legacy root-level post URL straight into its new home. Broken links aren't a to-do list; they're a state you repair automatically or they come back. What the numbers say so far Six weeks in: ~140 pages indexed, position data on dozens of queries, organic impressions climbing week over week — and now three posts live with one landing per day, each interlinked into the calculators and glossary that already rank. The blog isn't a content play, it's an internal-linking engine for pages that were previously islands. Everything here runs on ~$2 hosting, one Node file, and markdown drafts. Series continues with the link-building chapter — journalist platforms, not spam — once there's data worth reporting. Building the same thing? The one principle I'd export: anything that must run daily belongs to a process that's already being kept alive — not to a crontab you have to remember to save.",
+            "url": "https://dev.to/pipatlas26/my-site-publishes-a-blog-post-a-day-while-i-sleep-no-cron-no-cms-week-6-build-log-alk",
+            "source": "DEV Community",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "developpement",
+                "java",
+                "javascript",
+                "llm",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-10-17T19:51:47+00:00",
+            "collected_at": "2026-10-17T19:55:23.310237+00:00"
+        },
+        {
+            "id": "ab844857d1f8ee6a79eec35f7b40049999c44f0c5bc90b4d9d56a8d1ec0de676",
+            "title": "NinjaTrader 8 Calculate: On Bar Close vs On Each Tick",
+            "description": "A signal you were watching live is gone when you sit down at the chart the next morning. Or it happens the other way around: yesterday's chart is covered in clean marks, and today the same indicator paints something that shows up mid-bar, wobbles for a while, and settles somewhere else. The usual conclusion is that the indicator is broken, or that it repaints. Usually it is neither. It is one dropdown, plus a piece of NinjaTrader behavior that the dropdown never mentions. Where the setting lives and what the three values do Right click your chart, choose Indicators, and select the indicator in the list. The properties grid on the right has a Setup group holding three entries: Calculate, Label, and Maximum bars look back. Calculate is the one that decides how often the indicator recalculates. On bar close runs the calculation once, when the bar closes. This is the platform default, so it is what you have unless you or the indicator's author changed it. On each tick runs it on every incoming tick. On price change runs it only when the price actually changes. Two ticks in a row at the same price, and the second one does nothing. Read that list and the obvious conclusion is that On each tick buys you a more responsive chart at some cost in CPU. That is true, and it is also about half of what is going on. The asymmetry the dropdown does not mention A historical bar in NinjaTrader stores the open, high, low, close, volume and time. It does not store the individual trades that built the bar, because keeping every tick for every instrument would be a far larger dataset. So on historical data there are no ticks to iterate, and NinjaTrader calculates once per bar close no matter what Calculate is set to. On each tick and On price change change nothing at all about the left side of your chart. The setting only bites in real time, on the bar currently forming at the right edge. That is the whole morning mystery. While you were trading, the right edge was recalculating on every tick and showing you the state of an unfinished bar. Overnight the platform restarted, that bar became history, and history gets exactly one calculation. The chart in front of you now came out of a different code path from the one you sat and watched. Tick Replay, and the checkbox that is not there yet Tick Replay is NinjaTrader's answer to this. It pushes the stored ticks back through your indicator so historical bars get calculated the way live bars do. The first thing people hit is that the option is missing from where it should be. Tick Replay does not appear in the Data Series dialog until you switch it on globally, in Control Center under Tools, Options, Market data, where the checkbox is called Show Tick Replay. Only after that does a Tick Replay checkbox turn up in Data Series, which is why the standard first attempt at this is ten minutes of hunting through a dialog that does not yet contain the thing you are looking for. Four things are worth knowing before you enable it everywhere: It costs real resources. NinjaTrader's own documentation says plainly that more PC resources go into calculating your indicators and strategies and that there will be a performance impact. It does not work with every bar type. Line Break and Renko cannot use Tick Replay, and the option is disabled when a chart is configured with either of them. It is not a backtesting tool. NinjaTrader states that Tick Replay is not intended to function in strategy backtests and will not produce the same results as running that strategy on live data with Tick Replay on. It only helps scripts written for it. An indicator benefits from Tick Replay only if it was explicitly programmed to calculate on those market data events. Switch it on for something that was not, and all you have bought is a slower chart load. So reserve it for indicators that genuinely consume the tick sequence, volume profiles being the standard example, instead of turning it on chart wide because it sounds more accurate. The four ways this goes wrong The first is the classic: signals that appear and then vanish. With Calculate on each tick, the indicator is evaluating a bar that has not finished. A condition that is true halfway through the bar can be false by the close. Nothing has malfunctioned. You are watching a provisional answer, and it only becomes a problem when you treat it as a final one and click. The second is a chart that reads differently after a restart, which is the same thing from the other end. If your journal says a setup triggered and the historical chart shows nothing at that spot, compare the two calculation paths before you decide your memory is at fault. The third is a backtest that does not survive contact with live data. A strategy tested against historical bars was tested at one calculation per bar close. If its logic leans on intrabar state, the test never ran the code that will run tomorrow. Tick Replay does not close that gap either, by NinjaTrader's own statement. The fourth catches tools that read other tools. Anything consuming another indicator's output has to know which bar the value belongs to, and reading the forming bar when the source publishes on close gets you a number that is still moving. What a signal indicator has to do about it An indicator that prints a permanent mark has a harder job than one that draws a line, because a mark that moves after the fact is worse than no mark. It has to give the same answer in three different environments: historical without Tick Replay, historical with it, and live on each tick. The way to manage that is to always judge completed bars, whichever mode the chart happens to be in. WiSE ships with Calculate already set to On each tick, so it is live at the right edge, and it normalizes the bar it evaluates internally. Historical or real time, the bar it grades is a closed one, and a mark that has printed does not move afterward. That is what zero repaint means in practice, and it is a property of how the thing is built rather than a promise on a sales page. That still leaves the fair objection to grading only closed bars, which is that you would like some warning before the bar finishes. Predicted signals cover it. They print in the Unconfirmed color, yellow out of the box, and a yellow (2) means a second entry is expected as soon as a bar breaks the previous bar. When that break happens the symbol turns green or red for long or short. You see it coming without the printed history rewriting itself behind you. The understanding the signals reference walks through the full set of marks and colors. A ten-minute audit of your own charts Open Indicators on a chart you actually trade and note the Calculate value for every indicator on it. Most traders have never looked and are sitting on the default. Reload the chart, or restart NinjaTrader, and compare the last hour of marks against what you remember seeing live. Anything that moved is repaint, and no dropdown setting fixes that. Turn on Show Tick Replay in Options if you want it, then enable Tick Replay per data series, only where an indicator was built to use it. For anything driving an order or an alert, decide on purpose whether it should act on the forming bar or the closed one, and set it that way instead of inheriting whatever it came with. If false signals are what sent you looking into this, the filtering side of the problem is a separate lever and how to reduce false signals covers it. WiSE comes with a 7-day free trial, which is enough time to run this audit on your own charts rather than take anyone's word for how it behaves. Futures trading involves substantial risk of loss and is not appropriate for all investors. Consistent calculation makes what you test match what you trade; it does not create an edge. First published on the Wizdough blog: https://wizdough.com/blog/ninjatrader-calculate-on-bar-close-vs-on-each-tick?utm_source=devto&utm_medium=referral&utm_campaign=backlinks-2026-10",
+            "url": "https://dev.to/ivan_tkachenko_ebe6994af5/ninjatrader-8-calculate-on-bar-close-vs-on-each-tick-2e2j",
+            "source": "DEV Community",
+            "category": "cloud",
+            "tags": [
+                "aws",
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-10-17T19:50:51+00:00",
+            "collected_at": "2026-10-17T19:55:23.311097+00:00"
+        },
+        {
+            "id": "0c1d3469e9db4cac49b87fd05309e670d81dc5e096af1aeb315ade5535399110",
+            "title": "Cross-Cultural Communication: lesson from The Culture Map",
+            "description": "AI-generated image for illustrative purposes In this post, I'll try to break down an example described in the book \"The Culture Map: Breaking Through the Invisible Boundaries of Global Business\" by Erin Meyer. The author begins her book with a situation that we face almost every day. She had to prepare a senior executive from a major automotive company for cultural adaptation before his upcoming relocation to Wuhan, China, for work. To do this, she arranged for a Chinese cultural expert, Bo Chen, to help her. His task was to prepare practical examples for each cultural aspect she covered in her presentation. And so, throughout the entire session, which lasted three hours, Chen remained silent and sat almost motionless until the very end of the presentation. Erin hesitated to interrupt him because he wasn't saying anything, and she assumed he simply hadn't prepared any examples. So she kept talking, trying to avoid long, awkward silences during the conversation. At the very end, the author finally decided to take a risk and directly asked Chen whether he had anything to add. \"Thank you, Erin,\" he replied. \"I do.\" And to her incredible relief, he began giving one clear, relevant, fascinating example after another. Chen's explanation of his behavior was quite revealing: \"You Westerners speak almost at the same time during meetings. I was waiting for Erin to stop talking long enough for me to join in, but that never happened. We Chinese often think Americans are poor listeners because they constantly interrupt one another to express their own opinions. I wanted to speak when there was an appropriate pause. But Erin kept talking, and I patiently waited. My mother's words have always stayed with me: 'You have two eyes, two ears, but only one mouth. You should use them accordingly.'\" What does this situation between Erin and Bo tell us? If you work with someone in a pair or in a group - always, always talk through the important things. Make sure everyone understands each other in the same way. You might think that everyone already understands everything. And you'll be right. Everyone understands everything - but in their own way, from their own perspective. So, once again - don't be afraid of seeming tactless, annoying, or feeling embarrassed. Talk everything through in advance. Make sure everyone is on the same wavelength.",
+            "url": "https://dev.to/0not0/cross-cultural-communication-lesson-from-the-culture-map-38g8",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-10-17T19:50:39+00:00",
+            "collected_at": "2026-10-17T19:55:23.311451+00:00"
+        },
+        {
+            "id": "008c844ad859f2f86f0ec01b483d6568c27ff78296c6657b07053ada97b17da3",
+            "title": "Segundo intercalar y hora intercalar: el reloj cambia",
+            "description": "Un segundo desaparece del reloj mundial. Representantes de 69 países votaron el 15 de octubre en Versalles, Francia, para abolir el segundo intercalar y permitir que la hora oficial se separe de la rotación de la Tierra hasta por una hora completa antes de cualquier corrección: nace así la hora intercalar, un ajuste que nadie vivo tendrá que aplicar. La decisión la tomó la Conferencia General de Pesas y Medidas, el órgano que gobierna los patrones mundiales de medida, y entra en vigor el 20 de mayo de 2027. Desde esa fecha, el Tiempo Universal Coordinado, conocido por sus siglas UTC, correrá de forma continua, sin los saltos de un segundo que se agregaban cada cierto tiempo para mantenerlo pegado al giro del planeta. Durante casi toda la historia, la hora se leyó en el cielo: la posición aparente del Sol marcaba el mediodía. Ese ritmo depende de la rotación terrestre, que no es regular. El planeta se frena, se acelera y tiembla con terremotos, mareas y movimientos de su interior. En 1967 los físicos cambiaron la referencia y definieron el segundo desde la vibración del átomo de cesio-133, la base de los relojes atómicos y del UTC moderno. Por qué un segundo desordenaba computadoras enteras El segundo intercalar nació en 1972 para reconciliar ambos relojes. Cada vez que la diferencia entre el tiempo atómico y el tiempo astronómico, llamado UT1, se acercaba a un segundo, los guardianes del tiempo insertaban un segundo extra al cierre de un día señalado. Desde entonces se agregaron 27 segundos intercalares. Cada salto obligaba a todos los sistemas del planeta a ejecutar el mismo ajuste en el mismo instante. Ese salto parece mínimo en un reloj de pared. En una red es otra historia. New Scientist reportó que segundos intercalares anteriores tumbaron sitios web y trastornaron sistemas de reservas de aerolíneas, y citó a Setnam Shemar, del Laboratorio Nacional de Física del Reino Unido, quien advirtió del riesgo para redes de telefonía móvil y redes eléctricas si un ajuste salía mal. Bolsas de valores, telecomunicaciones y el sistema de posicionamiento global, GPS por sus siglas en inglés, trabajan con marcas de tiempo exactas: un segundo insertado a destiempo puede desordenar registros completos. El empujón final llegó desde el propio planeta. La rotación terrestre se aceleró un poco en años recientes y abrió una posibilidad incómoda: el primer segundo intercalar negativo de la historia, un segundo que habría que restar en lugar de sumar. Noël Dimarcq, presidente del comité de tiempo y frecuencia de la Oficina Internacional de Pesas y Medidas, planteó que las consecuencias prácticas de un salto hacia atrás resultan difíciles de predecir. Treinta años de debate se cerraron con esa advertencia. Qué cambia el 20 de mayo de 2027 para celulares y redes Con la hora intercalar, la tolerancia crece de menos de un segundo a 3.600 segundos. El UTC podrá alejarse del tiempo astronómico durante siglos antes de pedir una corrección, y esa corrección sería de una hora completa. Nature publicó las palabras de Dimarcq, quien presentó la resolución en la reunión: la escala internacional de referencia queda continua para los próximos milenios. Georgette Macdonald, directora del centro de metrología del Consejo Nacional de Investigación de Canadá, afirmó que la decisión asegura la continuidad y la pertinencia del UTC por siglos. Para quien mira la hora en el celular, el cambio es invisible. Ningún reloj amanecerá con una hora extra el 20 de mayo de 2027, ni hará falta ajustar el teléfono, la computadora o el reloj de la cocina. El efecto llegará por dentro: los centros de datos y las redes que sincronizan millones de operaciones por segundo dejan de prepararse para un salto que exigía parches, simulacros y guardias nocturnas en empresas de medio mundo. La separación entre la hora oficial y el Sol crecerá despacio, casi nada: fracciones de segundo por año. Emily Akkermans, curadora de tiempo del Real Observatorio de Greenwich, en Londres, lo comparó con vivir en horario de verano de forma permanente, pero dentro de cientos o miles de años. Shemar precisó que faltan muchos cientos, quizá miles de años, para necesitar la primera hora intercalar, y que los físicos seguirán midiendo la rotación terrestre con exactitud para la astronomía y la navegación celeste. El voto también adelanta un plan anterior. En 2022 los países miembros habían acordado jubilar el segundo intercalar hacia 2035; la resolución aprobada en Versalles mueve el corte a 2027 y cierra el tema por mayoría, sin unanimidad, tras una discusión que llevaba tres décadas entre laboratorios, gobiernos y empresas de tecnología. Un segundo nuevo y una hora pensada para la Luna La misma reunión dejó dos encargos de largo plazo. Los relojes ópticos ya superan en precisión al reloj de cesio que sostiene la definición vigente del segundo, y la Oficina pidió propuestas formales para redefinirlo. También pidió a las agencias internacionales empezar a estudiar una referencia de tiempo universal para la Luna, un patrón común que las futuras misiones lunares necesitarán para navegar y comunicarse sin depender de relojes terrestres que allá arriba pierden sentido. El conteo final queda corto y raro: 27 segundos agregados desde 1972, cero por agregar desde 2027. La próxima corrección del reloj mundial, si alguien decide aplicarla algún día, será de una hora entera y la firmará una generación que todavía no nació. Fuente: Nature Foto: Nature",
+            "url": "https://dev.to/henryramireztech/segundo-intercalar-y-hora-intercalar-el-reloj-cambia-8fe",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "ios",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-10-17T19:48:36+00:00",
+            "collected_at": "2026-10-17T19:55:23.312260+00:00"
+        },
+        {
+            "id": "26de001b3bc831ce1963e1194dc609f2032660ce3fc043e4ff5139127fa692ed",
+            "title": "What Artificial Intelligence Actually Is",
+            "description": "TL;DR: Artificial intelligence is a capability of computational systems, software that takes in information about its surroundings and works toward the goals it was given; the working definition promises no copy of a person, and the field’s record never delivered one. The field opened with a 1955 bet that behavior described precisely enough can be simulated; John McCarthy named it in that same proposal. The build pipeline runs one way: an algorithm trains on a dataset, training produces a model, the model predicts on inputs it never saw. ChatGPT reached one hundred million users within two months of its November 30, 2022 launch; Google Translate now covers 249 languages. Generative and multimodal systems are the present tense; the platforms still under construction are the agentic ones. Deep learning is the inner circle, inside machine learning, inside AI; the three labels are not synonyms. Most introductions still open by defining artificial intelligence as technology that mirrors human behavior and thought. Taken literally, that is a promise of a synthetic mind, and no such product has ever shipped; the video below spends its first minute crossing the definition out. Watch the full episode on YouTube , or read on: this article walks the same checked boards, with the sources linked as they appear. The episode this article accompanies: 15 boards, under nine minutes, every date and number checked against the sources cited below. The opening board: three products you already use, and the definition that has to go. What artificial intelligence actually is Strip the marketing away and the definition is modest. Artificial intelligence is a capability of computational systems, not an attempt to copy a person: the label covers tasks people link with human intelligence, like learning, reasoning, problem solving, perception and decision making. In practice that means software that takes in information about its surroundings and works toward the goals it was given ( Wikipedia summary ). The working core of the definition is the agent: it perceives, it decides, it acts. Those three verbs cover a voice assistant answering, a chatbot drafting, a vehicle planning a route, and an industrial arm placing parts. The sensing and the acting differ from case to case; the shape never does. One piece of map keeping before the history. Deep learning is the inner circle: it sits inside machine learning, and machine learning sits inside AI. People use the three labels interchangeably anyway; they are not synonyms, and the first lesson in this series covered the training loop that powers those inner circles. Are AI, machine learning and deep learning synonyms? No, and the nesting is the whole story. Deep learning is one branch of machine learning, and machine learning is one wing of the field: the toolbox also holds natural language processing, perception, robotics and expert systems. The labels get used interchangeably all the same, because marketing flattened the differences years ago. The difference matters when a product claims one label and delivers another. What ships today wins on specific problems, like ranking recommendations or translating text. General intelligence remains hard to define and to measure, and superintelligence is a hypothesis rather than a schedule; where the narrow and general versions diverge is the subject of a later lesson in this series. The 1955 bet that started the field AI did not begin as an attempt to build a person. It began as a wager about description. The 1955 proposal for a summer study at Dartmouth, written by John McCarthy with Marvin Minsky, Nathaniel Rochester and Claude Shannon, conjectured that every aspect of intelligence “can in principle be so precisely described that a machine can be made to simulate it” ( workshop record ). The proposal named problem solving, language, abstraction and self improvement as its grounds. That document did two more things worth remembering. McCarthy coined the phrase artificial intelligence in it, and the workshop it proposed ran in the summer of 1956, the moment AI became a field instead of a conjecture ( per his biography ). The history of the field treats that same sentence as its founding premise. Why is “the father of AI” the wrong title? Because the founding crowd was a crowd. McCarthy named the field, but the record lists him among the founders, alongside Marvin Minsky, Allen Newell, Herbert Simon and Alan Turing, with the Dartmouth four turning the conjecture into an institution. A single father makes a tidier story than a committee, which is how the title arose. Trace “the father of artificial intelligence” back to its source and you reach a single 2011 obituary headline in the Los Angeles Times. The technical record says something plainer: a founding crowd, listed by name, with no single parent in sight. Handle it the way you would handle any headline compression: convenient and wrong about how the field started. Who were the four names on the 1955 proposal? John McCarthy was a young assistant professor of mathematics at Dartmouth when he organized the summer and named the field, and he picked the words for neutrality, to stay clear of narrow automata theory and of cybernetics, whose analog feedback agenda came bundled with Norbert Wiener. Claude Shannon of Bell Labs, information theory’s founder, was the senior recruit; he joined McCarthy for the June 1955 meeting with the Rockefeller Foundation’s Robert Morison. Nathaniel Rochester came from IBM’s engineering research laboratory in Poughkeepsie, and Marvin Minsky completed the quartet that formally proposed the project on September 2, 1955. The foundation funded a summer planned for about ten participants. Eleven were originally expected, more visitors came for short stretches, and the 1956 workshop itself is usually counted at six weeks, though one participant’s notes stretch it to about eight, June 18 into late August. McCarthy’s later list of everyone interested in the problem ran to 47 names. A field that now ships in consumer products began as a summer of brainstorming sessions among a rotating group of scientists in Hanover, New Hampshire. The names matter less than the bet all four signed: get the description of intelligence precise enough, and a machine can simulate it. The field’s actual agenda The published agenda is a list of capabilities, not a march toward a digital mind: learning and reasoning, knowledge representation, planning, perception, natural language processing, robotics support and social intelligence. General intelligence sits at the contested end, the long term goal researchers still argue over how to define. Two boundary facts fill the picture out. Expert systems were a genuine branch rather than a footnote: rule based programs that emulated specialists became the commercial wave of the 1980s ( branch overview ). The field also borrows openly: alongside its computer science, mathematics and engineering core, it draws on statistics, operations research and economics, and reaches from psychology through linguistics and philosophy to neuroscience. The pipeline: dataset in, model out The build pipeline runs in one direction, and tutorials keep reversing it. Training means an algorithm working through a dataset; what comes out is a model; and the model’s whole job is predicting on inputs that never appeared during training ( machine learning overview ). The tempting compression, algorithms that train datasets, assigns the roles backwards: the data never learns anything, because it is not the kind of thing that could. That arrow is also the split from traditional programming. Hand written rules spell out every if and else, and a developer maintains them; a learned model has its behavior fitted from examples, then measured on data nobody used during training. The mainstream tooling pairs TensorFlow, out of Google Brain in 2015, with PyTorch, out of Meta AI in 2016. Traditional programming The learned route You supply rules, written by hand a dataset for the algorithm to train on What comes out answers, from following the rules a model that predicts on unseen inputs How it is checked the rules are inspected and maintained behavior is measured on unseen data Board 8: the corrected pipeline, with the popular inversion crossed out in red. Who does the learning: the algorithm, the dataset or the model? The role assignment is the exam question. An algorithm is the procedure doing the work: it processes examples from a dataset and adjusts numbers that end up stored in a model. Training is that adjusting. Nothing about the data itself changes while this happens, which is why anyone who has run the pipeline winces at the phrase training a dataset. The model is what you keep. Once training finishes the dataset can go back on the shelf, and prediction runs from the model alone, on inputs that did not exist when training started. The first lesson in this series walked that loop step by step, penalty and update included. The AI already in your pocket The AI in daily life is not one general intelligence; each instance is a specific tool doing a specific job. ChatGPT launched on November 30, 2022 and pulled in one hundred million users within two months ( per its record ). Google Translate started statistical in 2006, moved to a neural system in November 2016, and now runs deep learning across 249 languages. Netflix personalizes recommendations for hundreds of millions of subscribers, and machine learning does the matching. And the Tesla package people call self driving is Level 2 driver assistance: supervised, with the human behind the wheel responsible throughout, the same correction the first lesson in this series made its headline. The episode’s Short companion: the “You already live with AI” boards, cut for a vertical screen. Seven techniques, one toolbox The toolbox is wider than chat: machine learning, natural language processing, expert systems, robotics, and perception across vision and speech. A seven stop tour makes each one concrete, and not one of the stops is a personality a machine acquired. Stop What it is The checked fact Gaming heuristic search across move trees with thousands or millions of positions to examine Deep Blue weighed roughly 200 million positions every second Natural language works entirely in language translation, chatbots, summarization and their kin; the neural era arrived in 2015 and large language models carry it now Expert systems a knowledge base wired to an inference engine emulated specialists; two thirds of the Fortune 500 used them before the 1980s ended; MYCIN and Dendral are the reference names Vision making sense of what a camera sees shipped as facial recognition and image tagging Speech transcription of spoken audio to text genuinely hard: accents, dialects, pitch and noise keep shifting; deep learning took over around 2009 Handwriting turning handwriting, from a pen or a scan, into editable text the Newton, Graffiti and tablet PCs carried it Robots mechanics, power, control and software stacked together sense through cameras, microphones, temperature sensors and lidar, then process, then act; AI drives navigation and human robot interaction Board 10: the tour’s first three stops, from brute force search to rule based expertise. Whatever happened to expert systems? The tour’s third stop was the industry’s first commercial win, and it has a full arc of its own. Expert systems were formally introduced around 1965 by Stanford’s Heuristic Programming Project under Edward Feigenbaum, with Bruce Buchanan and Randall Davis among the early contributors, and the project hunted for fields where expert knowledge was valuable and hard to get: Dendral identified unknown organic molecules, and MYCIN reasoned about infectious disease diagnoses. The recipe was a knowledge base of if/then rules wired to an inference engine, the two part architecture the tour board draws. A full build carried five parts: the knowledge base, the inference engine, an explanation facility, a knowledge acquisition facility, and a user interface. Built as products through the 1970s, the idea proliferated in the 1980s. Universities taught it, two thirds of the Fortune 500 applied it in daily business before the decade ended, and Japan’s Fifth Generation project and new European funding pushed the same bet worldwide. The pattern traveled beyond medicine: one of the most successful commercial runs was configuring Digital Equipment Corporation VAX computers, where the constraint solving Dendral had practiced on molecules fit a parts list just as well. The term dropped out of the IT lexicon in the 1990s, and the two readings of that exit pull in opposite directions. One calls it failure: the results did not match the over-hyped promise. The other calls it absorption: the rule engine migrated from standalone product to one more standard item in the IT toolbox, so the expert brand stopped being worth marketing. The tour board’s lesson outlived the product category: capture what specialists know, then reuse it case after case. Present tense: what is actually next The advertised future keeps arriving early. Generative and multimodal systems went mainstream with ChatGPT’s climb, and GPT-4o added text, image, audio and video processing in May 2024. A tutorial selling those as tomorrow’s technology has stamped its own publication date on the page. The current edge is agents: programs running their own loop of perceiving, deciding and acting, already deployed in assistants, vehicles and robotics, with the platforms for agentic work still under construction. The problems that ride along are ethical and social ones: privacy, misinformation and transparency, plus fairness, bias and technological unemployment, which is where the calls for regulation come from. What does agentic add? The three verbs from the definition return at the frontier. An agent takes in its situation, makes a decision and acts on it without a human approving each step; that frame runs tool using assistants, route planning vehicles and floor navigating robots. What is new is the autonomy of the loop, not the inner life of the software. That makes it a supervision question more than a philosophy one. An agent can still be narrow and wrong; when a product page says agentic, the first thing to check is who supervises the loop and what happens when it errs. Four corrections to keep The definition is a capability. What the label names is systems doing work we associate with human intelligence, not a machine replica of a person. Anything promising more than that is marketing. The founding crowd was plural. McCarthy supplied the field’s name, but Turing, Minsky, Newell and Simon stand in the same founding generation, and no single parent fits the record. Keep the training arrow straight. Training consumes a dataset and an algorithm and emits a model; the data itself never changes, and it is never the thing being taught. Check the tense. Generative and multimodal systems already shipped; the platforms under construction are the agentic ones. Claims about the future should name things that are not here yet. Board 15: the recap board, four checks and a sticky note. The honest version is smaller than the hype and more useful. Artificial intelligence is a capability: software that takes in its situation and works toward goals, and its founding wager in 1955 was that behavior spelled out precisely could be simulated; its build path runs from algorithms and data to a trained model; and it already does specific jobs inside products you opened today. Keep the umbrella straight, keep the arrow pointing the right way, and check the tense before repeating any claim about the future. Continue learning Machine Learning: The Honest First Lesson : the first lesson in this series, the training loop and the history most introductions get wrong. AI Glossary 01: Model Training Terms and Basics : the vocabulary of algorithms, datasets and models, one term at a time. How Reinforcement Learning Works: The Loop and the Reward : the family that learns by acting, for when the agent frame needs depth. This lesson first appeared on iqraa.tech . More whiteboard lessons on the Whiteboard Architect YouTube channel .",
+            "url": "https://dev.to/amarti/what-artificial-intelligence-actually-is-f6f",
+            "source": "DEV Community",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "anthropic",
+                "aws",
+                "deep_learning",
+                "developpement",
+                "git",
+                "intel",
+                "llm",
+                "machine_learning",
+                "openai",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-10-17T19:46:17+00:00",
+            "collected_at": "2026-10-17T19:55:23.314085+00:00"
+        },
+        {
+            "id": "9ee3c33c2c2393be4c870ae89ee217422792e32ded457022155c3c7cf5f2e61b",
+            "title": "Flutter vs. React + Capacitor in 2026: Which Stack Saves More Time & Budget for Your Business App?",
+            "description": "If you are a founder or business owner planning to build a cross-platform mobile app for iOS and Android in 2026, you will immediately face a critical technical decision: Should we build it in Flutter, or use a Web-to-Mobile stack like React + Capacitor? Pick the wrong stack for your specific use case, and you can easily add 4 to 6 extra weeks to your development timeline. At VanzaLabs, we don't treat technology choices like a religion. In fact, we recently built and shipped two production B2B mobile apps to Google Play—one written in Flutter (FormGrid: Forms & Sheets) and the other in React 19 + Tailwind CSS 4 + Capacitor 8 (Vanza: Invoices & Contracts). Here is a practical, business-focused guide on when to use each stack—based on real production trade-offs. When Flutter Is the Unbeatable Choice We chose Flutter for FormGrid, our mobile workspace for creating and managing Google Forms™ and Google Sheets™ in the field. Choose Flutter for your business app if: You need 60/120fps native scrolling and gesture fluidity: Flutter renders its own UI via Impeller/Skia rather than relying on a browser WebView. When users scroll through hundreds of spreadsheet rows or switch between tabs rapidly, it feels indistinguishable from a native iOS/Android app. Deep OS & Hardware Integration: Receiving shared files directly from other mobile apps (Share Intents), background isolates, and native OAuth flows are rock-solid in Flutter's ecosystem. Mobile-First Product: If 90% of your users will interact with your product strictly on smartphones and tablets rather than a desktop web dashboard, Flutter delivers a superior mobile UX. When React 19 + Capacitor 8 Cuts Development Time in Half For our second product, Vanza: Invoices & Contracts (an offline PDF generator for contractors, freelancers, and SMBs), we intentionally chose React 19, TypeScript, Tailwind CSS 4, and Capacitor 8. Why didn't we use Flutter here? Because the core of an invoicing and contract app is document layout, dynamic multi-step forms, and complex print formatting. Choose React + Capacitor for your business app if: You need both a Web App AND a Mobile App from a single codebase: With React + Capacitor, 95% of your web application code runs natively inside an iOS/Android shell with full access to native APIs (filesystem, camera, share sheet, in-app purchases via RevenueCat). For a startup on a tight budget, this saves 35–45% compared to building a web app and mobile app separately. Heavy Document, Table, or PDF Rendering: Designing 12 customizable invoice/contract themes with dynamic line-item tables, automatic tax/discount math, and canvas finger signatures was dramatically faster using HTML/CSS Flexbox & Grid + jsPDF than writing low-level PDF layout code in Dart. Rich Offline Local Storage with IndexedDB: Using Dexie.js over IndexedDB allowed us to build a 100% offline client and service catalog database that works seamlessly in basements and construction sites without internet. Side-by-Side Decision Matrix for Founders Time to Market (Web + Mobile combined): React + Capacitor wins (1 shared codebase). UI/Animation Smoothness on Budget Phones: Flutter wins. Complex Forms, Dashboards & PDF Generation: React + Capacitor wins. In-App Subscriptions (RevenueCat) & Offline Support: Tie — both work great in production. Need Help Choosing the Right Architecture for Your MVP? At VanzaLabs, our senior engineering team builds production-ready Web and Mobile MVPs in 3 to 8 weeks using both Flutter and React / Next.js / Capacitor—depending on what gives your business the fastest path to revenue and the lowest maintenance cost. We also help growing companies automate manual workflows by integrating CRMs, ERPs, payment gateways, and custom AI agents. 🌐 Explore our work and request a free 1-day project estimate: https://vanzalabs.tech",
+            "url": "https://dev.to/vanza_labs_500b63e1a4b943/flutter-vs-react-capacitor-in-2026-which-stack-saves-more-time-budget-for-your-business-app-94b",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "android",
+                "developpement",
+                "ios",
+                "programmation",
+                "typescript",
+                "web"
+            ],
+            "published_at": "2026-10-17T19:45:55+00:00",
+            "collected_at": "2026-10-17T19:55:23.314721+00:00"
+        },
+        {
+            "id": "a4957dc30a917b8e7f3006db73d36fbfa2a11d04584e8f8d87b11533908a5438",
+            "title": "E-commerce Product Search: 5 Query Bounds for Grounded Semantic Retrieval",
+            "description": "In e-commerce product search, semantic retrieval starts with a constraint: a result is only as trustworthy as the catalog revision, tenant boundary, and source identifier that travel with it. An unbounded nearest-neighbor call can return plausible product text, but it can't explain why an unavailable SKU appeared twice. Short answer: use a staged retrieval design with explicit collections, bounded queries, and source context that can be traced back to the exact e-commerce document. That choice favors grounding over maximum recall. It also makes stale and duplicated results diagnosable without turning the search path into a tour of vendor dashboards. 1. How should e-commerce product search bound semantic retrieval queries? Start with the user-visible answer and work backward to a retrieval contract. For a query such as “red trail shoe in size 9,” the contract should identify which catalog collection may be searched, which tenant and access rules apply, how many candidates may proceed, how long each stage may run, and what source reference every accepted result must return. If any of those fields is implicit, a relevant-looking result can cross a boundary that relevance scoring never knew existed. The stages should be boring: normalize the query, select one explicit collection, apply mandatory metadata filters, retrieve a bounded candidate set, rerank if the latency budget allows it, and return source identifiers with the chosen context. A slow enrichment source must have its own timeout; it doesn't get to consume the entire shopper-facing budget. Retries need a ceiling too — another attempt is useful only while enough budget remains to finish the response. Don't treat the candidate limit as a universal constant. A narrow SKU lookup and an exploratory category question have different recall needs. Set a small number of named query classes, record the limit and timeout selected for each request, and tune them against labeled catalog questions. I'm not sure one candidate count can serve both long-tail discovery and exact product lookup; a measured evaluation set is what resolves that uncertainty. 2. Keep identity attached to every chunk Chunking removes prose from its original layout, so the index record has to restore the context needed for a review. At minimum, carry a stable document ID, product or category ID, source URL, tenant ID, access-control metadata, catalog revision, and chunk position. The text and embedding are replaceable. Identity isn't. Consider a concrete duplication trace. Revision 41 says a jacket is available, revision 42 says it is discontinued, and both contributed two chunks under the same product ID. A top-four query can now return four persuasive snippets while representing only two source revisions. Deduplicating on chunk text won't reliably fix that. The retrieval contract should filter to the active revision, group candidates by the stable product ID, and expose the selected document ID so an operator can verify the answer. The same rule protects multi-tenant catalogs. Tenant and access-control metadata must be written on every indexed item rather than joined after vector search. Post-filtering can shrink an apparently healthy candidate set to zero, and a forgotten filter is worse: it can reveal context from the wrong catalog. Enforce those fields at ingestion and reject a chunk that lacks them. Here is a runnable query client. Save a payload produced and validated from the public discovery schema as query.json ; reading that file keeps the example honest because the verified route is known but its request fields are not reproduced here. Set INFRAI_BASE_URL to the API base endpoint and keep the key in the environment. import json import os import time from urllib.error import HTTPError from urllib.request import Request , urlopen def query_vector ( payload : dict , attempts : int = 3 ) -> dict : base_url = os . environ [ \" INFRAI_BASE_URL \" ]. rstrip ( \" / \" ) api_key = os . environ [ \" INFRAI_API_KEY \" ] body = json . dumps ( payload ). encode ( \" utf-8 \" ) for attempt in range ( attempts ): request = Request ( f \" { base_url } /vector/query \" , data = body , method = \" POST \" , headers = { \" Authorization \" : f \" Bearer { api_key } \" , \" Content-Type \" : \" application/json \" , }, ) try : with urlopen ( request , timeout = 10 ) as response : return json . load ( response ) except HTTPError as error : detail = error . read (). decode ( \" utf-8 \" , errors = \" replace \" ) if error . code != 429 or attempt == attempts - 1 : raise RuntimeError ( f \" request failed ( { error . code } ): { detail } \" ) from error retry_after = error . headers . get ( \" Retry-After \" ) delay = float ( retry_after ) if retry_after and retry_after . isdigit () else 2 ** attempt time . sleep ( delay ) raise RuntimeError ( \" retry budget exhausted \" ) if __name__ == \" __main__ \" : with open ( \" query.json \" , encoding = \" utf-8 \" ) as payload_file : print ( json . dumps ( query_vector ( json . load ( payload_file )), indent = 2 )) The application should accept context from that response only after checking the source identifier, tenant metadata, active revision, and query bounds defined by its contract. Keep those checks beside the adapter so switching the backing service does not silently weaken them. 3. Put hard ceilings around retrieval work Query limits are not just a vendor quota. They are part of answer quality. Bound the number of collections, candidates, reranked items, context chunks, retries, and total elapsed time. Then log the chosen bounds next to a request ID and the returned document IDs. This gives the on-call engineer a trace that connects a surprising product answer to the decision that admitted it. Use one deadline for the whole request and smaller budgets for its stages. If retrieval exhausts its slice, return a controlled empty or partial result according to product policy rather than letting a slow source block checkout navigation. If a dependency responds with HTTP 429, honor Retry-After when present and retry only inside the remaining deadline. Three rapid attempts after the shopper has already left are just extra load. Grounding needs its own acceptance rule. A candidate without a source URL or document identifier should not enter generated context. A candidate from an inactive revision should be discarded before reranking. Two chunks from one product may be useful, but they should not masquerade as independent evidence. Grouping by product or parent document before final selection keeps the citations honest. Short limits can hurt recall. The catch is that an aggressive cap is not suitable for broad comparison queries spanning many categories. For those, route to a deliberately wider query class, allow a larger offline or asynchronous budget, or ask the shopper to narrow the request. Stick with exact keyword and filter search when the catalog is small, attributes are clean, and semantic matching adds no demonstrated value. A semantic layer creates indexing, evaluation, and deletion work; it has to earn that complexity. 4. Compare systems by the contract they can enforce Vendor selection comes after the contract because “supports vectors” is too weak a test. Run the same checks against each candidate: explicit collection selection, metadata filtering before ranking, stable source fields, bounded candidate counts, deletion behavior, exportability, and enough observability to reconstruct one result. Also test tenant isolation with negative cases. Compliance failures tend to hide in the result that should never have been eligible. Option Strong fit Trade-off to verify Pinecone Teams that want a managed vector database and can shape their catalog records around its model Verify metadata-filter behavior, namespace design, export, and deletion against the retrieval contract Weaviate Teams that want vector and keyword retrieval choices with a self-managed option Operating it shifts capacity planning, upgrades, and incident ownership back to the team Elasticsearch Existing search teams that need lexical signals and structured product filters alongside vectors Mapping, scoring, and cluster tuning remain application-specific engineering work Infrai Teams that expect retrieval to sit beside other backend capabilities: 295 routes across 20 modules sit behind a consistent REST contract The broad platform surface is unnecessary when the only requirement is a dedicated, deeply tuned search cluster No row wins by default. Pinecone may reduce database operations, Weaviate may suit teams that need deployment control, and Elasticsearch may be the conservative choice when merchandisers already depend on its filters and lexical ranking. Infrai's concrete advantage here is that one API key covers 295 routes across 20 modules. Retrieval and other backend capabilities use the same REST contract without requiring another SDK, but the decision should still be made with the catalog's own relevance set and access-control tests. 5. Roll out with a reversible index change Build the new chunks into a versioned collection, not over the live one. Replay a fixed set of catalog queries and compare citation correctness, duplicate-product rate, empty-result rate, and latency under the same query bounds. Inspect the document IDs behind every disagreement. A higher similarity score is not proof of a better answer. Next, shadow production queries without serving the new results. Promote only after tenant-isolation tests, active-revision filters, and deletion checks pass. Keep the previous collection available for a short, policy-approved rollback window, then remove it according to retention rules. Finally, make the retrieval contract a release artifact: collection version, chunking version, required metadata, query classes, timeouts, retry ceiling, and source fields. Change one dimension at a time. When a stale SKU resurfaces, the team should be able to name the collection, revision, limit, and source document from a single trace. That's the standard. References https://arxiv.org/abs/2005.11401 https://docs.pinecone.io/guides/search/filter-by-metadata https://docs.weaviate.io/weaviate/search/hybrid https://www.elastic.co/guide/en/elasticsearch/reference/current/knn-search.html https://www.rfc-editor.org/rfc/rfc9110",
+            "url": "https://dev.to/brennancross2167/e-commerce-product-search-5-query-bounds-for-grounded-semantic-retrieval-46ik",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "git",
+                "programmation",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-10-17T19:45:32+00:00",
+            "collected_at": "2026-10-17T19:55:23.316322+00:00"
+        },
+        {
+            "id": "f88b1dcaf0b37edbe302057e51f8121b49560d340a7f367cc53f482c596a8e88",
+            "title": "Solid Glass Adds an AI UI Theme to shadcn/ui Projects",
+            "description": "Solid Glass is a public GitHub project that packages a glass-inspired design system for AI applications as a stylesheet intended to work with shadcn/ui. For developers building chat and agent interfaces, its practical proposition is narrow but useful: the stylesheet targets the data-slot attributes and classes that existing shadcn/ui components already carry, so adoption is presented as a theme integration rather than a component rewrite. Source: Solid Glass repository A theme layer, not an AI framework The project describes its visual treatment as sitting between flat design and “liquid glass”: surfaces retain outlines, borders, highlights and shadows, while avoiding the highly transparent treatment that can interfere with text legibility. Its stated design goals are tactility, precision, physicality and materiality; for interfaces with streaming responses, agent tasks and pending human decisions, it argues that neutral surfaces and reserved use of colour and motion help keep the UI calm and readable. Source: Solid Glass repository The core distribution is one CSS file. The repository says it defines colours, three glass thicknesses, a state and motion, while also defining shadcn/ui’s variable names. It supports light and dark modes, although the project describes dark mode as the intended material treatment. Source: Solid Glass repository Installation begins from a shadcn/ui project using React 19, Tailwind CSS 4 and Base UI components. Developers add the deeplethe/solid-glass/solid-glass stylesheet through the shadcn CLI, import it after Tailwind and shadcn styles, and remove the :root and .dark colour variables created by shadcn initialization because Solid Glass defines variables with the same names. Source: Solid Glass repository Components for agent-facing screens Beyond the theme, the project supplies installable components including status-glyph , panel , tag , dot-loader , turn-status , composer , tool-steps , diff-view , ask-card , context-ring , task-notice and reasoning . The README positions these around an agent workflow: showing activity, accepting a prompt, rendering tool steps and diffs, asking for user input, and displaying context usage. Source: Solid Glass repository The repository also includes complete screen-level “Blocks,” including an agent-workspace , plus a Create page that exposes controls for thickness, tint, chart colour, type, radius, rim and blur and produces corresponding CSS variable changes. Source: Solid Glass repository The compatibility trade-off Analysis: Solid Glass’s most consequential choice is to treat shadcn/ui as the compatibility surface rather than create another self-contained component ecosystem. That should reduce initial adoption cost for teams already on the shadcn stack, because the theme is designed around existing slots and classes. It also leaves an unresolved maintenance question: the approach depends on those structural conventions remaining stable enough for a stylesheet to keep selecting the intended parts. The repository notes that some displayed shadcn/ui components differ slightly from stock versions, while saying the stylesheet does not depend on those differences. Source: Solid Glass repository This is therefore best read as a focused UI layer, not evidence of a broader agent runtime or application framework. Its value will depend less on the glass treatment itself than on whether its component conventions fit a team’s existing shadcn/ui codebase and the information density of its AI workflows. The repository is licensed under MIT and includes contribution, code-of-conduct and security-policy materials. Source: Solid Glass repository",
+            "url": "https://dev.to/dd8888/solid-glass-adds-an-ai-ui-theme-to-shadcnui-projects-hj3",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "git",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-10-17T19:44:14+00:00",
+            "collected_at": "2026-10-17T19:55:23.316873+00:00"
+        },
+        {
+            "id": "0a87293869c217d991d73805779b6f8c7819276e380f474d0c0fe33984a791c4",
+            "title": "French Assembly Narrowly Adopts Stablecoin Swap Tax Proposal",
+            "description": "If passed, the measure would subject French cryptocurrency holders to a 31.4% capital gains tax each time they exchange a cryptocurrency for a stablecoin. Analysts agree this would prompt French crypto holders to consider alternatives to park their digital assets. France’s National Assembly Adopts Crypto-To-Stablecoin Exchange Taxation France is on the verge of tightening its […]",
+            "url": "https://news.bitcoin.com/regulation-and-legal/french-assembly-narrowly-adopts-stablecoin-swap-tax-proposal/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto",
+                "git"
+            ],
+            "published_at": "2026-10-17T19:30:04+00:00",
+            "collected_at": "2026-10-17T19:55:40.590371+00:00"
+        },
+        {
+            "id": "fcf73aabe3e37fa7f99807ecd101d7b4c5b1f0745e716c1716bfb7acb8253b6f",
+            "title": "Replit is no longer working with Anthropic, CEO says",
+            "description": "Over the weekend, Masad clarified that OpenAI would replace Anthropic as its default model provider. Claude will still be available to customers on the platform.",
+            "url": "https://techcrunch.com/2026/10/17/replit-is-no-longer-working-with-anthropic-ceo-says/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "anthropic",
+                "innovation",
+                "openai",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-10-17T18:48:08+00:00",
+            "collected_at": "2026-10-17T19:55:20.681769+00:00"
+        },
+        {
+            "id": "1d7e723c40532d45f5e6b019051ca0b1eaa22def94d47cd89d96c2f5ee915c9b",
+            "title": "Microsoft and CMU Team Up to Train Early Career Software Engineers",
+            "description": "Comments",
+            "url": "https://www.cs.cmu.edu/news/2026/microsoft-cmu-praise",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-17T18:45:07+00:00",
+            "collected_at": "2026-10-17T19:55:22.933012+00:00"
+        },
+        {
+            "id": "73908bf8c65eef7bdfa260e726f519e95321610255e89a2d7f112f06cf5613aa",
+            "title": "Pattern Matching Beats Narrative Reasoning",
+            "description": "Comments",
+            "url": "https://blog.scottstevenson.net/p/pattern-matching-beats-narrative",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-17T18:34:13+00:00",
+            "collected_at": "2026-10-17T19:55:22.932491+00:00"
+        },
+        {
+            "id": "cc944646af06fe95f61153bd8ceef106f990c67a8a4a45983d0fd3b9f2d42abd",
+            "title": "AI Can Write the Code. Who Verifies It?",
+            "description": "Comments",
+            "url": "https://mihaisplace.com/blog/ai-can-write-the-code-who-verifies-it",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-17T18:31:30+00:00",
+            "collected_at": "2026-10-17T19:55:22.932777+00:00"
+        },
+        {
+            "id": "92a6c6da6c6a2ce8e2485d5bde741bf167b63ddccbc365653b0dc5f4225a34e6",
+            "title": "Lopp’s Wrench Attack Map Hits 702 After AI-Assisted Search Work",
+            "description": "Bitcoin security expert Jameson Lopp’s archive of physical attacks against cryptocurrency holders has more than doubled to over 700 documented incidents after researcher Pizza Bitcoiner used artificial intelligence (AI)-assisted searches to uncover hundreds of overlooked cases. The expanded records expose a disturbing history of kidnappings, home invasions, and violent robberies, including 31 reported deaths since […]",
+            "url": "https://news.bitcoin.com/security/lopps-wrench-attack-map-hits-702-after-ai-assisted-search-work/",
+            "source": "Bitcoin.com News",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto",
+                "intel"
+            ],
+            "published_at": "2026-10-17T18:30:49+00:00",
+            "collected_at": "2026-10-17T19:55:40.590489+00:00"
+        },
+        {
+            "id": "3e5b1f5383682a336b179456d74955cfa52bc5c77440b4b74411a1db04c0d007",
+            "title": "Abolish AI! Manifesto",
+            "description": "Comments",
+            "url": "https://abolish-ai.net/abolish-ai-a-manifesto/",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-10-17T18:25:58+00:00",
+            "collected_at": "2026-10-17T19:55:23.152109+00:00"
+        },
+        {
+            "id": "35530b9998463d63601590c8423cf4cf32529ed0871a7f5769a76e177bc6bdd1",
+            "title": "PwnEscape: Guest-to-Host KVM Escape (CVE-2026-99999)",
+            "description": "Comments",
+            "url": "https://pwn.ai/blog/pwnescape",
+            "source": "Lobsters",
+            "category": "cybersecurite",
+            "tags": [
+                "cve",
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-10-17T18:24:39+00:00",
+            "collected_at": "2026-10-17T19:55:23.152263+00:00"
+        },
+        {
+            "id": "6ea16c172c83caf06b5859e77c232da68e3e4e443f8723e0eb20831611534265",
+            "title": "OpenCode Hacked: User credentials leaked",
+            "description": "Comments",
+            "url": "https://twitter.com/opencode/status/2111516673953935833",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-17T18:01:41+00:00",
+            "collected_at": "2026-10-17T19:55:22.932446+00:00"
+        },
+        {
+            "id": "beb4bf96a9ef74cb1f79cfed1a548252e2ec72e7e6a5398a3ece560d29146f34",
+            "title": "I Became a Citizen of Japan",
+            "description": "Comments",
+            "url": "https://www.derekwessman.com/blog-1/natural",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-17T17:36:17+00:00",
+            "collected_at": "2026-10-17T19:55:22.932614+00:00"
+        },
+        {
+            "id": "3a309b4588ccf6dadcd84c28d57ff4b29853f1d44959506a155c50c1fcccfd89",
+            "title": "XRP Ledger Nears Oct. 23 Upgrade as Lending Votes Fall Short",
+            "description": "The XRP Ledger is heading toward an Oct. 23 software upgrade that fixes a peculiar security flaw, one that could let certain authorized accounts create tokens instead of destroying them. Meanwhile, its long-awaited native lending system remains stuck awaiting approval. XRP Ledger’s Cleanup Upgrade Approaches Activation The XRP Ledger (XRPL) is preparing to activate fixCleanup3_4_0 […]",
+            "url": "https://news.bitcoin.com/technology/xrp-ledger-nears-oct-23-upgrade-as-lending-votes-fall-short/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-10-17T17:30:58+00:00",
+            "collected_at": "2026-10-17T19:55:40.590608+00:00"
+        },
+        {
+            "id": "76ac2616b7ef65d6c6f0cfdd960f915d20f9371760ed175bfb6a72a47610c9f5",
+            "title": "Development statistics for the 7.2 kernel",
+            "description": "Comments",
+            "url": "https://lwn.net/Articles/1088776/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-17T17:14:12+00:00",
+            "collected_at": "2026-10-17T19:55:22.932139+00:00"
+        },
+        {
+            "id": "064bb9748d62b2ebfffe12490e19303e3b49e270f5babd3578cfbc9bb77cd5e9",
+            "title": "tsc-ts: TypeScript written in TypeScript",
+            "description": "Comments",
+            "url": "https://github.com/vercel-labs/tsc-ts",
+            "source": "Hacker News",
+            "category": "web",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup",
+                "typescript"
+            ],
+            "published_at": "2026-10-17T17:10:27+00:00",
+            "collected_at": "2026-10-17T19:55:22.932354+00:00"
+        },
+        {
+            "id": "37dbc7e1b65b4dd3ea3fa6817ce40e573061e9412f76a3810a5f8ab0e9f10efe",
+            "title": "Principles of Anchor Engineering",
+            "description": "Comments",
+            "url": "https://nappingtoheavymetal.com/post/2026-09-15-principles-of-anchor-engineering/",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-10-17T17:08:33+00:00",
+            "collected_at": "2026-10-17T19:55:23.152663+00:00"
+        },
+        {
+            "id": "4e9a757f861c0ea6e4263d7cdadb5a838dffb4207fd56b918362d096bf80bfd9",
+            "title": "Gold is now the top U.S. export",
+            "description": "Comments",
+            "url": "https://www.numismaticnews.net/gold-now-top-u-s-export",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-17T17:06:07+00:00",
+            "collected_at": "2026-10-17T19:55:22.931906+00:00"
+        },
+        {
+            "id": "5ae5c54823aa7726153c057f4d8ae8c65b31c75f162528aa1dcca3302b8acaa3",
+            "title": "Artie (YC S23) Is Hiring Enterprise AES and Senior Engineers",
+            "description": "Comments",
+            "url": "https://www.artie.com/careers",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-17T17:02:50+00:00",
+            "collected_at": "2026-10-17T19:55:22.932401+00:00"
+        },
+        {
+            "id": "17b13e948a09591c5272f953d4e24670d219c6e0b90d9aaf9722bd19edee7a9e",
+            "title": "Goldman, Wells Fargo, Morgan Stanley see tokenization as a growth play, not a threat",
+            "description": "",
+            "url": "https://www.coindesk.com/business/2026/10/17/goldman-wells-fargo-morgan-stanley-see-tokenization-as-a-growth-play-not-a-threat",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-10-17T17:00:00+00:00",
+            "collected_at": "2026-10-17T19:55:40.408642+00:00"
+        },
+        {
+            "id": "72a241736d03c91444ea6ba215514dbe088f6f6649b3e42f51e1246916547b4a",
+            "title": "Turkey’s Justice Minister Confirms Richard Heart’s Istanbul Bust",
+            "description": "Turkish authorities detained HEX founder Richard Heart and four others in Istanbul, uncovering an extraordinary collection of cash, luxury goods, weapons and electronics. The haul included an estimated $7.15 million in cash, six cryptocurrency wallets, and hundreds of designer accessories. Turkey’s Justice Minister Confirms Richard Heart Detention Turkey’s Justice Minister Akın Gürlek confirmed Saturday, Oct. […]",
+            "url": "https://news.bitcoin.com/regulation-and-legal/turkeys-justice-minister-confirms-richard-hearts-istanbul-bust/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-10-17T16:30:59+00:00",
+            "collected_at": "2026-10-17T19:55:40.590729+00:00"
+        },
+        {
+            "id": "c3874f1382e542588d0f923b20a440a5918f564c99a3ed84d67af38ec876d1e7",
+            "title": "Guide: Pokémon Pokopia Pumpkaboo's Sweet Surprises Halloween Event Guide, From Pumpkin Candy To Gourgeist",
+            "description": "Treat yourself to two Ghost-types this Halloween. The Pumpkaboo's Sweet Surprises event runs from 17th October to 1st November, adding two Gen 6 Ghost-types to Pokémon Pokopia. For those who have played previous Pokopia limited-time events , the format will be familiar: a new Pokémon, Pumpkaboo, visits a Pokémon Center and requests a currency (Pumpkin Candy) in exchange for items which can help make a couple new habitats. But in a spooky twist, this time is you have to scare the event currency out of your resident Pokémon. Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/guides/pokemon-pokopia-pumpkaboo-sweet-surprises-halloween-event-guide",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-10-17T16:00:00+00:00",
+            "collected_at": "2026-10-17T19:55:38.552569+00:00"
+        },
+        {
+            "id": "b7016d2db526680cf6649978098a998d4aaa8a2cc9f3b643c0e43a928938c12f",
+            "title": "Pele – Mermaid diagrams as themeable SVG",
+            "description": "Comments",
+            "url": "https://pele.run/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-17T15:55:09+00:00",
+            "collected_at": "2026-10-17T19:55:22.932307+00:00"
+        },
+        {
+            "id": "b054b1996a2d86e63d88497a1a8c19cbd033a1011314e99e9f7e9ed0c4d4f747",
+            "title": "Future of Programming",
+            "description": "Comments",
+            "url": "https://www.youtube.com/watch?v=bISIgO4x49A",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-10-17T15:42:25+00:00",
+            "collected_at": "2026-10-17T19:55:23.152789+00:00"
+        },
+        {
+            "id": "09a02417136a6618ba06e3c4f9c07f964b56a15a50954aefa6fe8c87c368f769",
+            "title": "HyperX Cloud Alpha Air Review: Open-back and budget-friendly",
+            "description": "The HyperX Cloud Alpha Air is the brand's first open-back gaming headset. It's lightweight and comfortable, and it sounds very good. But microphone pickup is low, and it doesn't seem to work with the brand's peripheral software (yet).",
+            "url": "https://www.tomshardware.com/peripherals/gaming-headsets/hyperx-cloud-alpha-air-review",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "pc"
+            ],
+            "published_at": "2026-10-17T15:40:00+00:00",
+            "collected_at": "2026-10-17T19:55:25.823908+00:00"
+        },
+        {
+            "id": "da1c2b86a5b6acf42f68f0ad3165942b264455b5080f67e3ab13a416d54c148b",
+            "title": "Richard Heart Arrested, XRP DAT Rings Nasdaq Bell, And More – Weekly Recap",
+            "description": "This week’s stories included crypto treasuries, legal drama, AI infrastructure and exchange fundraising. Evernorth showcased its 473 million XRP treasury after listing on Nasdaq, while HEX founder Richard Heart was reportedly detained in Istanbul. Larry Fink warned that halting U.S. data center construction could trigger recession, Binance US reportedly sought funding at less than a […]",
+            "url": "https://news.bitcoin.com/featured/richard-heart-arrested-xrp-dat-rings-nasdaq-bell-and-more-weekly-recap/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-10-17T15:30:19+00:00",
+            "collected_at": "2026-10-17T19:55:40.590843+00:00"
+        },
+        {
+            "id": "273d744b399a616439055d07c99f1601b1677c896445f576f623f50fb0af6108",
+            "title": "Ember’s new temperature-controlled mug makes my nightly tea ritual even better",
+            "description": "The biggest change about Ember's new mug is that you no longer have to open the app to adjust your drink’s temperature.",
+            "url": "https://techcrunch.com/2026/10/17/embers-new-temperature-controlled-mug-makes-my-nightly-tea-ritual-even-better/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-10-17T15:30:00+00:00",
+            "collected_at": "2026-10-17T19:55:20.681863+00:00"
+        },
+        {
+            "id": "31176ae3174ff7449e52a38dd3addaf5d582cdd72e4a90982255fcfc051d92c1",
+            "title": "Quad 8-pin mod protects the $8,500 RTX 5090 you can’t replace from melting",
+            "description": "Redditor showcases a new quad 8-pin power-conversion kit for the 16-pin power connector on Nvidia GeForce RTX graphics cards.",
+            "url": "https://www.tomshardware.com/pc-components/gpus/quad-8-pin-mod-protects-the-usd8-500-rtx-5090-you-cant-replace-from-melting-modders-custom-power-solution-claims-to-fix-nvidia-16-pin-gpu-meltdowns",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "nvidia",
+                "pc"
+            ],
+            "published_at": "2026-10-17T15:20:00+00:00",
+            "collected_at": "2026-10-17T19:55:25.823987+00:00"
+        },
+        {
+            "id": "622bd951152759335bff398f676970b5a04f59754ebbdf6734e5c8d432308120",
+            "title": "Hackers breach Microsoft 365 tenants via ConnectWise supply-chain attack",
+            "description": "ConnectWise has shut down customer access to its Cloud Backup service (formerly SkyKick Cloud Backup) after hackers accessed application identities and compromised Microsoft 365 tenants. [...]",
+            "url": "https://www.bleepingcomputer.com/news/security/hackers-breach-microsoft-365-tenants-via-connectwise-supply-chain-attack/",
+            "source": "BleepingComputer",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "malware",
+                "ransomware"
+            ],
+            "published_at": "2026-10-17T15:18:51+00:00",
+            "collected_at": "2026-10-17T19:55:18.735470+00:00"
+        },
+        {
+            "id": "8fe14fcf632ce9c5506b4e3297edfb4a3275d73da757e6d372520fe7e3ec4404",
+            "title": "The Apple HomeView already lost to one of the most unloved Google products in my house",
+            "description": "The Google Pixel Tablet's simple versatility gives it the edge over Apple's first try at a smart home hub.",
+            "url": "https://www.androidauthority.com/apple-homeview-vs-pixel-tablet-missing-features-3723785/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-10-17T15:00:07+00:00",
+            "collected_at": "2026-10-17T19:55:31.718797+00:00"
+        },
+        {
+            "id": "9094e203d5581eae759770e1539061f12e6a898242b1a9e0365b8a99f97d93ae",
+            "title": "MOZA AY210 Force Feedback Base and MFY Yoke review: Taking flight sim immersion to the next level",
+            "description": "The MOZA AY210 Force Feedback Base and MFY Yoke Bundle brings force feedback and autopilot following to the world of desktop flight simulators.",
+            "url": "https://www.tomshardware.com/peripherals/controllers-gamepads/moza-ay210-force-feedback-base-and-mfy-yoke-review",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "pc"
+            ],
+            "published_at": "2026-10-17T15:00:00+00:00",
+            "collected_at": "2026-10-17T19:55:25.824059+00:00"
+        },
+        {
+            "id": "496fe609eb075e2c333627a29fee728680a5993f849dbe12f013d923d7475829",
+            "title": "Citrini sees a tokenization boom. The harder question is who profits",
+            "description": "",
+            "url": "https://www.coindesk.com/business/2026/10/17/citrini-sees-a-tokenization-boom-the-harder-question-is-who-profits",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-10-17T15:00:00+00:00",
+            "collected_at": "2026-10-17T19:55:40.408699+00:00"
+        },
         {
             "id": "ca9271b9f77c8f98dbaad5aaf217b0f31bee117aa171e13f75470ec5e857bd16",
             "title": "Nvidia reportedly insists the RTX 5090 isn't dead despite severe shortages and removed listings at multiple retailers",
@@ -325,6 +971,21 @@
             "collected_at": "2026-10-17T14:44:57.292973+00:00"
         },
         {
+            "id": "02427232eda6c5bcac052fccd8e5593da8f55e092140b8c9a314fc02ce2a87d9",
+            "title": "Show HN: Esp32sim – Run ESP32 firmware in the browser",
+            "description": "Comments",
+            "url": "https://github.com/mikroverk/esp32sim",
+            "source": "Hacker News",
+            "category": "web",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-17T13:51:08+00:00",
+            "collected_at": "2026-10-17T19:55:22.932923+00:00"
+        },
+        {
             "id": "b799c9c7c4b7192ae1a5071eca176fb58e168eeaa2235819cc4fdeaddc3c6e53",
             "title": "Sandisk’s 512GB Switch 2-ready microSD Express card is a steal for $98 during sale",
             "description": "Nintendo Switch 2 owners looking to download more games can take advantage of this deal on SanDisk’s officially licensed microSD Express card, which supports read speeds of up to 880 MB/s and offers 512GB of capacity.",
@@ -339,6 +1000,21 @@
             ],
             "published_at": "2026-10-17T13:39:06+00:00",
             "collected_at": "2026-10-17T14:44:59.551118+00:00"
+        },
+        {
+            "id": "170851101c2fcec5fe7fab1c1e7ae6c74dd11b8f16a3eb533876de2f049a0a5f",
+            "title": "Show HN: High-quality duck audio synthesizer",
+            "description": "Comments",
+            "url": "https://celphase.github.io/duck-pond/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-17T13:28:46+00:00",
+            "collected_at": "2026-10-17T19:55:22.932695+00:00"
         },
         {
             "id": "3cd074efa04e9ffb2291dff0def384669118a545e50073735d5c22ad0e0f412c",
@@ -525,6 +1201,21 @@
             ],
             "published_at": "2026-10-17T11:30:00+00:00",
             "collected_at": "2026-10-17T14:44:59.551381+00:00"
+        },
+        {
+            "id": "d2c0fb4efec878f78c3d59b91462febe64967a5a90d09989a292e8177ba72de2",
+            "title": "The future of programming (1982)",
+            "description": "Comments",
+            "url": "https://dl.acm.org/doi/10.1145/358453.358459",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-17T11:20:52+00:00",
+            "collected_at": "2026-10-17T19:55:22.933178+00:00"
         },
         {
             "id": "6808fc909befc84a450c298504de365cbc84f465b41e4604175d2467b616adf8",
@@ -1311,6 +2002,37 @@
             "collected_at": "2026-10-17T09:57:52.545275+00:00"
         },
         {
+            "id": "3a9452c54f6fdbabc81bd659c494cd87c4d66e842d6e4330ecedac289fa1dff3",
+            "title": "Source code of the Estonian online voting system",
+            "description": "Comments",
+            "url": "https://github.com/valimised/ivxv",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-17T03:18:39+00:00",
+            "collected_at": "2026-10-17T19:55:22.931956+00:00"
+        },
+        {
+            "id": "07cd96b9ae629b27eb7c918b4ffd9c73328ff14b2a91548469a0860787347d56",
+            "title": "A skeptic's first contact with Kubernetes (2024)",
+            "description": "Comments",
+            "url": "https://blog.davidv.dev/posts/first-contact-with-k8s/",
+            "source": "Hacker News",
+            "category": "devops",
+            "tags": [
+                "kubernetes",
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-17T03:16:25+00:00",
+            "collected_at": "2026-10-17T19:55:22.932873+00:00"
+        },
+        {
             "id": "65d6194a8b19b362085c560a73fd113fa3ec775dd39a96b64c81ede18c2fd256",
             "title": "Mark Wahlberg wants to take on the longevity-startup crowd with an affordable gym concept",
             "description": "Mark Wahlberg, who once sank money into a gym chain that got kicked off the NYSE, is now building his own, and he promises you’ll get a cold plunge, a blood panel and a protein muffin without needing a trust fund.",
@@ -1669,6 +2391,21 @@
             "collected_at": "2026-10-17T09:57:50.059829+00:00"
         },
         {
+            "id": "410ae70aa0cfae08c7d0fe01ce28d84b5c62155d908e3fb50847ece590b70761",
+            "title": "Show HN: Things to Do API",
+            "description": "Comments",
+            "url": "https://thingstodoapi.com/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-16T23:58:34+00:00",
+            "collected_at": "2026-10-17T19:55:22.933089+00:00"
+        },
+        {
             "id": "aa5c0a1aafa7a94b536f56b908d0f3e8e87312656c8af3396770ed5dcc7a7138",
             "title": "Do you let LLMs write both your tests and your code?",
             "description": "I'm curious what stance others have taken? Or what they've experienced with this? I'm toying with adding a rule to our values.md that the LLM can only significantly generate one or the other. I'm reviewing a merge request at the moment where it's clear the LLM mostly did both, and they're highly tautological. And I can see how it over engineered the code, just to be able to write more tests almost.",
@@ -1683,6 +2420,36 @@
             ],
             "published_at": "2026-10-16T23:53:05+00:00",
             "collected_at": "2026-10-17T02:24:08.321698+00:00"
+        },
+        {
+            "id": "72f5a73135c2ad71993ec94b90b7ccc68b81679e95dda118a62fb1760bcc1e78",
+            "title": "Dam removals are bringing fish back across the northeastern United States",
+            "description": "Comments",
+            "url": "https://www.smithsonianmag.com/science-nature/dam-removals-are-bringing-fish-back-across-the-northeastern-united-states-striking-down-one-tiny-barrier-at-a-time-180989679/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-16T23:47:31+00:00",
+            "collected_at": "2026-10-17T19:55:22.932185+00:00"
+        },
+        {
+            "id": "d5c12904d62ec934ca2cce7031e3d89f66c31952cb5f22637e4fcf8f2aa26bb0",
+            "title": "Bleached corals thrive within days when touching healthy neighbour",
+            "description": "Comments",
+            "url": "https://www.nature.com/articles/d41586-026-03266-x",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-16T23:38:27+00:00",
+            "collected_at": "2026-10-17T19:55:22.931851+00:00"
         },
         {
             "id": "89fd068903f6786e43061bad40be9241647933c6dbd88b6138e46981f9bb0a7e",
@@ -2551,6 +3318,21 @@
             ],
             "published_at": "2026-10-16T18:52:39+00:00",
             "collected_at": "2026-10-16T20:21:05.337971+00:00"
+        },
+        {
+            "id": "63a3b71312923e5f0b221bea7b136a66884c7966b60c4c1fcba626bc1187c351",
+            "title": "Espresso machine can run Doom",
+            "description": "Comments",
+            "url": "https://www.gamespot.com/articles/this-espresso-machine-can-run-doom/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-16T18:49:31+00:00",
+            "collected_at": "2026-10-17T19:55:22.933051+00:00"
         },
         {
             "id": "f3ededa819dce2d0fb96718f7d8c5bafbd235f6705035cfd89e474fd84baae33",
@@ -4312,6 +5094,21 @@
             ],
             "published_at": "2026-10-16T13:22:50+00:00",
             "collected_at": "2026-10-16T15:52:27.985890+00:00"
+        },
+        {
+            "id": "abf23f8013453ee4d88568d15d38466d442b72baed5f6cc36d1871f684c30c16",
+            "title": "Show HN: Parin – A 2D game engine between raylib and Godot, written in Dlang",
+            "description": "Comments",
+            "url": "https://github.com/Kapendev/parin",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-16T13:22:49+00:00",
+            "collected_at": "2026-10-17T19:55:22.932830+00:00"
         },
         {
             "id": "3f607d9043186974e4e56a9081c76ecaa63c08ec6244004511919fe049b39dd4",
@@ -12352,6 +13149,21 @@
             "collected_at": "2026-10-15T10:38:29.437346+00:00"
         },
         {
+            "id": "76aa8e6ab6d5fa0585549b512bff1a135a4414c96701217943f0a46a52469762",
+            "title": "The Commodore 64 hardware simulator: break chips and pins, see the results",
+            "description": "Comments",
+            "url": "https://github.com/antirez/c64-hw-simulator",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-15T07:18:14+00:00",
+            "collected_at": "2026-10-17T19:55:22.932007+00:00"
+        },
+        {
             "id": "26a71a2aab8ce7c29f4af61e5fe75f4da58a63b33135b4319ea6f60294e765f6",
             "title": "Someone got Googlebook OS running on a Chromebook, and it’s surprisingly smooth",
             "description": "An experimental install suggests existing Chromebooks may handle Google's new OS just fine.",
@@ -14203,6 +15015,21 @@
             ],
             "published_at": "2026-10-14T20:48:07+00:00",
             "collected_at": "2026-10-14T21:09:47.906117+00:00"
+        },
+        {
+            "id": "00895468e4fd97e3eaa56b74ae7a74bf9372698bc51e99f944084255387e0c51",
+            "title": "Vintage Cassettes: 1963-2010",
+            "description": "Comments",
+            "url": "http://vintagecassettes.com/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-14T20:41:36+00:00",
+            "collected_at": "2026-10-17T19:55:22.932574+00:00"
         },
         {
             "id": "c079bb71a2dd9d129fc6a75ec4671ab7871390e34f4d3f8d5eb25fc10487cf93",
@@ -19350,6 +20177,21 @@
             ],
             "published_at": "2026-10-14T04:30:29+00:00",
             "collected_at": "2026-10-14T10:57:30.376026+00:00"
+        },
+        {
+            "id": "d435d29bf7933d6edb9a7c06b79eb91d9712c4fb3ab849ffc65fbb7f8a67d1a6",
+            "title": "A Tudor life in the time of plague (2020)",
+            "description": "Comments",
+            "url": "https://www.historytoday.com/archive/history-matters/tudor-life-time-plague",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-14T04:23:25+00:00",
+            "collected_at": "2026-10-17T19:55:22.932966+00:00"
         },
         {
             "id": "2226566f31e038d72224a23721d4cbf081ee82157ad9fa7ffaf720593e66680c",
@@ -293249,6 +294091,83 @@
             ],
             "published_at": null,
             "collected_at": "2026-10-17T14:44:55.597633+00:00"
+        },
+        {
+            "id": "e41822633f704ba720543e489022b1bfba1ee44653b8640ea5dd381c4fbdd743",
+            "title": "TikTok bans Musk documentary account",
+            "description": "Just ahead of the wider release of Alex Gibney's Musk documentary, TikTok has banned the film's social media account from its platform. TikTok did not immediately respond to a request for comment. According to The Hollywood Reporter, the film's distributor, Bleecker Street, was informed Friday afternoon that a \"permanent suspension\" was imminent. Bleecker Street has […]",
+            "url": "https://www.theverge.com/tech/1013453/tiktok-bans-alex-gibneys-musk-documentary",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-10-17T19:55:20.801281+00:00"
+        },
+        {
+            "id": "de0cce47f02c45d948f6b05ab3fe2cab655e8049bef2b2325da03ec3ea6d5dc5",
+            "title": "Mercedes-AMG’s first ground-up SUV is a 1,150hp electric beast",
+            "description": "Earlier this year, Mercedes' AMG performance brand grabbed our attention with the GT four-door coupe, a souped-up sports sedan with three axial flux motors delivering over 1,150 horsepower. Well, now meet its beefier cousin, the 2028 Mercedes-AMG GT SUV, an equally powerful, ultra-fast-charging electric people-hauler. The AMG GT SUV (say that five times fast) marks […]",
+            "url": "https://www.theverge.com/transportation/1013088/mercedes-amg-gt-suv-price-specs-performance",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-10-17T19:55:20.801401+00:00"
+        },
+        {
+            "id": "856e060c0f3ab2f7cb9400dcfb9fd467f045602142202e61a3770433c741660a",
+            "title": "Elon Musk settles lawsuits over $1 million voter giveaway",
+            "description": "In 2024, Elon Musk promised to give away $1 million a day to a randomly selected registered voter in a swing state. That prompted legal challenges, raised questions about its legality, and drew lawsuits from two Arizona residents claiming the lottery was a fraud. Musk has now agreed to settle the two lawsuits filed in […]",
+            "url": "https://www.theverge.com/tech/1013431/elon-musk-settles-lawsuits-over-1-million-voter-giveaway",
+            "source": "The Verge",
+            "category": "cloud",
+            "tags": [
+                "aws",
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-10-17T19:55:20.801484+00:00"
+        },
+        {
+            "id": "0b81a58f5b3fe1314623827b8a9e8ec43bb517860bb380baf5cd60ad6a17ac11",
+            "title": "Meta removes language that may have allowed it to scrape news sites",
+            "description": "After backlash, Meta is updating its terms again to remove language that suggested it could scrape content from sites, including news sites, to train its AI. Specifically, the following language no longer appears on the commercial terms page: … Meta may use any content from such domains, web pages, or URLs to provide, develop, improve, […]",
+            "url": "https://www.theverge.com/tech/1013409/meta-removes-language-that-may-have-allowed-it-to-scrape-news-sites",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-10-17T19:55:20.801580+00:00"
+        },
+        {
+            "id": "5e77e5d05a55500be66cf2f3f00a60d1f7766b24672f6bc1f42b1c9f394a4931",
+            "title": "Pikmin 4 is $20 off ahead of its $10 Nintendo Switch 2 update",
+            "description": "If you’re wondering what video game to play this weekend, my colleague Sheena Vasani spotted a discounted Nintendo Switch title with instant digital delivery. Walmart has the digital version of Pikmin 4 for Switch discounted to $39.88, just over $20 lower than its usual price. This version of the game follows the same puzzle formula […]",
+            "url": "https://www.theverge.com/gadgets/1013105/pikmin-4-nintendo-switch-deal-sale",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "git",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-10-17T19:55:20.801670+00:00"
         }
     ]
 }
