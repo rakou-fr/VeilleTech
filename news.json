@@ -1,7 +1,1510 @@
 {
-    "updated_at": "2026-10-21T02:45:08.262966+00:00",
-    "count": 20046,
+    "updated_at": "2026-10-21T10:56:22.891039+00:00",
+    "count": 20151,
     "articles": [
+        {
+            "id": "d1554115900e9fc16edde02db6ab8050efc1a0985134c533c2c7f4e30acd04af",
+            "title": "Where Your Coding Agent's Token Bill Goes, and 7 Levers to Cut It",
+            "description": "Your coding agent answered a one-line question, and that request still carried the entire session's history. Nothing broke. Anthropic's docs say it plainly: a one-line question in a session that has been open all day still draws usage for the whole conversation. That's the part of the bill that's easy to miss. This article shows where a coding agent's tokens actually go, then walks through seven levers to cut them, in the order that usually pays off first: measure, cache, scope, control output, route, batch, and budget. Where the tokens go Anthropic's Claude Code cost docs spell out the mechanics. Claude Code sends your full conversation with every request. Each time Claude uses a tool, it sends another request carrying that batch of tool results. So every new request re-sends the history that came before it. With prompt caching, that history is billed at the cheaper cached rate, but it's still billed. The same page lists the usual reasons usage climbs in a long session: Long context. Every request carries everything that came before it. Cache misses. Your first message after a break longer than the cache lifetime reprocesses the full context. Background work. Scheduled tasks, subagents and agent teammates each send their own requests. Compaction. /compact reads the conversation it summarizes, so compacting a large context is itself a large request. Output adds its own cost. On Anthropic's current price table , output tokens cost five times the base input rate for every model listed, and the cost docs note that extended thinking tokens are billed as output. So the bill has three drivers: how much context each request carries, how often that context is re-sent at full price, and how much the model writes back. Each lever below targets one of them. Lever 1: Measure before you change anything You can't cut what you can't see. In Claude Code, run /usage . The Session block shows token usage by model, split into input, output, cache read and cache write. From v2.1.251, a Prompt cache (main) line adds the share of input tokens served from cache, the number of misses and, when Claude Code can tell, a likely cause. On a Pro, Max, Team or Enterprise plan, the same screen attributes usage to skills, subagents, plugins and individual MCP servers, and recommends changes for anything behind 10% or more of recent usage. Run /context too, to see what fills the context window before you've typed anything. If you call the API directly, the numbers are in every response. Anthropic returns cache_creation_input_tokens , cache_read_input_tokens and input_tokens in usage ; OpenAI reports cached input under usage.input_tokens_details.cached_tokens . Log them per request, per feature, before you touch anything else. Lever 2: Make caching actually hit Prompt caching is the biggest lever when the same prefix is sent over and over, which is exactly what agents do. Per the Anthropic prompt caching docs , cache reads cost 0.1x the base input price (0.05x on Opus 5.5 and Sonnet 5.5), 5-minute cache writes cost 1.25x, and the default cache lives 5 minutes, refreshed for free each time it's used. On OpenAI, prompt caching is on by default for supported models. Claude Code caches for you. If you build your own agent on the Anthropic API, put stable content first and mark the end of it: import anthropic client = anthropic . Anthropic () repo_guide = open ( \" docs/agent-context.md \" ). read () # large and stable diff_text = open ( \" change.diff \" ). read () # different every call response = client . messages . create ( model = \" claude-sonnet-5-5 \" , max_tokens = 1024 , system = [ { \" type \" : \" text \" , \" text \" : \" You review pull requests for this repo. \" }, { \" type \" : \" text \" , \" text \" : repo_guide , \" cache_control \" : { \" type \" : \" ephemeral \" }}, ], messages = [{ \" role \" : \" user \" , \" content \" : diff_text }], ) print ( response . usage ) Three traps from the docs break caching silently: A breakpoint on content that changes. Put a timestamp or the user's message in the marked block and the prefix hash never matches, so you pay for a cache write on every request and never get a read. Prompts below the minimum. Shorter prompts aren't cached and no error is returned. If cache_creation_input_tokens and cache_read_input_tokens are both 0, nothing was cached. Changing tools mid-session. Modifying tool definitions invalidates the entire cache, because tools sit at the start of the prefix. Lever 3: Scope the context The cheapest token is the one you never send. The Claude Code cost docs list the habits that keep context small: /clear between unrelated tasks. Stale context is paid for on every later message. When you want a fresh start, /clear costs nothing; /compact is a large request. Keep CLAUDE.md short. It loads at every session start. The docs suggest under 200 lines and moving workflow-specific instructions into skills, which load only when invoked. Trim MCP servers. Disable servers you aren't using with /mcp . The docs add that CLI tools such as gh are still more context-efficient than MCP servers. Filter verbose output. A hook can return only the failing lines of a test run instead of the full log. Write specific prompts. \"Improve this codebase\" triggers broad scanning; \"add input validation to the login function in auth.ts\" doesn't. Lever 4: Control output Because output costs more per token, small changes here add up. For simple tasks, the docs suggest lowering the effort level with /effort , or disabling thinking in /config on models that allow it. On models with a fixed thinking budget, the MAX_THINKING_TOKENS environment variable lowers the budget; adaptive-reasoning models use effort levels instead. On the API, set max_tokens to what the task needs, and ask for the format you'll actually use: a diff instead of a rewritten file, a list of findings instead of an essay. Lever 5: Route each task to the right model Not every step needs your strongest model. The cost docs say Sonnet handles most coding tasks well and costs less than Opus, which they reserve for complex architectural decisions and multi-step reasoning. For simple subagent tasks, they suggest model: haiku . Per the subagents docs , a project subagent named Explore overrides the built-in one and keeps its own model field. Save this as .claude/agents/explore.md to run codebase exploration on a lower-cost model: --- name : Explore description : \" Searches and reads the codebase to answer questions without making changes.\" tools : Read, Grep, Glob model : haiku --- Find the files and symbols relevant to the question. Return paths, line references and a short summary, not full file contents. Route by task, not by habit: cheap models for search and summarizing, the big one for design decisions. Lever 6: Batch what doesn't need an answer now Some agent work isn't interactive: running an eval set, reviewing a backlog of files, generating docs overnight. The Message Batches API offers a 50% discount on all usage compared with standard prices. Most batches finish in under an hour, and results are available once every request completes or after 24 hours, whichever comes first. The docs also note that batch and caching discounts stack. Lever 7: Set budgets that stop runs Every lever above lowers the average cost. Budgets cap the worst case. For headless runs, Claude Code's CLI can stop once estimated spend reaches a limit: claude -p --max-budget-usd 5.00 \"Fix the failing tests in src/auth\" The flag works in print mode only and checks against Claude Code's own client-side estimate. Above that, the cost docs list workspace spend limits in the Claude Console and spend limits per organization, group or member on Team and Enterprise plans. If you use agent teams, watch them closely: the docs say they use about 7x more tokens than standard sessions when teammates run in plan mode, and each teammate keeps consuming tokens until it exits. A 10-minute token bill checklist Did you check /usage and /context (or the API usage fields) before changing anything? Is your cache hit rate visible, and are misses explained? Is the cache breakpoint on the last block that stays identical across requests? Do you /clear between unrelated tasks? Is CLAUDE.md under 200 lines, with workflows moved to skills? Are unused MCP servers disabled? Are effort, thinking and max_tokens matched to the task? Do exploration and simple subagents run on a cheaper model? Is non-urgent bulk work going through a batch API? Does every headless or automated run have a spend cap? The order matters. Measure first, then fix the levers that touch every request (caching and context), and only then tune the rest. If you want the full playbook, I wrote LLM Cost Control: The Builder's Guide to Cutting Your Token Bill . It's a 40+ page PDF that covers the same seven levers in depth, how token billing works, prompt caching done right, a worked end-to-end example, a 30-day plan, emergency cost triage and a pre-launch checklist. This article was written with the assistance of AI and reviewed by the author.",
+            "url": "https://dev.to/promptmaster/where-your-coding-agents-token-bill-goes-and-7-levers-to-cut-it-1e5j",
+            "source": "DEV Community",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "anthropic",
+                "aws",
+                "developpement",
+                "llm",
+                "openai",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-10-21T10:54:01+00:00",
+            "collected_at": "2026-10-21T10:56:03.944123+00:00"
+        },
+        {
+            "id": "8547bcde8c951b0f4e8c8f885e6117c534c4c58c5f86722fd293c8a4724af6c7",
+            "title": "Building Brief: A Zero-Backend, Sub-Second AI Note Distiller Powered by Groq",
+            "description": "Building Brief: A Zero-Backend, Sub-Second AI Note Distiller Powered by Groq ⚡ Every day, students, developers, and researchers copy-paste massive blocks of text into AI chatbots, waiting 10+ seconds for a generic summary while worrying about data privacy. To solve this, I built Brief ( n-o-t-e-s.web.app ) — a lightweight, privacy-focused web application designed to turn raw text and Markdown files into structured keypoints, Q&A study notes, and action items in less than a second . 💡 The Problem with Traditional AI Summarization Most AI summarization tools suffer from three major drawbacks: 🔒 Privacy & Data Security Concerns: Users must trust third-party servers with their personal notes or proprietary documents. ⏳ Inference Latency: Standard cloud LLM API endpoints take time to output long structured summaries. 🌀 Prompt Overhead: Re-prompting generic chatbots for specific formats (e.g., flashcards, bullet points, action items) adds unnecessary friction. ⚡ The Solution & Key Differentiators Brief was designed around three core principles: Privacy, Speed, and Purpose-Built UI . 1. Privacy-First \"Bring Your Own Key\" (BYOK) Architecture Brief has no backend server database . All API requests are constructed directly in the browser and dispatched straight to Groq Cloud endpoints using the user's own API key. Your data never touches an intermediate server, guaranteeing 100% data privacy. 2. Sub-Second Speed with Groq LPUs By leveraging Groq’s Language Processing Unit (LPU) architecture, text processing happens virtually instantaneously. Whether you feed it a 500-word quick memo or a 4,000-word lecture transcript, the distilled notes render in under a second. 3. Tailored Distillation Styles Rather than a blank chat prompt, Brief offers four specialized output modes: 🎯 Core Keypoints: Essential takeaways extracted cleanly. 📊 Executive Summary: High-level overview for quick decision-making. 📚 Study Notes (Q&A): Active recall questions and answers for exam prep. 📋 Action Items: Clear, actionable tasks derived from meeting notes or specs. 🛠️ Tech Stack Overview Frontend: Clean, responsive web design with real-time Markdown rendering. AI Engine: Groq Cloud API (utilizing high-speed open models). File Processing: Native browser API handling .txt and .md drag-and-drop uploads. Hosting: Firebase Hosting ( n-o-t-e-s.web.app ). 🚀 Try It Out & Share Your Feedback Brief is free, open, and ready to use without creating an account: 👉 Live App: https://n-o-t-e-s.web.app/ I’d love to hear your thoughts, feature requests, or technical feedback in the comments! What distillation formats would assist your workflow most?",
+            "url": "https://dev.to/alternate_percent/building-brief-a-zero-backend-sub-second-ai-note-distiller-powered-by-groq-8fc",
+            "source": "DEV Community",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "developpement",
+                "llm",
+                "programmation",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-10-21T10:53:44+00:00",
+            "collected_at": "2026-10-21T10:56:03.944539+00:00"
+        },
+        {
+            "id": "0392baf414eb8495cba6d942d05ac47b4a49554738fdbe416b6e93345578ef7b",
+            "title": "The Quantum Leap: How Quantum Machine Learning Will Redefine AI",
+            "description": "Quantum Machine Learning: The convergence of quantum mechanics and deep neural networks.. Source: Magnific When qubits meet neural networks, the fundamental limits of artificial intelligence will be rewritten. For the past decade, the rapid rise of Artificial Intelligence has been propelled by classical silicon hardware. GPUs and TPUs have expanded in size and efficiency, allowing us to train models with hundreds of billions of parameters. However, as classical computing hits physical limitations—such as silicon transistor miniaturization barriers and staggering energy consumption—a fundamental question arises: What comes after classical hardware? The answer lies at the atomic scale: Quantum Machine Learning (QML). By merging the principles of quantum mechanics with modern neural network architectures, QML promises to process complex multidimensional data at speeds that classical supercomputers could not achieve in a million years. The Classical Wall and the Quantum Advantage Classical computers process information using binary bits: 0s and 1s. Every matrix multiplication in a deep neural network—from transformer self-attention to convolutional filters—must be calculated sequentially across transistor gates. Quantum computers operate on qubits, which leverage two fundamental principles of quantum physics: Superposition: A qubit can exist as a 0, a 1, or any fluid combination of both simultaneously. This enables a quantum processor to evaluate astronomical numbers of possibilities at once. Entanglement: Qubits can become interconnected such that the state of one instantly influences another, regardless of distance. In AI terms, this allows quantum algorithms to process complex, high-dimensional data relationships natively. Where classical neural networks must spend massive compute energy approximating multi-variable probability distributions, Quantum Neural Networks (QNNs) represent these spaces naturally. Transformative Applications of QML The convergence of quantum physics and machine learning will revolutionize several computationally intractable domains: Molecular Modeling and Material Discovery Simulating how complex molecules fold and react requires calculating quantum mechanics at the atomic level—a task that quickly overwhelms classical supercomputers. Quantum AI models can simulate chemical reactions in real time, dramatically accelerating the discovery of room-temperature superconductors, next-generation battery chemistries, and targeted cancer therapeutics. Complex Financial Risk Optimization Global financial markets are massive, chaotic systems with millions of interdependent variables. QML algorithms excel at finding global optima in high-dimensional search spaces, allowing institutions to run real-time risk analysis, fraud detection, and portfolio optimization across global markets simultaneously. Hyper-Efficient Optimization in Logistics From global supply chain routing to urban traffic management, combinatorial optimization problems grow exponentially complex with every added node. Quantum-enhanced algorithms can evaluate millions of potential routes in parallel, offering near-instantaneous global optimization for logistics networks. The Road Ahead: The Hybrid NISQ Era We are currently in the Noisy Intermediate-Scale Quantum (NISQ) era. Fully fault-tolerant, error-corrected quantum computers with millions of physical qubits are still on the horizon. Consequently, the near-future architecture of Quantum AI is hybrid. Modern developers use classical GPUs to handle data preprocessing and perception, while offloading complex optimization loops and high-dimensional matrix operations to quantum processors via cloud APIs. Quantum Machine Learning is not merely an incremental speed upgrade for existing software. It represents a paradigm shift in how humanity processes information—bringing us one step closer to solving the most complex challenges in science, physics, and computing.",
+            "url": "https://dev.to/malvintnw/the-quantum-leap-how-quantum-machine-learning-will-redefine-ai-3i9f",
+            "source": "DEV Community",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "developpement",
+                "intel",
+                "machine_learning",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-10-21T10:52:39+00:00",
+            "collected_at": "2026-10-21T10:56:03.945036+00:00"
+        },
+        {
+            "id": "1d090bf2fb1663473bd691099348886d1afa911f5c69bba4182b59b2f238839a",
+            "title": "CSS Logical Properties: How Browsers Translate Them to Physical Styles",
+            "description": "You’ve probably hit this subtle bug before: you write some CSS using logical properties like margin-inline-start , expecting your layout to just work regardless of text direction. But then you flip your app to RTL or switch writing modes, and suddenly things don’t line up as you expected. Margins that should shift to the left stay put, or worse, shift in the wrong direction. I ran into this during a recent localization sprint. Our UI had mixed LTR and RTL content, and rather than duplicating styles or using awkward hacks, I leaned on CSS logical properties. They’re supposed to abstract away physical directions like left/right and top/bottom. But debugging why my margins weren’t behaving as I imagined forced me to dig under the hood , how exactly do browsers turn these logical properties into physical ones? Logical vs Physical CSS Properties: The Basic Idea Traditional CSS uses physical directions: margin-left : 10 px ; padding-top : 5 px ; These are fixed to the box’s edges, regardless of the document’s writing mode (LTR or RTL) or layout direction (horizontal or vertical). Logical properties, introduced in CSS Logical Properties and Values Module, let you specify styles based on the writing mode and flow: margin-inline-start applies margin at the start of the inline flow padding-block-end applies padding at the end of the block flow So in a left-to-right language, margin-inline-start equals margin-left . In right-to-left, it maps to margin-right . This makes your CSS more adaptable without duplication. But here’s the kicker: browsers do this mapping internally, translating your logical properties to physical ones at layout time. Understanding that translation explains many layout quirks. How Browsers Translate Logical Properties When the browser’s CSS engine parses a rule like: .my-box { margin-inline-start : 16px ; } it doesn’t leave it as margin-inline-start . Instead, it figures out the physical edge corresponding to \"inline start\" for the element’s writing mode and direction. For example, suppose your document is LTR horizontal: inline direction goes left to right inline start is left The browser will apply the margin as margin-left: 16px internally. But if the same element is in RTL horizontal: inline direction is right to left inline start is right Now the browser applies margin-right: 16px . This mapping happens during style computation, after resolving the element’s writing-mode and direction but before layout. What about vertical writing modes? When the writing mode is vertical (like Japanese or Mongolian vertical text), \"inline\" and \"block\" directions swap: Inline flows top to bottom or bottom to top Block flows left to right or right to left So margin-inline-start could map to margin-top or margin-bottom depending on writing-mode and direction . This can be surprisingly confusing if you only think in LTR horizontal terms. Behind the Scenes: The Browser’s Style Computation Pipeline In the browser’s rendering engine (think Blink, Gecko, or WebKit), style computation is a multi-step process: Parsing CSS , The engine parses your CSS, creating a style tree where each node has declarations like margin-inline-start . Resolving Computed Styles , The engine resolves computed values for each property. For logical properties, it uses the element’s computed writing-mode and direction to map logical properties to physical ones. Applying Physical Styles , The engine applies these physical styles to layout boxes, which then participate in the box model and flow layout calculations. This means that from the layout engine’s perspective, it never really sees margin-inline-start ; it only sees margin-left or margin-top , etc., depending on context. Why This Matters for Debugging Layout Issues Unexpected Margins on RTL or Vertical Text If your app flips to RTL but some margins don’t move as expected, check if you’re mixing logical and physical properties. Physical properties like margin-left don’t adapt, so your layout breaks. Overriding Logical Properties with Physical Ones Sometimes, authors override logical properties with physical ones elsewhere in CSS. Because physical properties have the same specificity and cascade rules, the last one wins. This can cause logical properties to be silently ignored. DevTools Show Physical Properties Inspecting elements in browser DevTools often shows the physical properties after translation, not the logical ones you wrote. This can confuse you into thinking your CSS isn’t applied. Practical Tips When Using Logical Properties Always use logical properties consistently in your CSS for layout margins, paddings, borders, and positioning. Be mindful of writing mode . If your app supports vertical writing modes, test your layouts carefully. Logical properties behave differently there. Check DevTools carefully . Don’t expect to see margin-inline-start in computed styles. Look for the mapped physical properties. Use computed styles and layout debugging tools . Some browsers let you visualize box model edges and directions, which can help understand how logical properties translate. Avoid mixing physical and logical properties for the same edge . This reduces cascade confusion. A Real Debugging Example I had a sidebar that used: .sidebar { padding-inline-start : 20px ; border-inline-end : 1px solid #ccc ; } It looked perfect in LTR, but in RTL, the padding stayed on the left, and the border appeared on the left instead of the right. Turns out, somewhere else in the stylesheet, there was a physical property: .sidebar { padding-left : 10px ; } Because padding-left came after in the cascade, it silently overrode the logical padding on the physical left edge. Removing the physical property and relying solely on logical properties fixed the problem. Wrap-up CSS logical properties are a powerful way to write adaptable, locale-friendly styles. But they’re not magic. Browsers internally translate them to physical properties based on the element’s writing mode and direction, and understanding that helps you debug those sticky layout issues in multilingual or vertical writing layouts. Next time your margin-inline-start feels stubborn, remember: it’s actually a margin-left or margin-right in disguise, chosen based on your document’s flow. Happy styling! Helpful learning resources MDN Web Docs web.dev performance guidance OpenAI developer resources Originally published at Under The Hood . Get the next deep dive in your inbox: subscribe to Under The Hood .",
+            "url": "https://dev.to/mspk97/css-logical-properties-how-browsers-translate-them-to-physical-styles-159a",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "openai",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-10-21T10:52:22+00:00",
+            "collected_at": "2026-10-21T10:56:03.945994+00:00"
+        },
+        {
+            "id": "53559e25247236bb06f084e9ab26deb007ae8ac47879208378aedb1b1a661a54",
+            "title": "Three Ways Session-Key Modules Leak Permissions",
+            "description": "Three Ways Session-Key Modules Leak Permissions For teams shipping session keys, agent wallets, or any \"limited\" key that can move money: the policy is the product. These are the first three patterns I check in every review — because each one turns a carefully scoped session into something close to a blank check. A session key is a capability token. The account owner signs once, and a lesser key — a dApp, a bot, an AI agent — gets to act within limits: this much value, to these contracts, until this time. Every word of that sentence is enforced by policy code, and policy code is where the leaks live. Not in exotic cryptography. In accounting. Leak 1: The silent approve Most spending policies count what a session transfers . Approvals are not transfers, so they sail through — and an approval is a loaded weapon: The session calls approve(attacker, uint256.max) on a token the account holds. No value moved. Every transfer-based check passes. The attacker then calls transferFrom whenever they like — tomorrow, next month, after the session key has expired or been revoked. Revoking the session does nothing to the allowance; it lives on the token contract, not in your session system. Worst part: the eventual drain never passes through the account's execution path at all . No hook fires, no policy is consulted. The money leaves via a pull payment your module never sees. Variants of the same hole: increaseAllowance , setApprovalForAll on NFT collections, and signed permits relayed by a third party. The fix: treat approval-class calls as spend. When a session calls approve / increaseAllowance , count the approved amount against the session's cap at approval time — or ban those selectors for session keys outright and make approvals an owner-only action. If your policy can't see it, it isn't a limit. Leak 2: Target without selector Allowlists are usually keyed on contract addresses: \"the session may call the DEX router and the token.\" But an address is not a permission — a function is. Call any method on an allowlisted contract and the session inherits the whole surface: Allowlist a token for transfers, and the session also gets approve (see Leak 1). Allowlist a router or aggregator , and the session gets every swap path, every callback, and often a generic execution entry point that can be aimed at arbitrary contracts with arbitrary calldata — your allowlist just became a proxy to anywhere. Allowlist a vault or account-adjacent contract , and admin-flavored methods (pause, rescue, reconfigure, withdraw-to) may sit one selector away from the benign function you meant to permit. The fix: permissions are (target, selector) pairs, never bare targets. A session allowed to swap gets the router's swap selectors — not its multicall , not its execute , not its admin surface. And any selector that itself dispatches arbitrary calls ( multicall , execute , aggregate ) gets treated as guilty until its arguments are inspected. Leak 3: Window games \"500 USDC per day\" sounds like a hard bound. With a calendar window, it isn't: At 23:59 the session spends the full cap. At 00:01 the window resets and it spends the full cap again. 2× the intended limit inside two minutes , no rule broken. The same shape repeats at every boundary — week, month, \"per epoch.\" The longer the window, the bigger the burst an attacker (or a malfunctioning agent loop) can fire the moment it opens. Agents make this worse than humans do: a buggy agent doesn't drain an account slowly and noticeably. It retries at machine speed, and it will find your window boundary at 3 a.m. The fix: rolling windows and per-transaction caps, working together. A trailing-24h accounting window has no cliff to burst across; a per-tx cap bounds any single action; a window cap bounds the total. Any one of the three alone has a shape that leaks — the combination is the actual control. How I build it — and where my own demo stands I shipped a small ERC-7579 hook module, SpendGuardHook , as a public reference for this pattern: every execution is checked pre-flight against a target allowlist and a daily spend cap that accumulates native value and ERC20 transfer amounts against one budget. It's tested (11/11 Foundry tests, dependency-free), and it's registered in the Rhinestone Module Registry on Sepolia — registration is permissionless, so read the listing as proof of work, not an audit. Mapped against the three leaks, honestly: Approvals: roadmap, and the demo's sharpest known gap. The current version counts transfer amounts; approval-counting (Leak 1's fix) is the next feature, and it's deliberately the headline item — a demo that hides its gaps teaches the wrong lesson. Selectors: the hook already inspects calldata at exactly the point where selector-level policy belongs (that's how it recognizes transfers). The demo ships target-level allowlisting for readability; (target, selector) pairs are the production configuration. Windows: the demo uses calendar-day windows — which means it has the bounded version of Leak 3 (worst case at a boundary is 2× the daily cap, never unbounded). Rolling windows are the production upgrade, and the accounting structure already supports swapping the window function. That mapping is the review method in miniature: find where value can move without being counted , find where a permission is broader than its name , find where time boundaries multiply limits. Work with me If you're shipping session keys or agent wallets and want a second set of eyes on exactly these questions, that's the review I run — and the integration work I do after it. I offer fixed-scope Integration Sprints ($3,500–5,000, ~2 weeks: architecture note → implementation with Foundry tests → testnet deployment → docs, milestones 30/40/30, scope in writing before any code) and per-module security reviews (permission-leak analysis, install/uninstall safety, hook ordering, upgrade paths; written findings, severity-ranked). Also available at $125–175/hr for scoped contract work. The demo repo is public — steal ideas from it either way. — Av · modular smart account specialist (ERC-7579 · Smart Sessions · Safe/Kernel/Nexus) Demo + tests: SpendGuardHook (ERC-7579 hook module) · Code: github.com/freefreaky210-dot/spend-guard-demo · Registry listing: Rhinestone Module Registry (ERC-7484, 0x000000000069E2a187AEFFb852bF3cCdC95151B2 ), Sepolia — module 0x6BA337A13E5006a26Fdf5eCef76A0Ad9b9218BcD , registered 2026-10-20 (registerModule tx 0x4551b8a893c3b857687d46bc0467efa133a5d40a6c3ca491ebd6e634e1748aa2 )",
+            "url": "https://dev.to/juan_flores_eaa04c5d5a/three-ways-session-key-modules-leak-permissions-722",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "git",
+                "programmation",
+                "web",
+                "windows"
+            ],
+            "published_at": "2026-10-21T10:51:42+00:00",
+            "collected_at": "2026-10-21T10:56:03.946953+00:00"
+        },
+        {
+            "id": "7f8f56bd356812bf24c5bb4975291611970f670b9cfcdc30b2c8cb7549d8543e",
+            "title": "I built an open-source team chat that writes your daily standup (and lets you bring your own Claude)",
+            "description": "Most teams pay per seat for chat. Then they pay again for a standup bot. Then again for an AI add-on. I wanted one thing I could run myself that did all three, so I built Forma Chat : open-source (Apache-2.0) team chat that runs on your own server, as one Go binary with a SQLite file. 📺 Watch the 74-second video · 💻 Code on GitHub What works today Public and private channels, DMs and group DMs, threads, reactions, edits with history, pins, mentions, drafts that follow you across devices Full-text search (SQLite FTS5), filtered by what you can read before any result, snippet or count exists Turn any message into a task; My work ranks your own tasks and shows why each one is near the top Daily standups that draft themselves Optional AI agents with your own key, or your own Claude Code connected over MCP It's an early release. Files, huddles and mobile apps aren't there yet, and the repo keeps a feature status page that says exactly what works. Standups that write themselves, without an AI bill Every task change is recorded as an event: created, started, finished, blocked, commented. At the time you choose, Forma builds each person's draft from their own events that day: Done : what they finished, started or worked on Next : their top open tasks by priority and due date Blockers : blocked tasks, with the reason they wrote No model is involved, so it's free, fast and explainable. The privacy rules mattered more to me than the drafting: A draft is visible only to its author until they submit it. Work in personal tasks or private channels the team channel can't see shows up only as a private suggestion (\"Only you can see this\"). It is never put in the summary automatically. One summary posts per day. People who didn't submit are listed as \"No update yet\", never guessed at. No keystrokes, no screenshots, no activity scores, no ranking of people. AI agents: your key, or your own Claude An admin creates an agent, gives it the workspace's own Anthropic API key (or any OpenAI-compatible key) and adds it to channels. Mention it and it answers live in a thread, streaming, with a Stop button. It can search messages and create or list tasks, always with the asking person's permissions. The rule I spent the most time on: an answer may only use what the channel it's answering in can already see. If you ask in #general , it won't quote a private channel you happen to be in. Or skip the API key and connect the Claude you already use. Create an external agent, add it to channels, make a token, then: claude mcp add --transport http forma \\ https://chat.example.com/api/v1/mcp \\ --header \"Authorization: Bearer fma_...\" Claude Code can then list its channels, read and post messages, search, and list or create tasks, only where that agent was added. How it's built Go modular monolith + SQLite in WAL mode, with embedded migrations. The React/TypeScript client is built by Vite and embedded in the binary, so deploying is copying one file. One read policy. A single Authorize function decides whether a person can read a conversation. Search, threads, realtime and agents all go through it, or through its SQL set form, and a test checks the two always agree. Denied and missing look the same (404). Messages are never silently lost. A message is stored before it is acknowledged. A transactional outbox feeds realtime, and WebSocket events are only wake-ups. Clients catch up from a per-conversation change counter, so a reconnect replays what was missed and retries never duplicate. Agent keys are sealed with AES-256-GCM, bound to the agent, and never shown again. Message text and tool results are treated as data for the model, never as instructions. Try it You need Go 1.26+ and Node.js 22+: git clone https://github.com/pandeyvishwas51-oss/forma-chat && cd forma-chat make setup build ./bin/forma serve The server prints a one-time link to create the owner account. For a populated demo workspace, run node scripts/demo.mjs . I'd love feedback, especially on the standup privacy model and the agent audience rule. Issues and PRs are welcome: https://github.com/pandeyvishwas51-oss/forma-chat",
+            "url": "https://dev.to/pandeyvishwas51oss/i-built-an-open-source-team-chat-that-writes-your-daily-standup-and-lets-you-bring-your-own-claude-56p5",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "anthropic",
+                "developpement",
+                "git",
+                "javascript",
+                "openai",
+                "programmation",
+                "typescript",
+                "web"
+            ],
+            "published_at": "2026-10-21T10:50:43+00:00",
+            "collected_at": "2026-10-21T10:56:03.947591+00:00"
+        },
+        {
+            "id": "8722385c6c33a84607c373d61347af5cf6968103da45281c21700e65a0de7106",
+            "title": "Bringing the Spark to Europe: Local Intelligence Powers Next Wave of Agents",
+            "description": "At GTC Berlin, NVIDIA is showcasing its full lineup of local AI hardware. RTX Spark, which launched last week, powers personal agents on Windows PCs; DGX Spark supports developers building and scaling applications on Linux; and DGX Station serves enterprise teams running frontier workloads on Linux, with a Windows version arriving in December. Announcements include: […]",
+            "url": "https://blogs.nvidia.com/blog/local-ai-gtc-rtx-dgx-spark-station-sync/",
+            "source": "NVIDIA AI",
+            "category": "hardware",
+            "tags": [
+                "gpu",
+                "ia",
+                "intel",
+                "linux",
+                "nvidia",
+                "windows"
+            ],
+            "published_at": "2026-10-21T10:50:37+00:00",
+            "collected_at": "2026-10-21T10:56:05.844275+00:00"
+        },
+        {
+            "id": "1dc7fe8bcee2c4581311d622799e32d63a2e09c498b2286beeeb23c99300a838",
+            "title": "How Sorting Your Prompts Speeds Up a Mixture-of-Experts Batch Job",
+            "description": "Engineer's view. This is a batch job that touches records in arrival order. Each record needs a different index page, so the cache keeps reloading pages. Sort by key and each page loads once per batch. A mixture-of-experts model loads expert weights the same way, so a mixed batch pays for reads nobody shares. TL;DR. A mixture-of-experts model reads only the experts the batch asked for, and similar prompts ask for the same ones. Sort an offline job by topic, and each step reads less, so the job finishes sooner. Explain Like I'm 5 A library has a hundred shelves. A helper runs to fetch books for everyone at one table. If the table holds a cook, a pilot and a poet, the helper runs to many shelves each round. If everyone at the table is a cook, they mostly want the same cooking shelf. The helper makes fewer trips, and the table gets its books sooner. Nobody reads faster. The seating just changed. The Problem You have shipped this bug before, in a system with no AI in it. A nightly job processes a million records in the order they arrived. Each record looks up a row in a big table. Records from the same customer sit on the same index pages, but arrival order scatters them. So the database keeps loading a page, evicting it, and loading it again an hour later. The job is slow, and the code is fine. Someone sorts the input by customer ID, and the job runs twice as fast. Nothing about the work changed. Only the order did. A mixture-of-experts model has the same bug inside every decode step. Each layer holds many small blocks of weights, called experts . Each token uses only a few of them. Qwen3-30B-A3B has 128 experts per layer, and each token picks 8. But a server runs many requests together as one batch. On each step it must read every expert that any request in the batch picked. That read is the expensive part. Producing one token per request is limited by how fast the GPU reads weights from memory, not by arithmetic. A random batch of 32 Qwen requests touches about 94 of the 128 experts in a layer. Code prompts favor one set of experts, French prompts another. Mix them, and the step reads both sets. The fix: before an offline batch job, sort the prompts so similar ones run together. Then each step reads fewer experts. Hugging Face measured this on unchanged vLLM and got 5 to 17% more throughput. The Fix: Group Similar Prompts Before the Batch Job New to how a model produces text one token at a time? Start at AI basics → Tokens and sampling . Why does the order of a list change what the GPU reads? Because the server fills its batch from the front of the list. vLLM admits waiting requests first come, first served. So neighbors in your list end up decoding side by side. Sort the list, and each batch is mostly one topic. Topics really do prefer their own experts. In one layer of Qwen3-30B-A3B, a topic's 32 favorite experts took 68 to 80% of its routing decisions. Even routing would give them 25%. How much does one expert cost? About 2.9 microseconds per layer on an AMD MI300X. That is the time to read about 9.4 MB of expert weights. The MoE layer's time rose in a straight line with the number of distinct experts the batch touched. Why was the measured gain smaller than the reads saved? Sorted Qwen batches read 19 to 25% fewer experts, which predicts a 20 to 27% speedup. The measured gain was about half that. Only the expert layers got cheaper. Attention, sampling and scheduling cost the same as before. Do I need topic labels? No. Embed each prompt with a small embedding model, cluster the vectors with k-means, and sort by cluster. On unlabeled chat data, this still gave Qwen about 5% more throughput. What This Means for You When this matters. You run offline jobs on a mixture-of-experts model that you host yourself. Think evals, synthetic data, labeling, summarizing a backlog. Qwen3 MoE, gpt-oss, DeepSeek and Mixtral are all this kind of model. The job generates many tokens per prompt, and nobody waits on any single answer. How it affects you. The win is GPU hours. A ten-hour job on a rented node can finish in about nine. Your outputs will also shift a little. In the Hugging Face run, 92% of greedy outputs matched between sorted and shuffled order. Two shuffled runs matched each other 90% of the time. That drift is ordinary batch nondeterminism, the effect from How the Same Model Gives Two Different Answers . Sorting does not add new drift. The gain also depends on where your batch size sits. The simulation in code_example.py shows the shape: zero at batch 1, largest at small and middle batches, fading once a one-topic batch reads nearly every expert. What to do about it. Today, look at your next offline job's input file. If it already has a dataset, task or language column, sort by it before you submit. That costs one line. If it has no labels, add the clustering step below. Then run the A/B test in Implementing It before you trust any percentage, including the one in this article. Implementing It The change. Three roles touch this. Whoever builds the input file groups the prompts. Whoever runs the job submits them in that order and restores the original order. Whoever owns the cluster checks the gain is real. The serving side changes nothing for an offline job. Role 1, grouping. Use labels when you have them. Otherwise, cluster embeddings. The source used Qwen3-Embedding-0.6B and 16 clusters: import numpy as np from sentence_transformers import SentenceTransformer from sklearn.cluster import KMeans emb = SentenceTransformer ( \" Qwen/Qwen3-Embedding-0.6B \" ). encode ( prompts , normalize_embeddings = True , batch_size = 64 ) labels = KMeans ( n_clusters = 16 , n_init = \" auto \" , random_state = 0 ). fit_predict ( emb ) order = np . argsort ( labels , kind = \" stable \" ) # stable keeps file order inside a cluster Keep the embedding model small. It runs once over the file, before the expensive model loads. You may not be able to sort the whole file at once, for example when you stream it in pieces. Then sort inside each piece. At batch 32, sorting within chunks of 128 prompts gave +11.7%, and chunks of 256 gave +14.8%, against +17.3% for a full sort. Make each piece several batches long, so every batch can fill from one cluster. Role 2, the batch job. vLLM returns outputs in the order you submitted. So submit in sorted order, then put each output back where its prompt came from: # before outs = llm . generate ( prompts , params ) # after outs = llm . generate ([ prompts [ i ] for i in order ], params ) results = [ None ] * len ( prompts ) for pos , i in enumerate ( order ): results [ i ] = outs [ pos ] Skip the restore step and every downstream join is wrong. You will see it as answers attached to the wrong question, not as an error. Your batch size is max_num_seqs on the LLM constructor. It decides where you sit on the curve above, so record it with every result. Role 3, measuring. Run the same prompts in both orders and compare tokens per second. Force equal output lengths so only the order differs: import time params = SamplingParams ( temperature = 0 , max_tokens = 256 , ignore_eos = True ) def tok_per_s ( batch ): t = time . perf_counter () outs = llm . generate ( batch , params ) return sum ( len ( o . outputs [ 0 ]. token_ids ) for o in outs ) / ( time . perf_counter () - t ) Alternate the runs: shuffled, sorted, shuffled, sorted. A single pair can be skewed by a warm cache. The author's full harness is vllm_bench.py in the sort-your-prompts repository on GitHub. It had no license file when this was written, so read it for the method. How you know it worked. The sorted runs should beat the shuffled runs on every repeat, not just on average. On a mixture-of-experts model with labeled topics, expect something near 10%. Then run the same test on a dense model of similar size as a control. It should show no gain, because a dense model reads every weight on every step. If the dense model \"improves\" too, your measurement is noise. Last, compare outputs. The share that differs between sorted and shuffled should match the share that differs between two shuffled runs. If it is much higher, check the restore step. When Sorting Prompts Is the Wrong Tool When someone is waiting. Grouping means holding a request until similar ones arrive. In online serving, that queueing delay costs more than the step time it saves. When the model is dense. Every weight is read on every step, whatever the order. A dense model like Llama 3 gains nothing. When the work is mostly prefill. A long prompt with a short answer spends its time reading the prompt. Thousands of prompt tokens touch nearly every expert anyway. A classifier that emits one label per document is this case. When batches are very large. Once even a one-topic batch touches almost every expert, there is nothing left to save. On unlabeled chat data, gpt-oss-120b at batch 128 showed no measurable gain. When the model has few experts. A coarse model with 32 experts per layer saved 8 to 11% of reads, against 19 to 25% for 128 experts. Before you adopt it, ask: Is my model a mixture of experts, and is this job decode-heavy? What batch size does my job really run at? Did a dense control show zero gain on the same A/B test? Glossary experts — small blocks of weights in a layer; each token is routed to a few of them. mixture-of-experts — a model whose layers hold many experts and use only a few per token. decode step — one round in which every request in the batch produces its next token. batch — the set of requests the server runs together on each step. k-means — a clustering method that groups vectors around a chosen number of centers. batch nondeterminism — small output changes caused only by which requests shared a batch. Further reading Sort your prompts: a free speed-up for MoE batch inference — Hugging Face blog (Abdennacer Badaoui) Abdennacer-Badaoui/sort-your-prompts — GitHub, the author's code Qwen3-30B-A3B model card — Qwen team, Hugging Face Mixture of Experts Explained — Hugging Face blog Originally published at theaicommit.com , a daily AI engineering lab for software engineers. The original has an interactive version you can play with, and the full runnable code is on GitHub .",
+            "url": "https://dev.to/theaicommit/how-sorting-your-prompts-speeds-up-a-mixture-of-experts-batch-job-387o",
+            "source": "DEV Community",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "amd",
+                "developpement",
+                "git",
+                "llm",
+                "programmation",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-10-21T10:50:14+00:00",
+            "collected_at": "2026-10-21T10:56:03.948845+00:00"
+        },
+        {
+            "id": "f46213a0ed569d3323cac1a9e835d86e4fa286d724a17efb1a2b52bfda26ebc5",
+            "title": "Score a 1440p-ready gaming PC with an RTX 5060 Ti 16GB for under $1,500 right now, saving you $200",
+            "description": "You can pick up this ABS Cyclone Aqua gaming PC with an RTX 5060 Ti 16GB, Intel Core i7-14700F, 16GB DDR5, and a 1TB SS with a $200 discount, now $1,499.99.",
+            "url": "https://www.tomshardware.com/desktops/gaming-pcs/score-a-1440p-ready-gaming-pc-with-an-rtx-5060-ti-16gb-for-under-usd1-500-right-now-saving-you-usd200-abs-cyclone-aqua-rig-ships-with-16gb-ddr5-1tb-ssd-and-a-20-core-intel-cpu",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "intel",
+                "nvidia",
+                "pc"
+            ],
+            "published_at": "2026-10-21T10:50:14+00:00",
+            "collected_at": "2026-10-21T10:56:06.210997+00:00"
+        },
+        {
+            "id": "d2c50d0185422cb324bf79e6e92be2e14fe9ed80993fd33eb22a4df1626a2a4b",
+            "title": "Beyond the Black Box: Why Neuro-Symbolic AI is the Key to Trustworthy Intelligence",
+            "description": "Neuro-Symbolic AI: Bridging intuitive deep learning with rigorous symbolic logic. How combining deep learning with symbolic logic is solving AI’s biggest weaknesses in explainability, safety, and deterministic reasoning. Over the last decade, deep learning has achieved monumental breakthroughs. Neural networks can recognize images, generate human-like text, and translate dozens of languages effortlessly. By feeding billions of parameters into statistical models, artificial intelligence has learned to spot patterns in data that humans could never detect on their own. Yet, despite this unprecedented power, modern deep learning suffers from a fundamental flaw: it is a black box. When a Large Language Model (LLM) makes a prediction, gives a diagnosis, or denies a loan application, it cannot explain why it reached that decision in a verifiable, deterministic way. It operates purely on statistical correlation rather than true comprehension of rules. When it fails, it hallucinates—presenting false statements with absolute confidence. To build AI systems that can be trusted with critical infrastructure, legal judgments, and medical care, the industry is turning to a powerful hybrid approach: Neuro-Symbolic AI. What is Neuro-Symbolic AI? To understand Neuro-Symbolic AI, it helps to look at the two historic paradigms of artificial intelligence: Neural AI (Deep Learning): Inspired by biological neurons. It excels at processing messy, unstructured data like images, audio, and raw text. It learns through pattern recognition, intuition, and probability, but lacks strict rules and explicit knowledge representations. Symbolic AI (Classical AI): Based on formal logic, explicit rules, and knowledge graphs. It excels at mathematical proof, deterministic reasoning, and auditability. However, it is rigid and struggles to interpret unstructured real-world data. Neuro-Symbolic AI merges these two worlds into a single cohesive architecture. It uses neural networks to handle perception—converting speech, pixels, and text into meaningful concepts—and then hands those concepts over to symbolic logic engines that apply strict mathematical rules, constraints, and cause-and-effect reasoning. Why the Hybrid Model Solves Deep Learning’s Greatest Bottlenecks By bridging intuition with formal logic, Neuro-Symbolic AI addresses three of the most critical challenges facing AI deployment today: Complete Explainability and Auditability In heavily regulated sectors like healthcare, aerospace, and banking, a model’s decision must be auditable. A neural network alone cannot produce a step-by-step logical proof. In a neuro-symbolic system, the symbolic component maintains an explicit trace of its reasoning path, allowing human engineers and regulators to verify precisely which rules were applied to arrive at a conclusion. Zero Hallucinations in Safety-Critical Domain When dealing with medical dosage calculations, electrical grid management, or legal compliance, \"mostly accurate\" is not good enough. By enforcing hard symbolic rules over the statistical outputs of neural networks, neuro-symbolic systems act as immutable guardrails. If a neural network attempts to generate a response that violates a hard-coded constraint or physical law, the symbolic engine overrides it instantly. Radical Data Efficiency Deep learning models typically require millions of examples to learn a simple concept because they must infer rules from scratch. Symbolic systems, however, can be directly programmed with domain knowledge and logical rules. This allows neuro-symbolic models to generalize accurately from small datasets, making them ideal for specialized fields where training data is scarce. Real-World Applications Neuro-symbolic architectures are already transforming high-stakes industries: Autonomous Driving: While neural networks process camera feeds to identify pedestrians and lanes, symbolic logic engines enforce non-negotiable traffic safety rules and collision avoidance physics in real time. Precision Healthcare: Computer vision models analyze diagnostic imagery, while symbolic knowledge graphs cross-reference patient histories with pharmaceutical databases to recommend safe drug interactions. Financial Risk & Fraud Detection: Neural models flag suspicious patterns in real-time transaction streams, while symbolic logic engines evaluate those flags against complex regulatory compliance frameworks. The Path toward Robust General Intelligence For years, the AI community debated whether deep learning or symbolic rules were the true path forward. Today, the consensus is clear: neither approach is sufficient on its own. Human intelligence relies both on fast, intuitive pattern matching and slow, deliberate logical reasoning. By combining neural perception with symbolic logic, Neuro-Symbolic AI is bringing us closer to machines that not only recognize the world around them, but truly understand the rules that govern it.",
+            "url": "https://dev.to/malvintnw/beyond-the-black-box-why-neuro-symbolic-ai-is-the-key-to-trustworthy-intelligence-3cl7",
+            "source": "DEV Community",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "deep_learning",
+                "developpement",
+                "intel",
+                "llm",
+                "programmation",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-10-21T10:49:29+00:00",
+            "collected_at": "2026-10-21T10:56:03.949418+00:00"
+        },
+        {
+            "id": "a7e9c51ccfc776dc891bebfe9fafd28dbdcf3c46b5bee563fb14dc798426e972",
+            "title": "# Disconnecting Your Crypto Wallet Doesn't Revoke Smart Contract Approvals",
+            "description": "You connect your wallet to a decentralized exchange, approve a token, complete a swap, and leave the website. Everything seems fine, so you move on. But there is a detail many crypto users overlook: disconnecting your wallet from a website does not necessarily revoke the permissions you previously granted to its smart contracts. These are two different mechanisms. Understanding the difference can help you reduce unnecessary exposure without giving up the convenience of using decentralized applications. What Happens When You Approve a Smart Contract? Many decentralized applications need permission to interact with your tokens. On Ethereum and other EVM-compatible networks, ERC-20 tokens commonly use an approve function to let another address spend tokens on your behalf. For example, when you trade a token on a decentralized exchange, you may authorize a contract to spend a certain amount of that token. The contract can then use transferFrom to move tokens within the limits of the allowance. Some applications request an allowance larger than the amount you intend to trade. In certain cases, users approve an effectively unlimited amount to avoid repeating the approval process for future transactions. That permission can remain active after you finish using the application. According to the ERC-20 token standard, token approvals and transfers are separate functions. This distinction is central to understanding why an old approval deserves attention. An approval does not automatically mean that a contract is malicious. Legitimate applications use allowances as part of normal operation. The risk comes from granting permissions you do not need, or leaving them active when you no longer trust or use the spender. Why Disconnecting Your Wallet Is Not Enough Disconnecting a wallet usually ends the website's active connection to your wallet interface. It does not automatically change the approval recorded by the token's smart contract. Imagine that you approved a decentralized application to spend 1,000 USDC but only traded 50 USDC. If the remaining allowance is still active, the approved spender may retain permission to transfer eligible tokens up to the remaining allowance, subject to the token contract's rules and your available balance. If the spender is compromised or turns out to be malicious, an active allowance can create a potential path to loss. This is one way smart contract approval vulnerabilities can be exploited. Attackers may use malicious decentralized applications to trick users into granting permissions, or exploit compromised protocols whose contracts already have access to user funds. Phishing websites can also disguise approval requests as routine actions, making it difficult for users to recognize what they are authorizing. Wallet security therefore involves more than protecting a seed phrase or checking whether a website is still connected. There is also an important distinction between token approvals and NFT operator permissions. For example, the ERC-721 standard includes setApprovalForAll, which can grant an operator permission to manage all NFTs of a particular collection held by an owner. That is a broader permission than approving a single NFT. You can read more about this mechanism in the ERC-721 standard. How to Review and Revoke Unnecessary Approvals A simple security routine can help you identify permissions that are no longer necessary. Check your active allowances. Use a reputable approval checker that supports the network you use. Verify the network and token contract before interacting with any tool. Review the spender address. Check whether the approval belongs to an application you recognize and still intend to use. A familiar name alone is not proof that an address is legitimate. Reduce unnecessary permissions. Where supported, consider limiting an allowance to the amount you actually need rather than granting unlimited access. Revoke approvals you no longer need. Use your wallet's supported functionality or a reputable network-specific tool. Revocation generally requires an on-chain transaction and may involve a network fee. Verify the result. After the transaction is confirmed, check the allowance or approval status again. For ERC-20 tokens, a successful revocation commonly sets the allowance to zero. One final precaution: be careful when using approval-management websites. A malicious site can create a new security problem while you are trying to solve an old one. Verify the domain, inspect transaction details, and never share your seed phrase. Conclusion Crypto security is not just about preventing unauthorized access to your wallet. It is also about understanding the permissions you have already granted. Disconnecting a website is useful, but it should not be treated as a substitute for managing smart contract approvals. An old allowance may remain active even after you stop using an application, leaving your assets exposed if the approved spender becomes malicious or is compromised. Reviewing token allowances and NFT permissions periodically is a practical way to reduce unnecessary risk. Before approving a transaction, take a moment to understand what you are authorizing, who receives that permission, and whether it is necessary. For more educational resources on cryptocurrency, blockchain technology, and digital asset security, explore Cryptonegar.",
+            "url": "https://dev.to/crypto_negar/-disconnecting-your-crypto-wallet-doesnt-revoke-smart-contract-approvals-1ieb",
+            "source": "DEV Community",
+            "category": "cybersecurite",
+            "tags": [
+                "blockchain",
+                "developpement",
+                "ethereum",
+                "git",
+                "phishing",
+                "programmation",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-10-21T10:48:28+00:00",
+            "collected_at": "2026-10-21T10:56:03.949930+00:00"
+        },
+        {
+            "id": "4965c9630ed32384c4625ed07168314e0fd6c289731818921974e1e246b347f3",
+            "title": "Enhancing Node.js Module Privacy: Introducing --experimental-strip-private-modules",
+            "description": "Why Module Privacy Matters in Node.js In the Node.js ecosystem, managing dependencies often means dealing with nested node_modules directories, where public and private packages coexist. Ensuring that private packages are handled correctly is crucial, especially when it comes to stripping types or other metadata during builds. Without careful controls, private package information can leak or public packages can be inadvertently altered, leading to subtle bugs or security concerns. This article explores a recent improvement in Node.js that introduces a new CLI flag to better manage private packages during type stripping, preventing unintended side effects and privacy leaks. The Problem: Overbroad Type Stripping and Privacy Smuggling Previously, Node.js applied type stripping broadly to all packages inside node_modules . This approach had two main issues: Unintended Removal of Types from Public Packages: Since type stripping wasn’t selective, it could remove type information even from public packages that should retain their typings. Privacy Smuggling via Nested package.json Files: Private package metadata could be hidden or \"smuggled\" inside nested node_modules directories of non-private packages, bypassing intended privacy boundaries. The root cause was the lack of granularity in the stripping logic. The system did not distinguish between private and public packages effectively, nor did it enforce strict checks on package privacy metadata in nested directories. Internal modules like package_json_reader.js and node_modules.cc needed more precise logic to identify private packages correctly. The Fix: Introducing --experimental-strip-private-modules To address these issues, the Node.js team introduced a new CLI flag: --experimental-strip-private-modules . This flag changes the behavior of type stripping in several key ways: Selective Type Stripping: When enabled, type stripping applies only to packages explicitly marked as private in their package.json files. This prevents public packages from losing their type information inadvertently. Enhanced Privacy Detection: Updates to package_json_reader.js and node_modules.cc improve the detection of private packages. The logic now carefully parses the package.json metadata, ensuring that private flags are respected even in deeply nested node_modules folders. Improved TypeScript Handling: The internal module internal/modules/typescript.js was updated to align with the new privacy-aware stripping logic, maintaining consistency in how TypeScript types are processed. Comprehensive Testing: New tests in test/es-module/test-typescript.mjs validate that type stripping behaves as expected under the new flag, covering scenarios involving nested packages and privacy boundaries. How It Works Internally The enhanced privacy check involves reading the package.json for each package encountered during module resolution. If the private field is set to true , and the CLI flag is enabled, the type stripping logic activates for that package. For example, a policy like this might check: if ( packageJson . private === true && cliFlags . experimentalStripPrivateModules ) { stripTypes ( packagePath ); } else { preserveTypes ( packagePath ); } This targeted approach ensures that only intended packages are affected. Additionally, by tightening the logic in package_json_reader.js , the system prevents scenarios where a private package's package.json could be nested inside a public package without proper recognition, closing a loophole that previously allowed privacy smuggling. Takeaway: Enforce Explicit Boundaries and Use Targeted Flags This change highlights an important lesson in package management and build tooling: Avoid Broad Application of Transformations: Applying transformations globally without considering package metadata can lead to unintended consequences. Explicitly Enforce Privacy Boundaries: Tools should respect package privacy metadata, especially in complex nested dependency trees. Use Feature Flags for Experimental Behavior: Introducing a CLI flag allows developers to opt-in to new behavior, reducing risk and enabling gradual adoption. By carefully respecting package privacy and controlling transformation scope, Node.js improves module safety and developer experience. This article is based on the changes introduced in the Node.js repository PR titled \"module: add --experimental-strip-private-modules\". Read the full breakdown on nossletter.tech. Originally published on Nossletter .",
+            "url": "https://dev.to/pdrojack/enhancing-nodejs-module-privacy-introducing-experimental-strip-private-modules-3i66",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "ios",
+                "javascript",
+                "programmation",
+                "typescript",
+                "web"
+            ],
+            "published_at": "2026-10-21T10:46:58+00:00",
+            "collected_at": "2026-10-21T10:56:03.950590+00:00"
+        },
+        {
+            "id": "fa6c98eda1be929218d5c1bac3f7af51b107ec32ebb574b84fc1ceaabd616a8a",
+            "title": "Planned U.S. power plants missing from EIA's January list arrive by August, and the reason is still open",
+            "description": "EIA runs two surveys of planned U.S. power plants: the annual EIA-860 and the monthly EIA-860M. Some generators that the annual survey plans for a year are missing from that January's monthly list. I pre-registered a test of when in the year they first appear in the monthly survey, and ran it on 2018-2025, using PUDL's copies of both surveys. What held. All five predictions held (shares are of the capacity first listed in the February-December reports): 56% of that capacity was first listed in the March-June reports, against a floor of 50%, and about 1% in the October-December reports. For new plants that came online without being in the annual plan, the March-June share was 5%, and it was lower than the first group's in all 8 years. What I saw after the run. The pattern is an edge, not a peak: Entry is about even from the February report to the August report (March-June holds 57% of the February-August capacity, close to what an even spread gives), and 99% of the capacity is in by the August report. Of the new plants first listed in February-August, 95% of the capacity was in the annual plan; of those first listed in September-December, 3%. Why the reason is still open. The August report comes out at about the time EIA publishes the annual file's final version: An edge there fits both readings I set out to separate: EIA-860M picking up annual filings with a lag, and the annual file being revised during the year until it is final. So the result is consistent with the first reading but does not rule out the second, and the write-up says so. If you use EIA-860M's lists of planned plants: a plant that the annual survey plans for this year but the monthly list lacks usually turns up by the August report. This is an association in two surveys' records, not a cause. Code, data and the pre-registration: https://github.com/munimtechnologies/eia860m-slip I am MV2 of Munim, Inc. The code, data compilation and this post were made with AI agents working in my name.",
+            "url": "https://dev.to/munimv2/planned-us-power-plants-missing-from-eias-january-list-arrive-by-august-and-the-reason-is-still-g0p",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "git",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-10-21T10:46:45+00:00",
+            "collected_at": "2026-10-21T10:56:03.950891+00:00"
+        },
+        {
+            "id": "feb99902eca539c1521af19b935dc774aa46709a4d1fff3684c9a1b3f5ec9e34",
+            "title": "WiFi QR codes are just one line of text (here is the format)",
+            "description": "WiFi QR codes are just one line of text (here is the format) You have seen them on cafe tables and Airbnb welcome books: point your phone camera at the square, and you join the WiFi without typing a 24-character password. There is no magic in it. A WiFi QR code is a plain text string in a tiny, well-supported format, and once you know the format you can generate one in about ten lines of JavaScript. The format The payload looks like this: WIFI:T:WPA;S:CoffeeShop_Guest;P:flatwhite42;; Four fields, each terminated by a semicolon, and the whole thing ends with a double semicolon: T: the security type. WPA covers WPA/WPA2 (nearly every modern router), WEP is for old equipment, and nopass means an open network. With nopass you simply omit the P: field. S: the network name (SSID). P: the password. Leave it out for open networks. H:true is optional and marks a hidden network whose SSID is not broadcast. So an open guest network is just: WIFI:T:nopass;S:Lobby_WiFi;; The part everyone forgets: escaping SSIDs and passwords can legally contain the exact characters the format uses as delimiters. If your network is called Cafe; Bar or your password contains a colon, a naive string concatenation produces a payload phones misread. The rule: escape backslash, semicolon, comma, and colon with a backslash. Here is a small builder that gets it right: function escapeWifiField ( s ) { return String ( s ) . replace ( / \\\\ /g , ' \\\\\\\\ ' ) . replace ( /;/g , ' \\\\ ; ' ) . replace ( /,/g , ' \\\\ , ' ) . replace ( /:/g , ' \\\\ : ' ); } function buildWifiPayload ({ ssid , password , encryption = ' WPA ' , hidden = false }) { const enc = encryption === ' nopass ' ? ' nopass ' : encryption === ' WEP ' ? ' WEP ' : ' WPA ' ; let p = ' WIFI:T: ' + enc + ' ;S: ' + escapeWifiField ( ssid ) + ' ; ' ; if ( enc !== ' nopass ' ) p += ' P: ' + escapeWifiField ( password ) + ' ; ' ; if ( hidden ) p += ' H:true; ' ; return p + ' ; ' ; } buildWifiPayload ({ ssid : ' CoffeeShop_Guest ' , password : ' flatwhite42 ' }); // WIFI:T:WPA;S:CoffeeShop_Guest;P:flatwhite42;; From there, feed the string to any QR encoder. In the browser, the qrcode npm package renders it to a canvas or data URL in one call; nothing needs a server. Two practical notes First, a printed WiFi QR is a spare key: anyone who scans it reads your password in plain text on their device. For visitors, the smarter move is a separate guest network on your router, and share that one. Second, error correction matters for print. The default Medium level survives about 15 percent damage, which is fine on a table tent. For a sign by the door that will get scuffed, bump it to High. I built a free generator that handles the escaping, the hidden-network flag, and the print layout for you, including a ready-to-hang guest sign: https://www.theutilityhub.online/tools/wifi-qr-generator It runs entirely in the browser, so your network name and password never leave your device. Useful the next time someone asks \"what is the WiFi password\" and you would rather just point at the wall.",
+            "url": "https://dev.to/mubeenkhaaan/wifi-qr-codes-are-just-one-line-of-text-here-is-the-format-4nf4",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "java",
+                "javascript",
+                "programmation",
+                "web",
+                "wifi"
+            ],
+            "published_at": "2026-10-21T10:45:47+00:00",
+            "collected_at": "2026-10-21T10:56:03.951297+00:00"
+        },
+        {
+            "id": "12c1cb38a75e4a7b39f06f011c38aab729ca5a61ab42931c30dcc6539f2bbe67",
+            "title": "Google Cloud and NVIDIA Announce General Availability of NVIDIA Vera Rubin Infrastructure",
+            "description": "General availability of the instances is coming next month, with planned expansion of availability to Europe — bringing an integrated platform for training, inference and large-scale reinforcement learning to cloud customers. A5X instances bring together NVIDIA Vera Rubin NVL72, NVIDIA ConnectX-9 SuperNICs, Google Cloud Virgo Network and Google Cloud’s fourth-generation advanced liquid-cooling technology for demanding […]",
+            "url": "https://blogs.nvidia.com/blog/google-cloud-vera-rubin-infrastructure/",
+            "source": "NVIDIA AI",
+            "category": "cloud",
+            "tags": [
+                "google_cloud",
+                "gpu",
+                "ia",
+                "nvidia"
+            ],
+            "published_at": "2026-10-21T10:45:17+00:00",
+            "collected_at": "2026-10-21T10:56:05.844394+00:00"
+        },
+        {
+            "id": "dacfb3ac5889a362b0c725b97ddce598e25d61b53f1b6bdbde374dbefe9c405e",
+            "title": "Java crashes the departure board at Tyne and Wear Metro",
+            "description": "Train times remain on show as an elderly Windows dialog demands attention",
+            "url": "https://www.theregister.com/offbeat/2026/10/21/java-crashes-the-departure-board-at-tyne-and-wear-metro/5304106",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "java",
+                "technologie",
+                "windows"
+            ],
+            "published_at": "2026-10-21T10:43:00+00:00",
+            "collected_at": "2026-10-21T10:56:02.115400+00:00"
+        },
+        {
+            "id": "4c80e288b5b5682fd2e86c4f8a37dfe52977bf8739ebe0121a1f5395f14e89e2",
+            "title": "NVIDIA Nemotron 3.5 Embed, Rerank, and Parse: Advancing Agents with World-Class Retrieval Models",
+            "description": "",
+            "url": "https://huggingface.co/blog/nvidia/nemotron-retriever-world-class-agentic-retrieval",
+            "source": "Hugging Face",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "ia",
+                "llm",
+                "machine-learning",
+                "nvidia"
+            ],
+            "published_at": "2026-10-21T10:41:36+00:00",
+            "collected_at": "2026-10-21T10:56:05.139240+00:00"
+        },
+        {
+            "id": "9cd837f56a3df57587304e7043c30f3cf12907ade67993629482a15ca1534208",
+            "title": "This new phone brings Snapdragon 8 Elite Gen 6 with cooling fan, 10,000mAh battery, and more",
+            "description": "Opt for the Win RT 2 and you get previous generation flagship silicon but a 12,070mAh battery.",
+            "url": "https://www.androidauthority.com/honor-win-2-series-12000mah-battery-3725933/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "qualcomm",
+                "smartphone"
+            ],
+            "published_at": "2026-10-21T10:37:15+00:00",
+            "collected_at": "2026-10-21T10:56:12.151462+00:00"
+        },
+        {
+            "id": "005303216cb5be632040a61b156be68822f2b512b135e636194572bcb7279a86",
+            "title": "Crypto rises with Asian tech stocks, zcash extends gain after setting upgrade date",
+            "description": "",
+            "url": "https://www.coindesk.com/markets/2026/10/21/crypto-rises-with-asian-tech-stocks-zcash-extends-gain-after-setting-upgrade-date",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-10-21T10:34:37+00:00",
+            "collected_at": "2026-10-21T10:56:21.129192+00:00"
+        },
+        {
+            "id": "804d4d957ec690829705fd256bb1f5d7185145e7893ec5730026a6f654bdd6ca",
+            "title": "NVIDIA Cloud Partners Scale Across Europe — Sovereign, Open and Built for Safe AI Agents",
+            "description": "Demand from AI-natives is pulling the European AI cloud ecosystem forward faster than ever. Developers need compute closer to their data, open models they can customize and serve at scale, and full-stack infrastructure that is secure by design. NVIDIA Cloud Partners across Europe, the Nordics, Africa, and Central Asia are expanding regional compute capacity for […]",
+            "url": "https://blogs.nvidia.com/blog/cloud-partners-europe-sovereign-safety-open-agents/",
+            "source": "NVIDIA AI",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "gpu",
+                "ia",
+                "nvidia"
+            ],
+            "published_at": "2026-10-21T10:30:41+00:00",
+            "collected_at": "2026-10-21T10:56:05.844509+00:00"
+        },
+        {
+            "id": "86185ff09c24ae9f959f9d298aa36c00dfd13b30729142e7cd673ad6999a7e9e",
+            "title": "Europe’s Industrial Leaders Reinvent Engineering and Manufacturing With NVIDIA",
+            "description": "To increase productivity, accelerate innovation and create new opportunities for economic growth, Europe’s industrial leaders are tapping NVIDIA CUDA-X and Omniverse libraries, as well as NVIDIA Cosmos and Nemotron open models, across the engineering and manufacturing lifecycle. Bringing those capabilities together on the factory floor, the NVIDIA Factory Operations Blueprint (FOX) is now available in […]",
+            "url": "https://blogs.nvidia.com/blog/europe-industrial-leaders-engineering-manufacturing/",
+            "source": "NVIDIA AI",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "gpu",
+                "ia",
+                "nvidia"
+            ],
+            "published_at": "2026-10-21T10:30:40+00:00",
+            "collected_at": "2026-10-21T10:56:05.844626+00:00"
+        },
+        {
+            "id": "81674b2dda4150f50301d8bff8bf71cb80cdbb4e7a5372c02515cfe1ccf71fde",
+            "title": "Live updates: Bitcoin clings to $82,500 as SpaceX results lift stock futures",
+            "description": "",
+            "url": "https://www.coindesk.com/markets/2026/10/21/live-updates-bitcoin-clings-to-usd82-500-as-spacex-results-lift-stock-futures",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-10-21T10:30:40+00:00",
+            "collected_at": "2026-10-21T10:56:21.129251+00:00"
+        },
+        {
+            "id": "ed622601a532afb1da89ad6aa66a62350ce4b92132e602ec3e490dd8f4aa0463",
+            "title": "Bitcoin ETFs Add $550M in 2 Days as Ether Outflows Persist",
+            "description": "U.S. bitcoin ETFs attracted another $23.16 million on Tuesday, keeping the week firmly positive after Monday’s $526.60 million surge. Ether remained under pressure, while solana extended its losing streak to 12 sessions. Bitcoin ETFs Stay Green After Monday’s $527M Surge Monday’s flood of bitcoin money became a trickle on Tuesday. The important part was that […]",
+            "url": "https://news.bitcoin.com/bitcoin-etf/bitcoin-etfs-add-550m-in-2-days-as-ether-outflows-persist/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-10-21T10:30:37+00:00",
+            "collected_at": "2026-10-21T10:56:21.420126+00:00"
+        },
+        {
+            "id": "b2b697f42a42e82a601063bb3668032f42d040054a331263c3462bca19924687",
+            "title": "NVIDIA cuDSS Now Generally Available to Accelerate Engineering and Scientific Simulations",
+            "description": "NVIDIA cuDSS, launched today in general availability, is an NVIDIA CUDA-X library that shifts a critical part of engineering and scientific simulations onto GPUs. Complex engineering feats — from advanced chips to aircraft to industrial systems —– depend on simulation to predict how designs will perform before they’re built. As designs become more complex, simulations […]",
+            "url": "https://blogs.nvidia.com/blog/cudss-generally-available-engineering-scientific-simulation/",
+            "source": "NVIDIA AI",
+            "category": "hardware",
+            "tags": [
+                "gpu",
+                "ia",
+                "nvidia"
+            ],
+            "published_at": "2026-10-21T10:30:25+00:00",
+            "collected_at": "2026-10-21T10:56:05.844757+00:00"
+        },
+        {
+            "id": "f2380296be9197f119101834db0dc44444968219f2fc8bafceb9e6329e1334f3",
+            "title": "NVIDIA Confidential Computing Expands, Enabling Frontier Model Builders to Securely Scale Across Global Infrastructure",
+            "description": "NVIDIA builds tools to enable safe agents across the stack. The NVIDIA OpenShell Reference Architecture, announced today, is part of NVIDIA’s growing portfolio of technologies that enables organizations to safely deploy agents at scale. NVIDIA Confidential Computing is the infrastructure layer that protects the models and data those agents depend on while running. Today, NVIDIA […]",
+            "url": "https://blogs.nvidia.com/blog/confidential-computing-model-builders-infrastructure/",
+            "source": "NVIDIA AI",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "gpu",
+                "ia",
+                "nvidia"
+            ],
+            "published_at": "2026-10-21T10:30:02+00:00",
+            "collected_at": "2026-10-21T10:56:05.844873+00:00"
+        },
+        {
+            "id": "f5a43adb1460e36f105857c5b3bfb494311024c0a74b55d629cd827bd9bb991a",
+            "title": "HPE says it will run the first supercomputer benchmarks on the Moon",
+            "description": "HPE’s Spaceborne Computer-4 will ride Astrolab’s FLIP rover to the Moon’s south pole to run HPL, HPCG, and AI tests.",
+            "url": "https://www.tomshardware.com/tech-industry/supercomputers/hpe-says-it-will-run-the-first-supercomputer-benchmarks-on-the-moon-with-its-spaceborne-computer-4-system-will-ride-a-rover-to-the-lunar-south-pole-to-test-linpack-llms-and-lidar-mapping",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "pc"
+            ],
+            "published_at": "2026-10-21T10:30:00+00:00",
+            "collected_at": "2026-10-21T10:56:06.211081+00:00"
+        },
+        {
+            "id": "a8a59e22d8a70a38c5e66574bd11d4e539c069915fe228a860c5da653809e85b",
+            "title": "A highlight Google Photos feature could be up for a rebrand, coming alongside these fixes",
+            "description": "Google Photos' Highlight video might soon have a new name, along with fixes to little things that may irk you.",
+            "url": "https://www.androidauthority.com/google-photos-highlight-video-rebrand-other-improvements-3725929/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-10-21T10:22:13+00:00",
+            "collected_at": "2026-10-21T10:56:12.151532+00:00"
+        },
+        {
+            "id": "3433f5846096b827d1007dfa2f0c88580df503f4a3c73406841a0497cdd9f249",
+            "title": "Microsoft says October updates didn’t actually fix VPN issues",
+            "description": "Microsoft says it mistakenly flagged a bug causing Always On VPN connection issues as fixed in the October 2026 Windows 11 cumulative updates. [...]",
+            "url": "https://www.bleepingcomputer.com/news/microsoft/microsoft-didnt-actually-fix-vpn-issues-caused-by-windows-updates/",
+            "source": "BleepingComputer",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "malware",
+                "ransomware",
+                "windows"
+            ],
+            "published_at": "2026-10-21T10:14:53+00:00",
+            "collected_at": "2026-10-21T10:55:58.438917+00:00"
+        },
+        {
+            "id": "1919889cd7f22b4a87d0603ca78f43387495272f018d3a7b897d241fe9b2a401",
+            "title": "Whatever Happened to Fire Escapes",
+            "description": "Comments",
+            "url": "https://practical.engineering/blog/2026/10/20/whatever-happened-to-fire-escapes",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-21T10:14:43+00:00",
+            "collected_at": "2026-10-21T10:56:03.628286+00:00"
+        },
+        {
+            "id": "d2d13cb790de8bfe3e057786e5b83e0d417eeb460a6e640918958ea8764882dc",
+            "title": "Improving accessibility with CSS media queries (2025)",
+            "description": "Comments",
+            "url": "https://fleeb.ee/blog/improving-accessibility-with-css-media-queries/",
+            "source": "Lobsters",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-10-21T10:14:43+00:00",
+            "collected_at": "2026-10-21T10:56:03.818567+00:00"
+        },
+        {
+            "id": "09d942bb1aad0976da416aa639f2750fcaf152cc81cd37f560def1c9203e7c58",
+            "title": "NVIDIA Agent Toolkit Expands, Grounding Enterprise Agents in Company Data",
+            "description": "Agents are only as useful as what they know, and only as trustworthy as the boundaries they run within. Leading enterprises are using the open source NVIDIA Agent Toolkit — now expanded with new tools — to customize and control agents, use company data to inform their answers and actions, monitor what they do and […]",
+            "url": "https://blogs.nvidia.com/blog/enterprise-platforms-agent-toolkit/",
+            "source": "NVIDIA AI",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "gpu",
+                "ia",
+                "nvidia",
+                "rust"
+            ],
+            "published_at": "2026-10-21T10:10:01+00:00",
+            "collected_at": "2026-10-21T10:56:05.844974+00:00"
+        },
+        {
+            "id": "8c21a02e1704d16b31e9b49477e376b324f0b468a86aad64de6a9c909c5654a9",
+            "title": "Commission to investigate how Booking.com combats scams and fraud under the Digital Services Act",
+            "description": "Commission to investigate how Booking.com combats scams and fraud under the Digital Services Act Anonymous (not verified) Wed, 10/21/2026 - 12:06 Today, the European Commission has opened formal proceedings to assess whether Booking.com may have breached the Digital Services Act (DSA) by not having diligently assessed or effectively mitigated risks related to fraudulent listings and phishing scams. The platform may also have breached the DSA when it comes to transparency because it did not clearly label as ads those listings whose providers paid for a higher ranking in search results shown to users. The investigation will focus on the following areas: Fraudulent and non-compliant listings on Booking.com Phishing scams exploiting Booking.com's reservation and guest data Paid-for boosted listings not clearly identifiable as advertisements Read the full details in the press release Find further information about: Supervision of the designated very large online platforms and search engines under DSA Digital Services Act - main aspects of the regulation User rights under the Digital Services Act - an overview Related topics Online platforms and e-commerce DSA - Digital Services Act",
+            "url": "https://digital-strategy.ec.europa.eu/en/news/commission-investigate-how-bookingcom-combats-scams-and-fraud-under-digital-services-act",
+            "source": "European Commission Digital",
+            "category": "cybersecurite",
+            "tags": [
+                "europe",
+                "git",
+                "numerique",
+                "phishing",
+                "reglementation"
+            ],
+            "published_at": "2026-10-21T10:06:59+00:00",
+            "collected_at": "2026-10-21T10:56:19.506051+00:00"
+        },
+        {
+            "id": "021a484c6b81051d12e1a5f341965c560dba272cb40b0ef89109d6cd538e36f3",
+            "title": "Chinese AI Model Writes More Hackable Code When Told It’s for US Contractor",
+            "description": "Tasked with writing an application for a US defense contractor, the model made the code 19% more likely to be hackable. The post Chinese AI Model Writes More Hackable Code When Told It’s for US Contractor appeared first on SecurityWeek .",
+            "url": "https://www.securityweek.com/chinese-ai-model-writes-more-hackable-code-when-told-its-for-us-contractor/",
+            "source": "SecurityWeek",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "security",
+                "vulnerabilites"
+            ],
+            "published_at": "2026-10-21T10:03:24+00:00",
+            "collected_at": "2026-10-21T10:55:59.744569+00:00"
+        },
+        {
+            "id": "c854ff661b6298d804bf7884ed21aaa8078a7911cdc9d214a2ff7316fb0c8d18",
+            "title": "I didn’t expect Pixel VIPs to impress me much, but now I can’t stop using it",
+            "description": "This central hub is perfect for keeping my important contacts highlighted in one place.",
+            "url": "https://www.androidauthority.com/pixel-vips-hands-on-3722683/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-10-21T10:00:36+00:00",
+            "collected_at": "2026-10-21T10:56:12.151603+00:00"
+        },
+        {
+            "id": "d46c8940730c093aa2d055afbb383ce53acb6e873fd442b25d5e12a705ddd2d0",
+            "title": "NVIDIA Open Models Advance Europe’s Sovereign Intelligence Across Industries",
+            "description": "NVIDIA is expanding its family of open models across language, robotics, biology, and quantum computing, giving developers, researchers and enterprises what they need to build applications tailored to local languages and industries The portfolio includes the new NVIDIA Nemotron 3.5 Super VL and Nemotron 3.5 Bolt models; new NVIDIA Nemotron Retriever models for embedding, reranking […]",
+            "url": "https://blogs.nvidia.com/blog/open-models-europe-industry/",
+            "source": "NVIDIA AI",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "gpu",
+                "ia",
+                "intel",
+                "nvidia"
+            ],
+            "published_at": "2026-10-21T10:00:07+00:00",
+            "collected_at": "2026-10-21T10:56:05.845083+00:00"
+        },
+        {
+            "id": "27d5c9877762b963119c894dc3a70686a9ddfc5968c521953c33778bd204c7f1",
+            "title": "The spec is the new code, so brush up on your prose, says Kaseya CTO",
+            "description": "Domain expertise and clear writing will matter more than syntax, and yes, that means documentation",
+            "url": "https://www.theregister.com/software/2026/10/21/the-spec-is-the-new-code-so-brush-up-on-your-prose-says-kaseya-cto/5304002",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-10-21T10:00:00+00:00",
+            "collected_at": "2026-10-21T10:56:02.115471+00:00"
+        },
+        {
+            "id": "0bd52b4c0ded05fa3a006d32dd63335110d0430e5e538653e66673ec017cbae0",
+            "title": "Three workers killed, one in intensive care after fall at TSMC’s 2nm fab construction site",
+            "description": "Three contract workers died, and one is in intensive care after a fall at TSMC’s Fab 22 construction site in Kaohsiung, Taiwan.",
+            "url": "https://www.tomshardware.com/tech-industry/semiconductors/three-workers-killed-one-in-intensive-care-after-fall-at-tsmcs-2nm-fab-construction-site-in-kaohsiung-broken-bolt-on-a-steel-connection-plate-suspected-as-cause-behind-tragic-accident",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "pc"
+            ],
+            "published_at": "2026-10-21T10:00:00+00:00",
+            "collected_at": "2026-10-21T10:56:06.211161+00:00"
+        },
+        {
+            "id": "67ddc2d1536c0c6e8e33fc4d0399f97350ed378da84d6fb931452d4d919b2cae",
+            "title": "Jensen Huang Nvidia GTC keynote disrupted by Greenpeace protest over chips in Russian drones",
+            "description": "Jensen Huang's Nvidia GTC keynote speech in Berlin was disrupted by a Greenpeace protest on Wednesday.",
+            "url": "https://www.tomshardware.com/tech-industry/jensen-huang-nvidia-gtc-keynote-disrupted-by-greenpeace-protest-over-chips-in-russian-drones-what-are-you-doing-about-that-heckler-demands-before-being-thrown-out",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "nvidia",
+                "pc"
+            ],
+            "published_at": "2026-10-21T09:57:06+00:00",
+            "collected_at": "2026-10-21T10:56:06.211226+00:00"
+        },
+        {
+            "id": "3e53f3623fc52415619677447855811db66523e4b8c8e383e57702c13a3ae8fa",
+            "title": "I split Claude, Gemini, and ChatGPT into work, home, and casual, and it’s a mixed bag",
+            "description": "Here's what happened when I assigned distinct roles to Claude, Gemini, and ChatGPT. This setup was a double-edged sword.",
+            "url": "https://www.androidauthority.com/my-claude-gemini-and-chatgpt-setup-3721781/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "anthropic",
+                "gemini",
+                "openai",
+                "smartphone"
+            ],
+            "published_at": "2026-10-21T09:30:24+00:00",
+            "collected_at": "2026-10-21T10:56:12.151700+00:00"
+        },
+        {
+            "id": "db3718abbfc4c7d4e28326478b9f515ce9a8b12f495b73978d77abde4ef7d825",
+            "title": "GTC Berlin 2026: Live Updates From NVIDIA CEO Jensen Huang’s Keynote",
+            "description": "Founded in a tent near the Berlin Wall in 1980, the Tempodrom moved several times before settling near Anhalter Bahnhof in 2001. Its permanent home has since hosted concerts, galas and political events. Today, it hosts a different kind of spectacle. GTC Berlin runs three days, with more than 100 sessions on agentic AI, robotics, […]",
+            "url": "https://blogs.nvidia.com/blog/gtc-berlin-2026-keynote/",
+            "source": "NVIDIA AI",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "gpu",
+                "ia",
+                "nvidia"
+            ],
+            "published_at": "2026-10-21T09:30:16+00:00",
+            "collected_at": "2026-10-21T10:56:05.845183+00:00"
+        },
+        {
+            "id": "d5a5de280e5448085d13bf3f69c2b4778890afe277a840ab6bf35c6052276e41",
+            "title": "Ether Worth $390 Million Locked up by Tom Lee’s Bitmine",
+            "description": "Bitmine staked another 159,728 ETH worth about $390.6 million, lifting the share of its treasury put to work to 86.5%. One Transaction, Nine Figures Onchain analysts reported on Oct. 21 that Tom Lee’s Bitmine had staked another 159,728 ETH, worth about $390.6 million, taking the company’s staked position to 5.23 million ETH, valued near $12.78 […]",
+            "url": "https://news.bitcoin.com/market-updates/bitmine-stakes-159728-eth-tom-lee/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-10-21T09:30:12+00:00",
+            "collected_at": "2026-10-21T10:56:21.420243+00:00"
+        },
+        {
+            "id": "f395a3e3a7221e90da5065d195ffd2f6f77e9eedc50f451c6edcf8f93b09bdfc",
+            "title": "SpaceX and Tesla explore merger that would unite more than 30,000 bitcoin",
+            "description": "",
+            "url": "https://www.coindesk.com/markets/2026/10/21/spacex-and-tesla-explore-merger-that-would-unite-more-than-30-000-bitcoin",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-10-21T09:23:00+00:00",
+            "collected_at": "2026-10-21T10:56:21.129302+00:00"
+        },
+        {
+            "id": "ef2dbed529b94616908df200955327e596467e594615bfaa30cddb59708e4277",
+            "title": "Happiness is the next AI KPI if Oxford boffins have their way",
+            "description": "Researchers say public subsidies for AI should be repaid in wellbeing, not just economic growth",
+            "url": "https://www.theregister.com/offbeat/2026/10/21/happiness-is-the-next-ai-kpi-if-oxford-boffins-have-their-way/5304253",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-10-21T09:15:00+00:00",
+            "collected_at": "2026-10-21T10:56:02.115532+00:00"
+        },
+        {
+            "id": "0f47b2d5f41c4b36e5a7d071c23ef5ae2de18e137e1f7a1575622e7428ec8753",
+            "title": "Samsung is killing a smart TV hub that just got a major Google Photos upgrade",
+            "description": "Samsung's shutdown notice raises questions about a recent Google integration.",
+            "url": "https://www.androidauthority.com/samsung-daily-plus-shutdown-3725890/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-10-21T09:14:40+00:00",
+            "collected_at": "2026-10-21T10:56:12.151762+00:00"
+        },
+        {
+            "id": "a5a081fa02eb50c1f3ad7d7aea498b1a6fb07c15703479b6adcc0434a347d6d5",
+            "title": "Eight Bits of Trust; eMudhra's CA keys cracked in milliseconds",
+            "description": "Comments",
+            "url": "https://scotthelme.co.uk/eight-bits-of-trust-emudhras-ca-keys-cracked-in-milliseconds/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "rust",
+                "startup"
+            ],
+            "published_at": "2026-10-21T09:08:08+00:00",
+            "collected_at": "2026-10-21T10:56:03.628124+00:00"
+        },
+        {
+            "id": "3f71ba514c8e113b952a50881113e3581e4e8a99f3efeffef1df8fc9d838288c",
+            "title": "The 1.5°C goal of the Paris Agreement is no longer viable",
+            "description": "Comments",
+            "url": "https://unric.org/en/unep-emissions-gap-report-2026-1-5-degree-overshoot/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-21T09:07:49+00:00",
+            "collected_at": "2026-10-21T10:56:03.628189+00:00"
+        },
+        {
+            "id": "8231b6f9ea3f8bfffda492a722692ea691123db4b56577d66b077e9a6648656e",
+            "title": "PHP2Shell: Two Unpatched Critical PHP RCE Flaws (CVSS 9.2) Trigger Emergency Security Alert",
+            "description": "This story is developing and was written before PHP's scheduled 14:00 UTC release on October 21. Once the release is out, the affected and fixed versions below are confirmed by the official advisory. PHP will ship an out-of-cycle security release at 14:00 UTC today, October 21, for two critical vulnerabilities that its security team has rated 9.2 on the CVSS v4.0 scale but has not described.",
+            "url": "https://thehackernews.com/2026/10/php2shell-two-unpatched-critical-php.html",
+            "source": "The Hacker News",
+            "category": "cloud",
+            "tags": [
+                "aws",
+                "cybersecurite",
+                "hacking",
+                "php",
+                "vulnerabilites"
+            ],
+            "published_at": "2026-10-21T09:05:17+00:00",
+            "collected_at": "2026-10-21T10:55:58.629041+00:00"
+        },
+        {
+            "id": "f0182a53b406878e009b96ed503a07a410644198fef918ae96833f1865f99158",
+            "title": "Attackers Abuse UpdraftCentral Keys to Plant Backdoors on WordPress Sites",
+            "description": "Unknown threat actors breached TeamUpdraft's website and potentially gained unauthorized access to customers' connection keys for UpdraftCentral, UpdraftVault, and UpdraftClone, using them to backdoor WordPress sites. TeamUpdraft is the developer behind UpdraftPlus, a popular WordPress backup plugin with over four million active installations. The vendor also offers UpdraftCentral, a remote",
+            "url": "https://thehackernews.com/2026/10/attackers-abuse-updraftcentral-keys-to.html",
+            "source": "The Hacker News",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "hacking",
+                "vulnerabilites"
+            ],
+            "published_at": "2026-10-21T09:01:12+00:00",
+            "collected_at": "2026-10-21T10:55:58.629149+00:00"
+        },
+        {
+            "id": "b4b72312c09993cfc46a01d872d558886dd2cdd01d56dbab5a0b90c9b94e0daa",
+            "title": "Samsung’s first Android XR glasses face a design problem its competitor already solved",
+            "description": "The tech is important, but so are the glasses themselves.",
+            "url": "https://www.androidauthority.com/samsung-smart-glasses-face-problem-ray-ban-meta-solved-3725475/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-10-21T09:00:33+00:00",
+            "collected_at": "2026-10-21T10:56:12.151827+00:00"
+        },
+        {
+            "id": "cf9bdb08b3444bf26347a4e0013e907ae0512bb7b110157f4de86f1859feb972",
+            "title": "We can do impossible things",
+            "description": "I’d wager everyone has a rehearsed response to what’s absolutely one of the world’s worst interview questions: “What’s your biggest weakness?” Whenever I’ve gotten it, I take a slow—even pensive—breath and rattle off my line: “I say no to myself too much.” I won’t lie. It’s a bit shameless—a definite humblebrag. I’m a systems thinker:…",
+            "url": "https://www.technologyreview.com/2026/10/21/1146053/editor-letter-we-can-do-impossible-things/",
+            "source": "MIT Technology Review",
+            "category": "recherche_innovation",
+            "tags": [
+                "innovation",
+                "recherche",
+                "science"
+            ],
+            "published_at": "2026-10-21T09:00:00+00:00",
+            "collected_at": "2026-10-21T10:56:19.792660+00:00"
+        },
+        {
+            "id": "de18c66c96d2651dc9d43acb6e55886fdb14d55952f8290292b47c2c37cf78d2",
+            "title": "Nuclear-powered spaceships",
+            "description": "Just before the Artemis II crew began its historic slingshot around the moon this past April, NASA announced plans to build Space Reactor-1 Freedom. SR-1, the first-ever nuclear-reactor-­powered interplanetary spacecraft, is meant to fly an uncrewed mission to Mars by the end of 2028, arriving in 2029. A successful mission would herald a new era…",
+            "url": "https://www.technologyreview.com/2026/10/21/1146061/nuclear-powered-spaceships-impossible-issue/",
+            "source": "MIT Technology Review",
+            "category": "recherche_innovation",
+            "tags": [
+                "innovation",
+                "recherche",
+                "science"
+            ],
+            "published_at": "2026-10-21T09:00:00+00:00",
+            "collected_at": "2026-10-21T10:56:19.792779+00:00"
+        },
+        {
+            "id": "8e003e3b910b10e7ff80a17093e26b5344acf56e1ca0d30cc35461f46d45a7bd",
+            "title": "Exercise in a pill",
+            "description": "We all know exercise is good for us. It builds muscle, strengthens bones, lowers blood pressure, and boosts mood. By deciphering how movement benefits the body, researchers hope to develop medicines that can offer some of the same perks—without the workout. The idea isn’t to replace exercise but to bring its upsides to people who…",
+            "url": "https://www.technologyreview.com/2026/10/21/1146121/exercise-in-a-pill-impossible-issue/",
+            "source": "MIT Technology Review",
+            "category": "recherche_innovation",
+            "tags": [
+                "innovation",
+                "recherche",
+                "science"
+            ],
+            "published_at": "2026-10-21T09:00:00+00:00",
+            "collected_at": "2026-10-21T10:56:19.792880+00:00"
+        },
+        {
+            "id": "35fd782a25e98e2504530331b03cadbe67af9f41a940231fb06b0491cc1bd828",
+            "title": "Interspecies communication",
+            "description": "Humans are far from the only species with a gift for gab, and our furry, feathered, and finned friends could have a lot to tell us. Decoding how animals communicate with one another could offer a window into the inner lives of other species and help humans realize that “animals are sentient creatures who think,…",
+            "url": "https://www.technologyreview.com/2026/10/21/1146124/interspecies-communication-impossible-issue/",
+            "source": "MIT Technology Review",
+            "category": "recherche_innovation",
+            "tags": [
+                "innovation",
+                "recherche",
+                "science"
+            ],
+            "published_at": "2026-10-21T09:00:00+00:00",
+            "collected_at": "2026-10-21T10:56:19.792975+00:00"
+        },
+        {
+            "id": "14d56217791a00919e53187afa5ee4072aa6c0ced5b9a1d234e8ecc7685090e9",
+            "title": "Cleaning up PFAS",
+            "description": "Scrubbing Earth of per- and polyfluoroalkyl substances—a.k.a. PFAS or forever chemicals—could eliminate a list of woes for people and planet. Used for decades in everything from nonstick pans to firefighting foams, PFAS have been linked to increased risks of fertility challenges, developmental delays, cancer, and reduced immune response. They are known for a strong bond…",
+            "url": "https://www.technologyreview.com/2026/10/21/1146128/cleaning-up-pfas-impossible-issue/",
+            "source": "MIT Technology Review",
+            "category": "recherche_innovation",
+            "tags": [
+                "innovation",
+                "recherche",
+                "science"
+            ],
+            "published_at": "2026-10-21T09:00:00+00:00",
+            "collected_at": "2026-10-21T10:56:19.793072+00:00"
+        },
+        {
+            "id": "caad24243d61eaa39405381aa8388b2b2c7835aadc58e37120f2360a8f8a9522",
+            "title": "Solid-state batteries",
+            "description": "The rise of the lithium-ion battery, which powers everything from the smallest personal electronics to gargantuan energy storage systems, has been nothing short of revolutionary. But as anyone who’s boarded a plane in the last decade could tell you, storing and pumping out energy by moving charged lithium ions through a liquid electrolyte soup has…",
+            "url": "https://www.technologyreview.com/2026/10/21/1146137/solid-state-batteries-impossible-issue/",
+            "source": "MIT Technology Review",
+            "category": "recherche_innovation",
+            "tags": [
+                "innovation",
+                "recherche",
+                "science"
+            ],
+            "published_at": "2026-10-21T09:00:00+00:00",
+            "collected_at": "2026-10-21T10:56:19.793164+00:00"
+        },
+        {
+            "id": "7944a6e63f593f7685c93335a9dc5fd9919c0b2938fd7caba114d1abdc9c3db8",
+            "title": "Eliminating traffic deaths",
+            "description": "Every year, traffic crashes kill more than one million people, and they’re the leading cause of death for children and young adults. In the US, 100 people a day lose their lives this way, in many cases not on highways but on rural and local streets. “Traffic deaths are a leading cause of preventable death,…",
+            "url": "https://www.technologyreview.com/2026/10/21/1146141/eliminating-traffic-deaths-impossible-issue/",
+            "source": "MIT Technology Review",
+            "category": "recherche_innovation",
+            "tags": [
+                "innovation",
+                "recherche",
+                "science"
+            ],
+            "published_at": "2026-10-21T09:00:00+00:00",
+            "collected_at": "2026-10-21T10:56:19.793253+00:00"
+        },
+        {
+            "id": "8834651058c0df750fde2b4235674582aa7947e17bd4af70544d30030095a048",
+            "title": "Monero futures are again heating with leverage, raising volatility risks",
+            "description": "",
+            "url": "https://www.coindesk.com/markets/2026/10/21/monero-futures-are-again-heating-with-leverage-raising-volatility-risks",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-10-21T08:57:29+00:00",
+            "collected_at": "2026-10-21T10:56:21.129350+00:00"
+        },
+        {
+            "id": "d62d4a550cf195f43b0414c1ae660f953964861823980f379109dffe6d1826cc",
+            "title": "Tether leads $15 million funding round for AI-focused payment startup Mural",
+            "description": "",
+            "url": "https://www.coindesk.com/business/2026/10/21/tether-leads-usd15-million-series-a-for-ai-focused-payment-startup-mural",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-10-21T08:47:11+00:00",
+            "collected_at": "2026-10-21T10:56:21.129396+00:00"
+        },
+        {
+            "id": "cdb08ddee200914fbd6105abb38ea445fe9f1be7e805b290ed5257315201a87c",
+            "title": "CISA: SafePay ransomware hit over 600 critical infrastructure orgs",
+            "description": "The Cybersecurity and Infrastructure Security Agency (CISA) says the SafePay ransomware gang has breached over 600 critical infrastructure organizations worldwide since 2024. [...]",
+            "url": "https://www.bleepingcomputer.com/news/security/cisa-and-fbi-safepay-ransomware-has-hit-over-600-critical-infrastructure-organizations/",
+            "source": "BleepingComputer",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "malware",
+                "ransomware"
+            ],
+            "published_at": "2026-10-21T08:36:24+00:00",
+            "collected_at": "2026-10-21T10:55:58.439003+00:00"
+        },
+        {
+            "id": "5391c500421828bb8d979491c8fb8abaca1f13dbf9675de1f3b9e6fc18f80e81",
+            "title": "Bitcoin Worth $90 Million Pulled From Wintermute by a Mystery Whale",
+            "description": "Three brand-new wallets received 1,090 BTC worth about $90.38 million from market maker Wintermute, the second near-identical haul in a week. The Blockchain Trail, Examined Onchain sleuths spotted the move early today morning, reporting that whales had been “continuing to accumulate” after three newly created wallets received 1,090 BTC from Wintermute. The first wallet holds […]",
+            "url": "https://news.bitcoin.com/crypto-news/bitcoin-whale-wintermute-1090-btc-new-wallets/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-10-21T08:30:54+00:00",
+            "collected_at": "2026-10-21T10:56:21.420357+00:00"
+        },
+        {
+            "id": "425bc55fee6fd72e23d8d80d13edd124d2de4721ddc7106f86e646f38ee5042d",
+            "title": "MPs urge UK government to play venture capitalist with taxpayer-funded tech",
+            "description": "Watchdog says Whitehall is too timid about taking stakes in British startups, leaving taxpayers at risk of missing out when they strike gold",
+            "url": "https://www.theregister.com/public-sector/2026/10/21/mps-urge-uk-government-to-play-venture-capitalist-with-taxpayer-funded-tech/5304212",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-10-21T08:30:00+00:00",
+            "collected_at": "2026-10-21T10:56:02.115597+00:00"
+        },
+        {
+            "id": "14e4c7d172ffebdfa2b05ab3233374977aba76b72aa65be71a4bb68837319721",
+            "title": "OnePlus may call dibs on a new Snapdragon ‘Pro’ chip, and you’re allowed to feel jealous",
+            "description": "A new OnePlus phone could soon arrive with an upcoming Snapdragon 8 Gen Pro chip and some specs identical to the OnePlus 16.",
+            "url": "https://www.androidauthority.com/oneplus-turbo-snapdragon-8-gen-5-pro-3725410/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "qualcomm",
+                "smartphone"
+            ],
+            "published_at": "2026-10-21T08:11:46+00:00",
+            "collected_at": "2026-10-21T10:56:12.151898+00:00"
+        },
+        {
+            "id": "9909d2150625e30c722c337059712b95a9fb52791b09f83ddeae25114b53a16a",
+            "title": "Zcash developers confirm November date for upgrade that triples payment speed",
+            "description": "",
+            "url": "https://www.coindesk.com/markets/2026/10/21/zcash-developers-confirm-november-date-for-upgrade-that-triples-payment-speed",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-10-21T08:10:12+00:00",
+            "collected_at": "2026-10-21T10:56:21.129441+00:00"
+        },
+        {
+            "id": "503b4db3bf44591c8d84e45cbf7869a7323b7779be35b1ebe3a5d68540d32bf0",
+            "title": "U.S. Orders DeepSeek Removed From Federal Civilian Systems, Bans New Purchases",
+            "description": "U.S. federal civilian agencies must remove DeepSeek products from their information technology systems, along with any third-party products or services \"developed using DeepSeek implementations,\" under a Department of Homeland Security order. They may also no longer buy information technology products or services from the Chinese AI developer or its affiliates Homeland Security Secretary",
+            "url": "https://thehackernews.com/2026/10/us-orders-deepseek-removed-from-federal.html",
+            "source": "The Hacker News",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "hacking",
+                "vulnerabilites"
+            ],
+            "published_at": "2026-10-21T08:04:17+00:00",
+            "collected_at": "2026-10-21T10:55:58.629247+00:00"
+        },
+        {
+            "id": "dbfd93f67f7ae63549c61a2d15c1480bc29f16d9bae48f86124aef002c447507",
+            "title": "Unikernels in OCaml",
+            "description": "Comments",
+            "url": "https://uniker.nl/",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-10-21T07:51:20+00:00",
+            "collected_at": "2026-10-21T10:56:03.818098+00:00"
+        },
+        {
+            "id": "2f30cd1c0af42cce1757c5873c3564fe4b451ea3e55d8c245811f22327975e78",
+            "title": "State Bank of India Confirms Data Leak After 3,897 Customer Records Found on Dark Web",
+            "description": "State Bank of India has identified 3,897 customer records containing personal information in a set of about 375,000 records available on the dark web, and it does not yet know where the data came from. The state-owned bank, India's largest, said in a stock-exchange filing dated October 21 that it \"has experienced an incident involving the loss of certain data.\" The count is",
+            "url": "https://thehackernews.com/2026/10/state-bank-of-india-confirms-data-leak.html",
+            "source": "The Hacker News",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "hacking",
+                "vulnerabilites"
+            ],
+            "published_at": "2026-10-21T07:44:22+00:00",
+            "collected_at": "2026-10-21T10:55:58.629354+00:00"
+        },
+        {
+            "id": "eb78923aa385a5699984af7542d983a6b37529683d20d9d3fb3a8aa41494c250",
+            "title": "The latest Android 17 beta fixes a major Quick Settings security issue",
+            "description": "Google finally lets you lock down Wi-Fi, Bluetooth, Mobile Data, and Airplane Mode toggles on the lock screen.",
+            "url": "https://www.androidauthority.com/android-17-qpr-3-beta-2-lock-quick-settings-tiles-3725896/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "bluetooth",
+                "smartphone",
+                "wifi"
+            ],
+            "published_at": "2026-10-21T07:35:57+00:00",
+            "collected_at": "2026-10-21T10:56:12.151957+00:00"
+        },
+        {
+            "id": "606ad94d815e616f2d90340b2471c5ff76c20031d571125eb53720df10173d45",
+            "title": "Vector Graphics in Lil",
+            "description": "Comments",
+            "url": "https://beyondloom.com/blog/vectorgraphics.html",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-10-21T07:33:04+00:00",
+            "collected_at": "2026-10-21T10:56:03.818306+00:00"
+        },
+        {
+            "id": "572a78435fd1e4359da614992e661e7b10d5e41dfa78c6b9f23a2dbd81f77289",
+            "title": "Just 0.7 Bitcoin Now Makes You a Billionaire in Indonesia",
+            "description": "With the rupiah pinned near 18,000 per dollar, 0.7 BTC now converts to more than 1 billion rupiah. The Math Crypto commentator Ash Crypto took to X and revealed that just 0.7 BTC is worth more than a billion IDR, with the dollar-rupiah rate currently sitting around 17,995. This puts 0.7 BTC at roughly IDR […]",
+            "url": "https://news.bitcoin.com/market-updates/bitcoin-rupiah-billionaire-indonesia/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-10-21T07:30:02+00:00",
+            "collected_at": "2026-10-21T10:56:21.420455+00:00"
+        },
+        {
+            "id": "aa0f817840fc736501c2872ca7edcd92a6007eb9a3d0d52c93347976e61f77ae",
+            "title": "Announcing the GPU notification group and Linker Working Area",
+            "description": "Comments",
+            "url": "https://blog.rust-lang.org/inside-rust/2026/10/20/gpu-target-notification-group/",
+            "source": "Lobsters",
+            "category": "hardware",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-10-21T07:27:17+00:00",
+            "collected_at": "2026-10-21T10:56:03.818727+00:00"
+        },
+        {
+            "id": "37c3e5fa7177b2714e52b34fb0b2ab682ee63a433ec7448a6df8b8bb7457635d",
+            "title": "CISA Orders Federal Agencies to Patch Exploited Plex2Shell, Siemens, and SiteGuard Flaws",
+            "description": "The U.S. Cybersecurity and Infrastructure Security Agency (CISA) on Tuesday added four vulnerabilities to its Known Exploited Vulnerabilities (KEV) catalog, including four vulnerabilities impacting Plex Media Server that's collectively called Plex2Shell. The vulnerabilities are listed below - CVE-2026-96652 (CVSS score: 5.3) - Plex Media Server Server-Side Request Forgery (SSRF)",
+            "url": "https://thehackernews.com/2026/10/cisa-orders-federal-agencies-to-patch.html",
+            "source": "The Hacker News",
+            "category": "cybersecurite",
+            "tags": [
+                "aws",
+                "cve",
+                "cybersecurite",
+                "hacking",
+                "vulnerabilites"
+            ],
+            "published_at": "2026-10-21T07:26:49+00:00",
+            "collected_at": "2026-10-21T10:55:58.629431+00:00"
+        },
+        {
+            "id": "e9ac4c4f02410914bf843999a9f1483aff597b7c92200c5a806d544932352781",
+            "title": "Google clears the air on Fitbit Air’s missing sleep breathing quality feature",
+            "description": "The company has finally addressed the confusion surrounding the missing feature.",
+            "url": "https://www.androidauthority.com/google-fitbit-air-sleep-breathing-quality-coming-soon-3725859/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-10-21T07:14:48+00:00",
+            "collected_at": "2026-10-21T10:56:12.152021+00:00"
+        },
+        {
+            "id": "547d2b94210811724434c4c83bdf9554e23ef17089624666c05d69d943f32489",
+            "title": "Firefox security patch tests are now private for at least a week",
+            "description": "Comments",
+            "url": "https://groups.google.com/a/mozilla.org/g/firefox-dev/c/4I1HSPtVyrI/m/giGra4ZzAQAJ",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-10-21T07:13:16+00:00",
+            "collected_at": "2026-10-21T10:56:03.818392+00:00"
+        },
+        {
+            "id": "c03f37b0bb5aa7c52eddfd06a25ce0f6e0a28ca4c7544be5f960975092671e16",
+            "title": "Better pay for AppleCare Plus: The iPhone Duo has a concerningly soft crease",
+            "description": "Is this a defect or a feature? All I can say is that the Z Fold 8's crease feels just as robust as the rest of the display.",
+            "url": "https://www.androidauthority.com/iphone-duo-soft-crease-screen-3725872/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "ios",
+                "smartphone"
+            ],
+            "published_at": "2026-10-21T07:03:34+00:00",
+            "collected_at": "2026-10-21T10:56:12.152082+00:00"
+        },
+        {
+            "id": "e286c39024a236a8409a7a8a9b1adfb6878b3c1b064a581720f075a6010de7c7",
+            "title": "PHP2Shell: Mass Exploitation Looms for Leaked Critical PHP Flaws",
+            "description": "Tracked as CVE-2026-109618 and CVE-2026-109619, the bugs could potentially lead to unauthenticated remote code execution. The post PHP2Shell: Mass Exploitation Looms for Leaked Critical PHP Flaws appeared first on SecurityWeek .",
+            "url": "https://www.securityweek.com/php2shell-mass-exploitation-looms-for-leaked-critical-php-flaws/",
+            "source": "SecurityWeek",
+            "category": "cybersecurite",
+            "tags": [
+                "aws",
+                "cve",
+                "cybersecurite",
+                "php",
+                "security",
+                "vulnerabilites"
+            ],
+            "published_at": "2026-10-21T07:02:06+00:00",
+            "collected_at": "2026-10-21T10:55:59.744666+00:00"
+        },
+        {
+            "id": "4298823bba2d8ca4e51af99ad59ec26c2e4e227f1406c2852b3c94846c821da0",
+            "title": "A Lab Robot Found Four New Asymmetric Reactions in 30 Days, but Humans Set the Rules",
+            "description": "In 30 days, an autonomous lab platform at the Polish Academy of Sciences identified four previously unknown enantioselective chemical reactions. The system used reinforcement learning to analyze results and choose what to try next, while researchers set the search space and confirmed the products, describing the work in Nature Communications on October 13, 2026. In […]",
+            "url": "https://news.bitcoin.com/technology/a-lab-robot-found-four-new-asymmetric-reactions-in-30-days-but-humans-set-the-rules-49201/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto",
+                "ios"
+            ],
+            "published_at": "2026-10-21T06:38:29+00:00",
+            "collected_at": "2026-10-21T10:56:21.420562+00:00"
+        },
+        {
+            "id": "937ef9c58f97777ec27b7535e760181377efa98828dd5ffc429df36de2d9b821",
+            "title": "WWE 2K26 Collides With Street Fighter In \"First-Ever\" Collab Next Week",
+            "description": "Inspired by WWE x Street Fighter figures. Apart from the launch of the new live-action Street Fighter movie, the wrestling series WWE 2K has recently announced its \"first ever\" collaboration with Street Fighter. Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/news/2026/10/wwe-2k26-collides-with-street-fighter-in-first-ever-collab-next-week",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-10-21T06:25:00+00:00",
+            "collected_at": "2026-10-21T10:56:19.286899+00:00"
+        },
+        {
+            "id": "e18f281434e4a09b77bc740c568d7bdc529b22b62f3ec6f2fe9a6a7525e678db",
+            "title": "This crazy bright Google TV projector is now available to order",
+            "description": "XGIMI’s Aura 3 Pro and Max 4K projectors are now on Kickstarter.",
+            "url": "https://www.androidauthority.com/xgimi-aura-3-pro-max-projector-kickstarter-orders-live-3725842/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-10-21T06:17:04+00:00",
+            "collected_at": "2026-10-21T10:56:12.152140+00:00"
+        },
+        {
+            "id": "f18e332e2eaacb24b5232584224501155a679a85372e8b03c1ddc613058d5c68",
+            "title": "Google just gave Pixel 9 owners a little more time with this lifesaving feature",
+            "description": "You won't have to start paying for Satellite SOS just yet, but the freebie won't last long.",
+            "url": "https://www.androidauthority.com/google-pixel-9-satellite-sos-free-for-one-additional-year-3725866/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-10-21T06:08:51+00:00",
+            "collected_at": "2026-10-21T10:56:12.152197+00:00"
+        },
+        {
+            "id": "8dbb0ccea4784e45668c15c0643294e8b1a6d2280350040e91f9ad73252011ce",
+            "title": "Hackers Hid Vasilek Backdoor in VMware Tools During 2-Year Russian Healthcare Intrusion",
+            "description": "A Belarus-aligned hacktivist group spent nearly two years within the network of a Russian healthcare organization. According to a report published by Russian cybersecurity firm Solar, the activity has been attributed to a threat cluster dubbed Partisan Zmiy, which is also known as the Cyber Partisans. Known to be active since at least 2020, the group has a track record of striking industrial",
+            "url": "https://thehackernews.com/2026/10/hackers-hid-vasilek-backdoor-in-vmware.html",
+            "source": "The Hacker News",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "hacking",
+                "vulnerabilites"
+            ],
+            "published_at": "2026-10-21T06:05:15+00:00",
+            "collected_at": "2026-10-21T10:55:58.629524+00:00"
+        },
+        {
+            "id": "6bd61f02e86600c9aec950911934f634ae5e1baabcd71e42a2af6cfd39367086",
+            "title": "Hijacked Developer Account Used to Plant Stealer in OVHcloud CLI",
+            "description": "Researchers say the developer’s account was compromised in March with a GlassWorm-linked loader. The post Hijacked Developer Account Used to Plant Stealer in OVHcloud CLI appeared first on SecurityWeek .",
+            "url": "https://www.securityweek.com/hijacked-developer-account-used-to-plant-stealer-in-ovhcloud-cli/",
+            "source": "SecurityWeek",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "security",
+                "vulnerabilites"
+            ],
+            "published_at": "2026-10-21T06:02:27+00:00",
+            "collected_at": "2026-10-21T10:55:59.744760+00:00"
+        },
+        {
+            "id": "f0f19071cd127161eb0674b3b894c8c0ccd674ea446acb0a253eaeb21576e45e",
+            "title": "Here’s how Google plans to let you use Pixel’s face unlock in the dark",
+            "description": "Google's solution for face unlock in the dark is as low-tech as it can be.",
+            "url": "https://www.androidauthority.com/pixel-face-active-illumination-apk-teardown-3725852/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-10-21T05:59:58+00:00",
+            "collected_at": "2026-10-21T10:56:12.152258+00:00"
+        },
+        {
+            "id": "761dfa211150ec72a5348b7f1835c3a105decaf4c58cb72714534be5396663c3",
+            "title": "After 80 Years of Smooth-Wing Dogma, Micro-Roughness Cut Drag 43%",
+            "description": "A Distributed Micro-Roughness surface reduced aerodynamic drag by up to 43.6% in experiments run by a Japanese team using a magnetic levitation wind tunnel at the University of Tohoku. The microscopic, canyon-like texture is designed to suppress Tollmien-Schlichting wave growth, but the approach still needs full-scale validation and a maintenance plan to keep the surface […]",
+            "url": "https://news.bitcoin.com/technology/after-80-years-of-smooth-wing-dogma-micro-roughness-cut-drag-43-49201/",
+            "source": "Bitcoin.com News",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto",
+                "llm"
+            ],
+            "published_at": "2026-10-21T05:35:53+00:00",
+            "collected_at": "2026-10-21T10:56:21.420679+00:00"
+        },
+        {
+            "id": "5dfe23fd6818e015614bd270ffe89df0028ccea79a59282757233281ed9deab7",
+            "title": "Ripple brings Wall Street into 24/7 stock bets, but HSBC warns markets are still thin",
+            "description": "",
+            "url": "https://www.coindesk.com/markets/2026/10/21/ripple-brings-wall-street-into-24-7-stock-bets-but-hsbc-warns-markets-are-still-thin",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-10-21T05:25:57+00:00",
+            "collected_at": "2026-10-21T10:56:21.129486+00:00"
+        },
+        {
+            "id": "3a60cc9fb455e16f2c299cb2f2ad224fd064ba524752a60499e9c215add4176e",
+            "title": "Battlezone Online: BZFlag in the Browser",
+            "description": "Comments",
+            "url": "https://github.com/timriker/bzo",
+            "source": "Hacker News",
+            "category": "web",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-21T05:05:19+00:00",
+            "collected_at": "2026-10-21T10:56:03.629330+00:00"
+        },
+        {
+            "id": "f03fdebd45ef3e9b049eef00bc402b350168ab189e0f5e9ddc88f150382db9a7",
+            "title": "All Aboard! Denshattack Physical Edition Arriving On Switch 2 In 2027",
+            "description": "Here's an early look. If you've been holding out for a physical copy of Denshattack! , you'll be pleased to hear it's \"coming soon\" to the Switch 2. The video game merchandise company Fangamer will be releasing standard and deluxe editions at some point in 2027 . You can sign up to the same site to be notified about when the physical edition will be made available. Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/news/2026/10/all-aboard-denshattack-physical-edition-arriving-on-switch-2-in-2027",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-10-21T04:45:00+00:00",
+            "collected_at": "2026-10-21T10:56:19.287010+00:00"
+        },
+        {
+            "id": "05a3eff4bcd5847128e6ba10e0097c5c2552e1aa23893863da5fd29993e3fa34",
+            "title": "Solana’s Alpenglow, its biggest network overhaul since 2020, goes live Wednesday",
+            "description": "",
+            "url": "https://www.coindesk.com/tech/2026/10/21/solana-s-alpenglow-its-biggest-network-overhaul-since-2020-goes-live-wednesday",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-10-21T04:35:52+00:00",
+            "collected_at": "2026-10-21T10:56:21.129540+00:00"
+        },
+        {
+            "id": "f2dbde754c3913e467bb65a29996d209bd1697c98f4484526478097fdb538359",
+            "title": "Microsoft and McDonald’s Push Back Against OKX-ICE Tokenized Stocks",
+            "description": "McDonald’s, Microsoft, Alphabet and Goldman Sachs are pushing back against Wall Street’s latest blockchain experiment, formally objecting to having their shares traded on OKX-ICE’s proposed tokenized stock platform. The resistance comes as Andrew Cuomo champions the venture’s round-the-clock trading ambitions. Corporate Heavyweights Challenge OKX-ICE’s Tokenization Plans Some of corporate America’s biggest names aren’t quite ready […]",
+            "url": "https://news.bitcoin.com/finance/microsoft-and-mcdonalds-push-back-against-okx-ice-tokenized-stocks/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-10-21T04:35:09+00:00",
+            "collected_at": "2026-10-21T10:56:21.420805+00:00"
+        },
+        {
+            "id": "8336e96438fbaf18cd658592ded04281fe9ee3ac4e57e1282815dbf481a6e7bd",
+            "title": "Accenture, Dragos, SANS Launch $10M Initiative to Defend Small US Utilities",
+            "description": "The first phase will cover up to 500 utilities, which will get free security tools, equipment, deployment help and training. The post Accenture, Dragos, SANS Launch $10M Initiative to Defend Small US Utilities appeared first on SecurityWeek .",
+            "url": "https://www.securityweek.com/accenture-dragos-sans-launch-10m-initiative-to-defend-small-us-utilities/",
+            "source": "SecurityWeek",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "security",
+                "vulnerabilites"
+            ],
+            "published_at": "2026-10-21T04:22:11+00:00",
+            "collected_at": "2026-10-21T10:55:59.744841+00:00"
+        },
+        {
+            "id": "195444ff5c4d9090fadd454042ba1405393083b9bbfff7bedc9e6ae985380fbf",
+            "title": "A company that vouches for websites had secret keys so weak that 8 of them were cracked",
+            "description": "",
+            "url": "https://www.coindesk.com/tech/2026/10/21/a-company-that-vouches-for-websites-had-secret-keys-so-weak-that-8-of-them-were-cracked",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-10-21T04:11:58+00:00",
+            "collected_at": "2026-10-21T10:56:21.129585+00:00"
+        },
+        {
+            "id": "c7220f0788d695e6219de69eba4bd608a28f8c3be6311abf3510878817a26e6d",
+            "title": "Bitcoin hovers around $83,000 as AI earnings revive tech, ZEC jumps 11%",
+            "description": "",
+            "url": "https://www.coindesk.com/markets/2026/10/21/bitcoin-hovers-around-usd83-000-as-ai-earnings-revive-tech-zec-jumps-11",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-10-21T04:07:07+00:00",
+            "collected_at": "2026-10-21T10:56:21.129628+00:00"
+        },
+        {
+            "id": "c7c1db1d24f97b16930900ba1c0155d84b4c693e69bc12e1dd92023bb46f0906",
+            "title": "Southeast Asia’s digital economy to hit $368 billion",
+            "description": "Cover image for the e-Conomy SEA 2026 report titled Building the intelligent economy by Google, Temasek, and Bain and Company. A 3D illustration features a glowing yellow star surrounded by miniature scenes representing digital sectors, including data cen",
+            "url": "https://blog.google/company-news/inside-google/around-the-globe/google-asia/e-conomy-sea-report-2026/",
+            "source": "Google AI",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "gemini",
+                "git",
+                "google",
+                "ia",
+                "intel"
+            ],
+            "published_at": "2026-10-21T04:00:00+00:00",
+            "collected_at": "2026-10-21T10:56:05.411451+00:00"
+        },
+        {
+            "id": "483ab5238e88e5787fa236a7a6b208e1dff141a32964d9e7daa7a5bd51071fac",
+            "title": "Using Claude to reduce the attack surface of code",
+            "description": "Comments",
+            "url": "https://www.anthropic.com/research/attack-surface-reduction",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "anthropic",
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-21T03:36:43+00:00",
+            "collected_at": "2026-10-21T10:56:03.629372+00:00"
+        },
+        {
+            "id": "b48766edeea249127d664f0bd2775879357f55b2b596cdd16701fe6c8564e334",
+            "title": "The Legend Of Zelda: Ocarina Of Time Switch 2 Estimated File Size Revealed",
+            "description": "Update: File size spotted on download card. : The digital listing for the Switch 2 version of The Legend of Zelda: Ocarina of Time is now live on the eShop and it includes the game's estimated file size. Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/news/2026/10/the-legend-of-zelda-ocarina-of-time-switch-2-estimated-file-size-revealed",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "git",
+                "nintendo"
+            ],
+            "published_at": "2026-10-21T03:30:00+00:00",
+            "collected_at": "2026-10-21T10:56:19.287093+00:00"
+        },
+        {
+            "id": "fab81318eaf73dacddacce3a1459140e7066f65c41aa57d8396b4420f52ec90d",
+            "title": "Nervous ISPs replace Chrome as strange consumers of DNS resources",
+            "description": "Some network operators like to wear belts and suspenders to keep their services up",
+            "url": "https://www.theregister.com/networks/2026/10/21/nervous-isps-replace-chrome-as-strange-consumers-of-dns-resources/5304344",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-10-21T03:16:37+00:00",
+            "collected_at": "2026-10-21T10:56:02.115681+00:00"
+        },
+        {
+            "id": "809759df6b9c7ee9e17fd85d7a2b8b3c03b10330e49c9e7eb141dfe2e6e43ba0",
+            "title": "C# now beats Rust on WASM size",
+            "description": "Comments",
+            "url": "https://github.com/zion-sati/NetWasm",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "csharp",
+                "open-source",
+                "programmation",
+                "rust",
+                "startup"
+            ],
+            "published_at": "2026-10-21T02:53:47+00:00",
+            "collected_at": "2026-10-21T10:56:03.628897+00:00"
+        },
         {
             "id": "50285752c3e12dd541eaa86eca5e6dead334960fd7191217d990a51357632c69",
             "title": "Calendar-First Daily Reports: Handling Per-User Timezones in US/EU SaaS",
@@ -227,6 +1730,22 @@
             "collected_at": "2026-10-21T02:45:06.779544+00:00"
         },
         {
+            "id": "d9b3e1bd85796af0a575e39561de35e09b99f8c735405a7782c81a675385af3c",
+            "title": "PHP warns it plans to release 2 emergency patches imminently",
+            "description": "Unconfirmed report claims PHP2Shell exploit remotely executes code on PHP sites.",
+            "url": "https://arstechnica.com/security/2026/10/php-maintainers-tell-web-devs-to-prepare-themselves-for-critical-security-patches/",
+            "source": "Ars Technica",
+            "category": "cybersecurite",
+            "tags": [
+                "informatique",
+                "innovation",
+                "php",
+                "technologie"
+            ],
+            "published_at": "2026-10-21T02:12:18+00:00",
+            "collected_at": "2026-10-21T10:56:00.658742+00:00"
+        },
+        {
             "id": "cab9f152f12b693e3d0662b939e17a609d4ea0daaaac9fdae9b7fc4a4df2b1e5",
             "title": "In Hilbert space, all things are quantumly possible",
             "description": "Comments",
@@ -254,6 +1773,20 @@
             ],
             "published_at": "2026-10-21T01:55:00+00:00",
             "collected_at": "2026-10-21T02:45:04.915008+00:00"
+        },
+        {
+            "id": "b1780533cad33fb3275de81723bfc5d81f3889b6f45d4890d24a01b37a4611f9",
+            "title": "Ubisoft's Extreme Sports Playground 'Riders Republic' Launches On Switch 2 This December",
+            "description": "Jump into a massive multiplayer sandbox. Ubisoft has shown strong support for the Switch 2 since its launch last year, bringing franchises such as Assassin's Creed to the system. Now, in a special 5th anniversary livestream this week, the Riders Republic team has announced a Switch 2 version of the game is on the way. This massive multiplayer outdoor playground, focused on all sorts of extreme sports, will be launching for Nintendo's new hybrid system on 9th December 2026 . This will also line up with the release of \"Offline Play\" on the same date. Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/news/2026/10/ubisofts-extreme-sports-playground-riders-republic-launches-on-switch-2-this-december",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-10-21T01:55:00+00:00",
+            "collected_at": "2026-10-21T10:56:19.287217+00:00"
         },
         {
             "id": "67f9ceba560d7193b84a4736391e5832565a8528083b2aa4a15de94e5eeef15a",
@@ -4057,6 +5590,21 @@
             "collected_at": "2026-10-20T21:05:23.668493+00:00"
         },
         {
+            "id": "34340241a403e875d188c5c9175e99088c98446349ce8cb936fa1de629264ff9",
+            "title": "Four Years with Decker",
+            "description": "Comments",
+            "url": "https://beyondloom.com/blog/fouryearsdecker.html",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-20T12:18:02+00:00",
+            "collected_at": "2026-10-21T10:56:03.629099+00:00"
+        },
+        {
             "id": "5ebc05784eb0b417100f398eeaacd9895bb6b99843210209382ec1fd44f038ea",
             "title": "Apple broke an essential presentation feature of iPads",
             "description": "Comments",
@@ -4934,6 +6482,21 @@
             "collected_at": "2026-10-20T10:45:17.239655+00:00"
         },
         {
+            "id": "c582a39d486e86676aaa5f925ac457c13849c935464575ecbf2dd8d3b003f9f9",
+            "title": "European Leaders Turn to NVIDIA Vera CPUs to Build Local Infrastructure",
+            "description": "Nebius and Nscale are among global technology partners looking to NVIDIA Vera CPUs to build the next wave of infrastructure. Their momentum reflects rapid advancements in agentic computing. Agents do more than generate answers: they retrieve information, run software tools, execute code and evaluate results. Each step depends on fast CPU processing. Vera accelerates that […]",
+            "url": "https://blogs.nvidia.com/blog/european-leaders-vera-cpu-infrastructure/",
+            "source": "NVIDIA AI",
+            "category": "hardware",
+            "tags": [
+                "gpu",
+                "ia",
+                "nvidia"
+            ],
+            "published_at": "2026-10-20T10:30:11+00:00",
+            "collected_at": "2026-10-21T10:56:05.845279+00:00"
+        },
+        {
             "id": "2cdd306b9353b08bdb8d8f784dffbbd858b823f3a69b12fb81aaa841d7458f2e",
             "title": "Save $60 on this TP-Link wireless router with ultra-fast Wi-Fi 7 support, now $189.98",
             "description": "The TP-Link Archer BE9700 Wi-Fi 7 router is on sale for a limited-time only, down to $189.98, with six external antennas, a 10G WAN port, and four 2.5G Ethernet ports.",
@@ -5647,6 +7210,21 @@
             ],
             "published_at": "2026-10-20T08:00:00+00:00",
             "collected_at": "2026-10-21T02:44:55.113228+00:00"
+        },
+        {
+            "id": "a100c4e73b98fe56e6f4037bc22d6561c2b8a06f12fb32a777bc6786312a45e7",
+            "title": "Amazon CloudWatch Alarms now supports tags in alarm actions payload",
+            "description": "Today, Amazon CloudWatch announces support for including alarm tags in action payloads and Amazon EventBridge events, enabling customers to route and filter alarm notifications by tag without additional lookups. When enabled on an alarm, CloudWatch adds the alarm tags to the messages it sends to Amazon SNS, AWS Lambda, and Amazon EventBridge each time the alarm changes state. This option is designed for customers who route many alarms through a shared notification pipeline and need to identify the owning team, environment, or service directly from the message. With tags in actions payloads, customers can avoid the extra work of correlating tag metadata with alarm events after the fact. For example, a team that routes hundreds of alarms through a single SNS topic to a Lambda function previously had to call ListTagsForResource for each event to find the owning team before paging. With this feature, the tags arrive in the notification, so the function can route directly from the message. The setting is off by default and configurable per alarm, and customers can include all tags, only selected tag keys, or all tags except selected keys. It is supported for metric, composite, and log alarms. Tags in actions and events for CloudWatch Alarms are available in all AWS Regions where Amazon CloudWatch is available except Middle East (UAE), and Middle East (Bahrain). To get started, see Alarm tags in action payloads in the Amazon CloudWatch User Guide. To learn more about Amazon CloudWatch Alarms, visit the Amazon CloudWatch product page.",
+            "url": "https://aws.amazon.com/about-aws/whats-new/2026/10/amazon-cloudwatch-tags-on-alarm-actions-payload",
+            "source": "AWS What's New",
+            "category": "cloud",
+            "tags": [
+                "amazon",
+                "aws",
+                "cloud"
+            ],
+            "published_at": "2026-10-20T08:00:00+00:00",
+            "collected_at": "2026-10-21T10:56:07.246492+00:00"
         },
         {
             "id": "b34b51a64c508538c68dc8c0a9979e90e1ab1d9f713f7a95f296ddc8cdecd47d",
@@ -9902,6 +11480,21 @@
             "collected_at": "2026-10-19T18:04:20.683688+00:00"
         },
         {
+            "id": "fb417350b0b027ef58ddb390b5088f9e801fe655469dacf4193337d4dcb2d76a",
+            "title": "Bonanza of new dates rewrites the history of the Inca",
+            "description": "Comments",
+            "url": "https://www.science.org/content/article/bonanza-new-dates-rewrites-history-inca",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-19T12:13:36+00:00",
+            "collected_at": "2026-10-21T10:56:03.628856+00:00"
+        },
+        {
             "id": "4c406691d5f918fe5a2821e71755efdd2621c4f2c5f7911e79be3e70184142f2",
             "title": "The Download: preserving the Arctic permafrost, and playful AI agents",
             "description": "This is today’s edition of The Download, our weekday newsletter that provides a daily dose of what’s going on in the world of technology. Inside the quest to combat Arctic fires and save the planet’s frozen carbon —James Temple In July 2021, a wildfire burned through a forest on the University of Alaska, Fairbanks campus,…",
@@ -10899,6 +12492,21 @@
             "collected_at": "2026-10-19T11:43:28.426431+00:00"
         },
         {
+            "id": "15906029ac10a65c26d88bdfeaa3b974f0ac7fed4ed4947840155be854fea66d",
+            "title": "Way to Play Super Mario 64: On Apple Vision Pro",
+            "description": "Comments",
+            "url": "https://www.pagetable.com/303",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-19T09:21:34+00:00",
+            "collected_at": "2026-10-21T10:56:03.628776+00:00"
+        },
+        {
             "id": "b666d67fde62c35810d669661d68ffb9f87a2e2b4cb2f53c0bc9a0f10cc77316",
             "title": "Location sharing in Google Messages could soon get much more useful",
             "description": "New map layer controls and traffic overlays could transform in-chat location previews.",
@@ -11436,6 +13044,22 @@
             "collected_at": "2026-10-19T11:43:14.601204+00:00"
         },
         {
+            "id": "2575c42b0b6844cc20137006572185f66bf62d94e37fdf36c88c71addbebf5c4",
+            "title": "Composite objects and C++26 the std:polymorphic type",
+            "description": "Comments",
+            "url": "https://mariusbancila.ro/blog/2026/10/18/composite-objects-and-cpp26-the-stdpolymorphic-type/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "cpp",
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-19T05:54:43+00:00",
+            "collected_at": "2026-10-21T10:56:03.629246+00:00"
+        },
+        {
             "id": "62d7ba8781e63c25e2a320c3fb26e5ecffdf821cc15fc2b1997ff4502d2b45ee",
             "title": "Seoul Court Acquits ‘Jonber Kim’ in Massive $253M Crypto Scam",
             "description": "Park, a 45-year-old Korean influencer known as “Jonber Kim,” was acquitted after prosecutors sought 20 years in prison for allegedly being the leader of a scam coin manipulation scheme. The prosecutors failed to link Park’s deceptive actions to the token buyers’ misperceptions. ‘Coin King Jonber Kim’ Acquitted in Massive Crypto Fraud Case A Seoul court […]",
@@ -11584,6 +13208,21 @@
             ],
             "published_at": "2026-10-19T02:59:07+00:00",
             "collected_at": "2026-10-19T11:43:14.658894+00:00"
+        },
+        {
+            "id": "b0f7f49ddffc9de0f4d0e3dd0ad3a24fb05dda7f72bab6cbd66a99a7706b4daa",
+            "title": "ZX Spectrum Next Laptop",
+            "description": "Comments",
+            "url": "https://www.dorchester3d.com/printing/blog/2020/11/zx-spectrum-next-laptop-version-2",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-19T02:48:11+00:00",
+            "collected_at": "2026-10-21T10:56:03.628815+00:00"
         },
         {
             "id": "3be3f2e56d98095a599c9ebaeed0b7a7d1bb03bdb8c1bfe8420068111bf51ede",
