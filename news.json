@@ -1,7 +1,1414 @@
 {
-    "updated_at": "2026-10-22T16:23:34.886068+00:00",
-    "count": 20773,
+    "updated_at": "2026-10-22T21:03:16.007204+00:00",
+    "count": 20891,
     "articles": [
+        {
+            "id": "5c9af4eb43af5fde5d83c1753b6866c42adf38f3bd0513c95af18aed2f978180",
+            "title": "TestFlight 4.4.1",
+            "description": "Download the appView release notes",
+            "url": "https://developer.apple.com/news/releases/?id=10222026a",
+            "source": "Apple Developer Releases",
+            "category": "mobile",
+            "tags": [
+                "apple",
+                "ios",
+                "iphone"
+            ],
+            "published_at": "2026-10-22T21:00:00+00:00",
+            "collected_at": "2026-10-22T21:03:04.962859+00:00"
+        },
+        {
+            "id": "0bf8a8c427111ffe705d91796edb5ab2cf1a1e32e0f740324d1ff1c85d807a8d",
+            "title": "Hammock: my group chat in two lines, read by Gemma inside a browser tab 🦥",
+            "description": "This is a submission for the Hacktoberfest Open-Source AI Challenge Week 3: Slow and Steady What I Built Hammock 🦥 turns a group chat you have been ignoring into two lines: What happened , written by Gemma. What needs you , found by code and phrased by Gemma as a short to-do, with three one-tap reply drafts (👍 On it, ⏳ Later, 🙅 Kind no). You export a WhatsApp group (⋮ → More → Export chat → Without media), drop the .txt on the page, type your name, and lie back. Everything runs inside the browser tab : no server, no account, no API key. After the first visit it opens and runs with the Wi-Fi off. It is for the person who opens a family or college group after a busy day, sees \"312 unread\", and closes the app again. You only need to know two things: did anything change, and is anyone waiting on me? Hammock answers those and skips the rest. The laziest part needs no AI at all. Before a model wakes up, plain code: finds your last message and only looks at what came after it, skips the good-mornings, forwards, stickers, emoji-only lines, \"very nice 👍\" and \"This message was deleted\", and tells you how many it skipped , pulls out every message that mentions your name or nickname. Only what survives goes to Gemma. Demo Try it: https://aniruddhaadak80.github.io/API_projects/hammock/ Use Chrome or Edge on a laptop with WebGPU for the real experience. Two made-up sample chats are built in (a family group in the Android export format, a hackathon team in the iOS format), so you can try it without sharing anything. The first run downloads Gemma once (about 0.8 GB) and your browser caches it. Code aniruddhaadak80 / API_projects Deployment URL of API_projects Hammock lives in the hammock/ folder (MIT). No build step: one index.html , plain ES modules, a Web Worker for the model, and a small service worker for offline use. src/core.js parser, noise filter, \"since you last spoke\" window, mention finder, prompts, output cleaners, number check (pure functions, no DOM) src/worker.js the only file that touches a model (Transformers.js, WebGPU or WASM) src/app.js UI and worker plumbing test/ 14 node --test unit tests for core.js docs/eval.md what I measured, including where the small model gets it wrong How I Built It Open pieces at the core Gemma 3 1B IT (4-bit ONNX, onnx-community/gemma-3-1b-it-ONNX ) is the default \"Nap\" model. On WebGPU it uses q4f16 , or q4 when the GPU has no fp16 support. Gemma 4 E2B IT (4-bit ONNX, about 3 GB) is the optional \"Deep sleep\" model, WebGPU only. Transformers.js on ONNX Runtime Web runs both, inside a Web Worker so the page stays responsive. Weights come from the Hugging Face Hub once and stay in the browser cache. The design rule: code decides, Gemma writes. Small models are good at compressing a messy thread into plain language. They are bad at who did what and at digits. So I split the work: Job Who does it Parse Android / iOS exports, 12h and 24h clocks, day-first and month-first dates Code Find your last message, skip the noise, count what was skipped Code Decide which messages are aimed at you Code (word match on your name and nicknames) Write \"what happened\" Gemma Turn each \"needs you\" message into a to-do Gemma, then a cleaner that rejects bad output Check every number in the summary against the chat Code, and the UI flags anything Gemma made up Draft a reply in the tone you tap Gemma Long chats are split into chunks the 1B model can hold, summarised part by part, then merged. What I measured (all on made-up chats, on a 2-vCPU sandbox with no GPU) With the 4-bit weights the WebGPU path uses (run in Node with onnxruntime-node , greedy decoding, the exact prompts from src/core.js ): Gemma 3 1B Gemma 4 E2B Family group, line one \"The wedding of Rini is moved to December 12th due to a double booking. Train bookings are being finalized for December 11th.\" (9.9 s) \"Rini's wedding date has changed from 5 Dec to 12 Dec due to a double booking. A gift contribution of 2000 each is due by 1 Dec.\" (23.6 s) Hackathon team, line one Got the gist, but blamed the wrong person for a broken build ❌ Right people, and it said Meera \"fixed\" the Safari import when it was her cache (21.9 s) To-dos \"Book your leave for the wedding\", \"Call Dida this week\", \"Start the how-it-works section\" (about 2.5 s each) similar, a bit more specific, about 2x slower That wrong-person mistake is the reason \"what needs you\" is never decided by the model. The honest bit: the CPU fallback. Without WebGPU, Hammock falls back to WASM. ONNX Runtime Web's WASM backend has no kernel for the GatherBlockQuantized op in the 4-bit export (I also tried the 8-bit Gemma 3 270M export, same error), so the CPU path uses the 1 GB 8-bit 1B export. I ran the full app in headless Chromium on that path and it exposed two real bugs: the summary came back empty , and one to-do was the prompt's own instruction (\"Start with a verb, under 12 words\"). Now: empty summary → one retry on the last 8 messages; if that fails too, the page says so instead of pretending, to-dos that echo the instructions, start with \"Okay, here's…\", or ramble are rejected and replaced with a plain excerpt of the message, \"Ma is asking you to book leave\" is rewritten to \"Book leave\". After the fixes the CPU run finished end to end in 132 s for the family sample. The retried summary was fluent but wrong about who did what , and I put that exact screenshot in the README rather than hiding it: Not measured yet: speed on a real laptop GPU, Safari, Firefox, phones. If you try it, I would love a comment with your browser, GPU and how long it took. Why Does Open Innovation Matter? Group chats are the most personal text most of us have: family plans, money, health updates, people's phone numbers. A closed API would mean uploading all of that to someone else's server just to be told \"the wedding moved\". With open weights running in the tab: The chat never leaves the device. The file is read with FileReader . In the headless runs, every request the page made was a GET for the app's own files, Transformers.js from jsDelivr, or the model weights from Hugging Face. No request carried chat text. You can check yourself in DevTools → Network, or just switch the Wi-Fi off after the first run. It costs nothing to run, forever. No key, no quota, no bill. Set it up once and it keeps working. It works offline. Train, flight, bad signal, it does not care. I can see why it fails. Because I control the model, the prompts and the decoding, I could measure exactly where the 1B model goes wrong and build the guard rails (code-found mentions, number check, output rejection) around it. With a black-box API I would only see the final text. The Lazy Payoff On the made-up family chat: 74 messages since \"Arjun\" last spoke. Code skips 64 of them without reading (19 greetings, 16 emoji-only, 13 photos or stickers, 12 one-word reactions, 2 deleted, 2 forwards), Gemma reads the remaining 10 , and you get back two lines plus two to-dos, each with a reply draft one tap away. I have only measured this on the two sample chats so far, so I am not going to claim minutes saved per day. What I can say: the skip and mention counts are deterministic and pinned by tests, so the \"you can ignore these 64\" part does not depend on the model being right. Prize Categories Best Use of Gemma : Gemma 3 1B (default) and Gemma 4 E2B (optional) run entirely in the browser through Transformers.js and ONNX Runtime Web. Gemma writes the summary, the to-dos and the replies; code checks its work. Thanks for reading. Now go lie down. 🦥",
+            "url": "https://dev.to/aniruddhaadak/hammock-my-group-chat-in-two-lines-read-by-gemma-inside-a-browser-tab-c31",
+            "source": "DEV Community",
+            "category": "hardware",
+            "tags": [
+                "android",
+                "developpement",
+                "git",
+                "ios",
+                "programmation",
+                "web",
+                "wifi"
+            ],
+            "published_at": "2026-10-22T20:55:11+00:00",
+            "collected_at": "2026-10-22T21:02:56.728301+00:00"
+        },
+        {
+            "id": "e4cca524af6a69a25205d922769daaf9015f3c9f23b227de5ab8ef64258bd138",
+            "title": "When Delay JS Breaks a WordPress Mobile Menu (and PageSpeed Looks Fine)",
+            "description": "My WordPress website was scoring in the high 90s on mobile PageSpeed Insights. The layout looked right, the navigation worked on desktop, and the mobile view in browser DevTools behaved as expected. Then I picked up my phone and tapped the hamburger menu. Nothing happened. I tapped again. Sometimes the menu opened, sometimes it didn't. On a site where navigation is one of the first things people use, this is not a small detail. It also made the PageSpeed result feel rather less impressive. This is a short account of what I tested, what changed, and what I still couldn't confirm. It wasn't a controlled performance experiment, and I don't want to turn one incident into a universal rule about WordPress caching. The setup: Kadence, LiteSpeed Cache, and delayed JavaScript The site uses WordPress with the Kadence theme and LiteSpeed Cache. I had been working on mobile performance for some time. The homepage regularly returned Performance scores around 97–99, and other pages often scored even higher. One of the optimizations in use was Load JS Deferred → Delayed in LiteSpeed Cache. The idea is straightforward: JavaScript that is not needed to render the initial page can wait until there is user activity. That can reduce the amount of work the browser does at the beginning of the page load. But there is an obvious risk. What if the script being delayed is the one that handles the user's first interaction? In my case, that interaction was opening the mobile navigation drawer. The button looked fine. The layout wasn't visibly broken. The problem was entirely in how it behaved when tapped. Why the browser's mobile emulator didn't catch it My usual desktop checks didn't reproduce the problem. Even with a mobile viewport selected in DevTools, the menu opened normally. The physical phone told a different story. That doesn't prove that touch events were the cause. A real phone and a desktop emulator may differ in processing speed, browser state, cached resources, or the timing of script execution. I hadn't isolated those differences one by one. What the incident did establish was that passing a viewport-based mobile check wasn't enough . The failing interaction occurred in the environment that actually mattered to the visitor. The test that narrowed down the problem Rather than immediately editing Kadence or adding CSS overrides, I tested the page without LiteSpeed's Page Optimization layer. LiteSpeed documents a query parameter for this kind of troubleshooting: https://example.com/?LSCWP_CTRL=before_optm I opened my own site's equivalent URL directly on the phone. With Page Optimization bypassed for that view, the mobile menu responded. That was the useful result. It didn't identify one particular line of JavaScript, but it gave me a sensible boundary: the problem appeared with frontend optimization enabled and disappeared when that optimization was bypassed . The official LiteSpeed CSS/JS troubleshooting guide describes the same comparison and recommends isolating the affected CSS or JS assets rather than changing everything at once. Excluding the navigation scripts The next step was to prevent the Kadence navigation scripts from being delayed. In LiteSpeed Cache → Page Optimization → Tuning → JS Deferred/Delayed Excludes , I added: navigation.min.js navigation-lite.min.js I also added the same entries to Guest Mode JS Excludes , because the behavior I was investigating affected anonymous visitors. These are filename-matching exclusions, not a recommendation to paste the same two lines into every WordPress installation. The right files depend on the theme, its version, and the scripts loaded on the page. The relevant fields are described in the LiteSpeed Page Optimization documentation . Then I saved the settings, purged the cache, and tested again on the phone. LiteSpeed Cache settings: Kadence navigation scripts excluded from delayed JavaScript execution and Guest Mode optimization. The behavior improved, but I wouldn't call that a complete fix. In a private browser session, the menu began opening again, although it initially still required a second tap in some cases. My regular browser session continued to show inconsistent behavior at that point. That distinction matters: the bypass test strongly implicated the optimization layer, and the exclusions changed the behavior. They did not establish that every first-tap issue had been eliminated. Why testing can get confusing after a cache change After adjusting an optimization setting, the browser may still be looking at resources or HTML produced under the old configuration. Guest optimization and ordinary page caching can also give different visitors different versions of a page. In other words, there are at least two separate questions: Did the new configuration stop delaying the script we wanted to run early? Is the phone actually receiving the new page and resources? Those questions are easy to mix up when the only test is tapping the menu once and refreshing the page. For troubleshooting, I prefer to keep the comparison explicit: normal URL versus optimization-bypass URL; regular browser versus private session; first page load versus repeat visit. Then I inspect what actually loaded before assuming a setting worked or failed. A high Lighthouse score is not an interaction test The irony is that the page was performing well in the metrics I had been optimizing. This wasn't a case of a visibly slow WordPress installation. My mobile Performance scores were already around 97–99. But a visitor who couldn't open the navigation on the first tap wouldn't care about that number. Lighthouse is useful for measuring and investigating performance. It isn't a substitute for verifying the workflows that make a website usable. A good score doesn't tell you whether every dropdown, search field, filter, form, or checkout action works. I have seen the same problem with oversimplified performance advice about WordPress plugins. In a comparison based on two production websites , one site had a single active plugin and scored 45 on mobile Performance, while another had 18 active plugin entries and scored in the high 90s. That was not a controlled benchmark; it was a reminder to measure what a website does instead of trusting a simple number. A navigation drawer may be a small piece of UI, but it can be essential for someone trying to reach a service page from a phone. And delaying code can make a test look faster precisely because less JavaScript has run during the measurement. That improvement needs to be weighed against the behavior users experience when they start interacting with the page. What I'd test after changing JavaScript optimization I wouldn't start by disabling every performance feature. First, I would identify the failing interaction and test whether it still fails with the optimization layer bypassed. If it doesn't, I would inspect the actual scripts involved, exclude the likely dependency from delay, purge the relevant caches, and retest. For a WordPress site, the short list of interactions worth checking usually includes the mobile menu, forms, popups, search, filters, sliders, and any commerce-related buttons. I also want at least one test on a physical phone. DevTools remains useful, but it did not reproduce this particular problem. A few checks matter more to me now than another point in PageSpeed: Does the menu open on the first tap , not just the second? Does it work in a private session and a returning visitor's session? Does the behavior remain consistent after a hard reload and after a normal revisit? Are important scripts running when the interaction needs them, rather than after it? That is a much more practical definition of a successful optimization than a score alone. I still use Delay JS This incident didn't convince me to stop using delayed JavaScript. Used selectively, it is a valuable optimization. It did change how I think about the trade-off. A script that is not needed for the initial render may still be critical for the first action a visitor takes. Delaying it without testing that action can make a page look excellent in a performance report while making it less useful in practice. I'm comfortable with 97 instead of 100 if the site behaves correctly. I'm not comfortable with 100 if someone has to tap the menu twice to reach the rest of the website. Performance work is finished only when the faster page is still a usable page.",
+            "url": "https://dev.to/pbbdesign/when-delay-js-breaks-a-wordpress-mobile-menu-and-pagespeed-looks-fine-46p4",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "java",
+                "javascript",
+                "programmation",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-10-22T20:55:10+00:00",
+            "collected_at": "2026-10-22T21:02:56.729481+00:00"
+        },
+        {
+            "id": "00ece56e1138816eaa6257e663cbe9f06a69ac2e0ddeef5ca8be30a80cdc5277",
+            "title": "Sloth Nap: two lines in the morning, instead of the chores you keep skipping",
+            "description": "This is a submission for the Hacktoberfest Open-Source AI Challenge Week 3: Slow and Steady What I Built Sloth Nap is for the evening you do not want to deal with the pile. You drop a chore table and a couple of notes into a folder. It ranks which tasks you are likely to skip again, finds the one sentence in the notes that actually has a date, looks up the question you were avoiding, and leaves two lines for the morning. On the sample pile, those lines are the receipts and a one-sentence reply to the landlord. Together they are about 55 minutes. The plants, the dentist, and the downloads folder can wait. Nothing is deleted. Copying the notes into an archive folder stays pending until a person approves it, and a second approval does not copy them again. The person who gets to be lazier is whoever keeps reopening the same three tasks and the same lease PDF. The nap does that pass once. Demo There is no hosted demo. This run was local, with no partner API keys and with Ollama not installed, so the brief below is the offline template rather than a Gemma completion. Same facts either way: Do file the receipts and reply to the landlord. Those are the chores you keep skipping. The only sentence that matters: the lease renewal notice is due on November 2. Leave sort the downloads folder and book the dentist for later. Filing online is $30. Showing up in person is $45 and a morning. Reproduce it: npm install npm test npm run nap out/morning-brief.md is the result. npm run nap -- --approve copies the notes once. npm start serves those two lines on port 3000. If Ollama is running, ollama pull gemma2:2b and run the nap again. The brief's model field switches from template to the Gemma model id. Code MIT. The project is a new repo started during this challenge window. I don't have the GitHub CLI on this machine, so there is no public remote yet. The layout: inbox/ sample chores, lease note, question src/mastra/ Mastra agent, forecast tool, LibSQL memory src/nap/ brief, approval ledger, pile search, partner clients src/temporal/ durable nap: activities, then a signal wait python/tabpfn_forecast.py python/tinker_eval.py arduino/sloth_nap/ UNO Q sketch, not flashed render.yaml not deployed deploy/digitalocean-app.yaml .github/workflows/overnight-nap.yml The archive path is the one I want a judge to look at. The intent is written as submitted before the copy, then confirmed after. A retry that finds confirmed returns without copying. A retry that finds submitted (the copy timed out) does not guess. How I Built It The open piece that actually ran is Mastra , an open-source TypeScript agent harness. The agent is sloth-nap . Its tool, forecast-skips , fits a small logistic model on age, minutes, dread, and how many of the last four attempts were skipped. Memory is LibSQL, in memory for the demo. GDS K S's Mastra walkthrough is the shape I used: an agent, a Zod tool, and memory, instead of a hand-rolled tool loop. Gemma is the brief writer when Ollama answers at OLLAMA_BASE_URL . The client posts to /api/chat with gemma2:2b . If that call fails, the template writes the two lines from the tool outputs and labels the model template . I am not going to call a template a Gemma run. Two other posts decided the approval design. Takashi Obara's Temporal write-up is why the archive is a signal wait in src/temporal/workflows.ts rather than a poll. The retry essay is why the idempotency key is stored before the copy. A commenter on that essay, Abhinav Sharma , points out that a key does nothing if the far side ignores it. Here the far side is this process, so the ledger is the far side. The CLI runs those activities in order so the demo does not need a Temporal server. The workflow file is the durable version of the same nap. I have not executed it against a server yet. python/tinker_eval.py trains the same kind of classifier on a synthetic holdout. Majority-class accuracy was 0.80. The trained model was 0.85. That comparison is local. Tinker was not called, because TINKER_API_KEY is unset and the package is not installed. TabPFN is the same story: the script is there, the import failed, the logistic baseline ranked the sample chores. Why Does Open Innovation Matter? The notes in this project are a lease date and a dread score. Those should not need an account. The ranker and the template brief run with no network, so the pile stays in the folder. A closed chat API would have been the easier brief writer, and it would have meant uploading the lease to finish a two-line note. Gemma is wired as a local model for that reason. Swapping it is a model name, not a new vendor. Mastra is the harness, so the tool and the memory are not stuck inside one provider's agent product. The nap still finishes when both are unavailable. That is the lazy version of open: it works on the night you do not want to sign up for anything. The Lazy Payoff I ran it on the sample inbox, not on a week of someone else's real mail. Chore Minutes What the nap did File the receipts 40 Do this Reply to the landlord 15 Do this, before November 2 Sort the downloads folder 25 Leave it Book the dentist 10 Leave it Water the plants 5 Leave it Renew the library card 8 Leave it About 55 minutes of the chores the model thinks you will skip. The other 48 minutes are the ones you already do. The small-claims question came back as a fixture, not a live search: filing online is $30, in person is $45 and a morning. Prize Categories Best Use of Mastra. The forecast tool, the agent, and LibSQL memory are what rank the chores. The tests construct the agent and the nap calls the tool. I am not entering the other Week 3 categories. The clients, the UNO Q sketch, the Render and DigitalOcean specs, the GitHub Action, and the pgvector SQL are in the repo, and none of them ran against the real service. Listing them as entries would be a bluff. The archive stayed pending, which is the correct result with no approval token.",
+            "url": "https://dev.to/hay_43/sloth-nap-two-lines-in-the-morning-instead-of-the-chores-you-keep-skipping-2l92",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "git",
+                "programmation",
+                "python",
+                "typescript",
+                "web"
+            ],
+            "published_at": "2026-10-22T20:54:59+00:00",
+            "collected_at": "2026-10-22T21:02:56.730225+00:00"
+        },
+        {
+            "id": "5b08b1d7a01ebab81410b7e4296aa94c04138746667afbab7763ac866c38be70",
+            "title": "Binary BMFont v3: Keep Block Boundaries Intact",
+            "description": "Disclosure: This article was generated with AI for the FrameSprite team, which has a commercial interest in FrameSprite. It received a separate AI editorial review against the cited sources. Executed synthetic fixtures are identified with their runtime and limits; no other editor, engine, production or performance test is implied. Treat a binary BMFont v3 block size as the payload length after the block header. Advance past the one-byte type and four-byte size, then consume exactly that payload. Counting the header twice, or using an older layout rule, shifts every later field and can turn a filename into nonsense. Key takeaway: Check the format version before reading blocks. A recognizable BMF signature is not enough to select a parser. Trace one tiny file by byte position The BMFont binary format defines the version byte and block envelope. The authored test contains an unknown block followed by a page-name block: Byte range Authored value Purpose 0 to 3 BMF and version 3 Select the fixture profile 4 to 8 type 99, payload length 3 Unknown block header 9 to 11 abc Skip this payload 12 to 16 type 3, payload length 6 Page-name block header 17 to 22 p.png plus a zero terminator Page-name payload The unknown type is deliberate. It checks that a parser can skip a bounded block without guessing what its contents mean. Validate before taking a slice import struct def blocks ( data ): if data [: 4 ] != b ' BMF \\x03 ' : raise ValueError ( ' only binary v3 is accepted ' ) position = 4 while position < len ( data ): if len ( data ) - position < 5 : raise ValueError ( ' truncated block header ' ) kind , size = struct . unpack_from ( ' <BI ' , data , position ) position += 5 if size > len ( data ) - position : raise ValueError ( ' truncated block payload ' ) yield kind , data [ position : position + size ] position += size Check lengths before slicing. Python slices can return a shorter value without an exception, so a slice alone is not a truncation check. Put a file-size limit outside this loop when reading untrusted input, and validate each recognized payload before allocating arrays from it. Keep the version decision visible The Cyotek parser project supports multiple descriptor forms, but selecting the correct form remains the consumer's responsibility. The UnrealBMFont changelog records bounded descriptor parsing and resource limits. These are useful implementation references; the short example above is not a complete secure font importer. The recorded fixture result shows the two expected blocks, rejection of a shortened final payload, and rejection of a v2 header. Python 3.12.10 ran three assertions in the checker . The input contains the exact authored byte sequence. No font engine or texture loader was executed. Diagnose the next boundary separately A valid block envelope can still contain a missing page reference, invalid glyph rectangle or unsupported feature. Use a general atlas structural check as a model for reporting field-level errors, while retaining the correct binary-format rules here. If the page image itself is damaged, compare PNG chunk integrity . If the file is complete but a character is absent, perform the font coverage check . Ship the descriptor with its assumptions Record binary format v3 in the asset contract, preserve the original export, and report the failing byte position when validation stops. Do not convert a malformed descriptor into guessed metadata just to make the importer continue. Editorial ownership Prepared by the workflow team , which has a commercial relationship with this site. This guide was drafted with AI assistance; independent editorial review is recorded separately. Report a technical correction with the relevant input, tool version and observed result. Original guide and downloadable materials",
+            "url": "https://dev.to/framesprite-team/binary-bmfont-v3-keep-block-boundaries-intact-4mc0",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "python",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-10-22T20:53:06+00:00",
+            "collected_at": "2026-10-22T21:02:56.730767+00:00"
+        },
+        {
+            "id": "613f1da4bfa3ada5afc34b166a0f8fe9ca74c7d5aa059de9a6eec4248345c93f",
+            "title": "Patch Your PHP: What PHP2Shell Means for WordPress Sites",
+            "description": "PHP released 8.5.12, 8.4.27, 8.3.36, and 8.2.35 on October 21 to fix two critical vulnerabilities, CVE-2026-109618 and CVE-2026-109619, nicknamed PHP2Shell. Both are rated 9.2 out of 10 (CVSS v4.0) and let an attacker run code on your server without logging in. The bugs are in PHP itself, the runtime underneath WordPress, so updating WordPress or your plugins won't fix them. I have WordPress sites on SiteGround, and when this news hit, my only question was whether I was vulnerable. I hadn't heard anything from SiteGround, and working out which PHP version my sites actually run took longer than I wanted it to. This is the quick writeup I was looking for, for developers who know their stack and just want the answer without spending an afternoon on it. Am I Affected? Any PHP that serves web requests is affected, however it connects to the web server: PHP-FPM, Apache mod_php, php-cgi, FrankenPHP, and LiteSpeed. mod_php (PHP running inside Apache itself) is the worst case, because the demonstrated exploit runs before any WordPress code loads. The leaked video of the exploit tool showed it running code on WordPress 7.1.3, alongside Drupal, Joomla, Magento, and Laravel ( Ars Technica ), so a fully updated WordPress install is still exposed if its PHP is not patched. Branch Fixed in 8.5 8.5.12 8.4 8.4.27 8.3 8.3.36 8.2 8.2.35 8.1, 8.0, 7.4 No release. Source backports, or patched Linux or LTS (long-term support) packages 7.3 and older No fix PHP 7.4 through 8.1 are past end of life, so instead of releases, the PHP security team published minimal source backports: just the fix, which you apply and compile yourself. If you don't build PHP from source, get a patched package from your Linux distribution or an LTS (long-term support) vendor. PHP 7.3 and older get nothing, so moving to a supported version is the only option there. Checking Your PHP Version The quickest built-in way is to go to /wp-admin/site-health.php?tab=debug , expand Server , and read PHP version . If you'd like it on the dashboard, the Display PHP Version plugin adds it to the At a Glance widget. I liked this option. One catch: Linux distributions often add the fix to their existing package without changing the PHP version number. If you install PHP from Debian, Ubuntu, or RHEL packages, check the package changelog for the CVE IDs. What's the Risk? CVE-2026-109618: when a request runs out of memory, PHP can abandon it partway through setting up request data, and the cleanup code then treats that half-built data as valid, which leads to code execution. Attackers can trigger it with crafted form uploads, and on mod_php the attack completes before WordPress loads ( advisory ). CVE-2026-109619: a fatal error can leave a PHP worker holding a pointer into memory that's already been freed, and the next request on that worker uses it (a use-after-free), leading to code execution or leaked memory contents. Confirmed triggers include session upload progress, which is on by default, and php_value lines in .htaccess on mod_php ( advisory ). Details leaked two days before the planned disclosure, and Amazon reported an exploitation attempt as early as October 17 ( Tenable's timeline ). What to Do Update PHP to a fixed version. On managed hosting, confirm your host has patched. On your own server, update through your Linux distribution's packages. While you're there, move to PHP 8.3 or newer. That's WordPress's recommended minimum, and 8.2 reaches end of life on December 31, 2026. Hosts handled the news differently. I used to work at WP Engine and still have a test site there, and WP Engine emailed customers to say the patch was applied and that network and server mitigations were in place before PHP's release. SiteGround didn't email me, but its blog post says it added server-level mitigations after PHP's October 20 notice and applied the official fixes on October 21. Site Health on my site now shows PHP 8.2.35, the fixed release for that branch, though since 8.2 is nearing end of life, I'm planning to move to 8.3. If you haven't heard from your host, check its blog or status page, then confirm the version yourself in Site Health. If You Can't Upgrade Yet PHP says there are no complete mitigations, but these settings reduce exposure to the confirmed attack paths. They must go in php.ini , the PHP-FPM pool config, or the web server config, because ini_set() and .user.ini apply too late. On shared hosting, that usually means asking your host when they'll patch. Set memory_limit=-1 with php_admin_value so applications can't override it, and keep post_max_size low (8M, or 32M if you need uploads). Set session.upload_progress.enabled=0 , and on PHP 8.5, fatal_error_backtraces=0 . Remove obsolete or invalid php_value lines from .htaccess . Restart every PHP worker after any change. The advisories cover the rest, including why not to cap memory with RLIMIT_AS or RLIMIT_DATA . More Information PHP security advisory GHSA-w8hw-w9fx-j79w (CVE-2026-109618) GHSA-6wmf-4rv5-p3rp (CVE-2026-109619) Ars Technica coverage Tenable FAQ WordPress PHP support policy",
+            "url": "https://dev.to/cseeman/patch-your-php-what-php2shell-means-for-wordpress-sites-2akn",
+            "source": "DEV Community",
+            "category": "cybersecurite",
+            "tags": [
+                "cve",
+                "developpement",
+                "linux",
+                "php",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-10-22T20:53:00+00:00",
+            "collected_at": "2026-10-22T21:02:56.731252+00:00"
+        },
+        {
+            "id": "5320efabb500f8f96e43b40403aa6084d5d55f08e3cdf3a7377f95def241ca1d",
+            "title": "Who Actually Buys a Mobile App, and Who Never Will",
+            "description": "Two sales calls, same script, same price. The first one is over in under a minute: the owner is polite, says it sounds interesting, and never replies again. The second one ends with the owner asking how soon it can be in the App Store. Nothing about the pitch changed. What changed was who was on the other end of the phone. Learning to tell those two apart before you dial is most of this job, and it has very little to do with what industry they are in. You are not selling an app. You are selling the second visit. An icon on someone's home screen is a standing invitation to come back. That is the entire product. Everything else — the design, the push notifications, the native screens — exists to make the second visit easier than it was before. Which means the business has to have a second visit to sell in the first place. If their customer buys once and gets on with their life, there is nothing for the icon to do. The owner senses this immediately, even if they cannot put it into words, and that is the polite call that goes nowhere. So the question is never \"would this business like an app?\" Everyone would like an app. The question is whether their customers have a reason to open it twice. The home screen test Here is a way to run that question in your head in about five seconds. Picture their customer's phone. Now picture this business's icon sitting on it, next to the banking app and the messages. Ask what makes that person tap it on an ordinary Tuesday. If you can answer in one short sentence — to see what time the class is, to reorder the usual, to check if anything new came in, to book the next appointment — you have a prospect. If you find yourself constructing a scenario, you do not. The honest version of this test is that it eliminates most of the list you were planning to call. That feels like bad news for about a day, and then it feels like having been handed back three months. Four reasons a tap happens Rather than memorising a list of industries, it is more useful to know the four things that produce that ordinary-Tuesday tap. Almost every client worth having has at least one of them, and the ones with two are the easiest sales you will make. 1. There is a schedule that moves Anything where the information changes on a weekly rhythm and the customer has to check. Gyms, yoga and dance studios, martial arts clubs, swimming schools, community centres. The timetable currently lives on a wall, in a group chat, or on a web page the owner updates when they remember. These are good clients for a reason that has nothing to do with the app: the owner already sells monthly memberships. They think in recurring revenue already, so your monthly fee needs no explaining. You are the only vendor they will speak to that week who does not have to justify the word \"subscription\". 2. There is a basket A real shop with real repeat customers — WooCommerce, Shopify, or a local retailer whose site already takes money. Coffee roasters, pet supplies, health food, anything consumable. This is the least work you will ever do for a setup fee, because the site already is the product: already mobile, already maintained, already full of things to come back for. With the native storefront templates the catalogue and the cart become real app screens rather than a web page in a frame, while checkout stays on the shop's own page so every payment method they already use keeps working. 3. There is a queue Businesses where the whole operation is appointments. Salons, barbers, dentists, physiotherapists, tattoo studios, dog groomers, garages. Do not pitch these on convenience. Pitch them on no-shows. Every owner in this category can tell you their no-show rate from memory and it annoys them more than almost anything else in the business. A reminder that arrives as a notification rather than an email that goes unread is a number they can watch move. That is a very short path from install to \"this paid for itself\". 4. There is an audience Somebody publishing on a rhythm to people who have a habit of reading it. Local news, community magazines, schools, clubs, congregations, associations, property agencies with listings that change daily. Push notifications are not a feature here, they are the business model. You will not have to explain the value. Two of these also tend to be funded by a budget rather than a margin, which makes the annual conversation easier than it is with a café counting cups. Who to turn down, and why it is a favour Saying no early is not lost revenue. These projects end badly, slowly, and usually with a refund request and a review you did not want. The once-in-a-lifetime trades. Wedding venues, conveyancers, driveway contractors, funeral directors, double glazing. The work is often excellent and the owners are often lovely. Nobody keeps the app. The five-page brochure. Company history, a team photo, a contact form. Wrapped in an app it becomes a product with nothing to do, and that is the most common reason these projects are rejected by review under guideline 4.2 . The rejection is not a technicality; the reviewer is noticing the same emptiness the customer would. The business with no digital habit. No site worth the name, no mailing list, a Facebook page as the entire presence. An app is not the missing piece, and the retainer will quietly turn into unpaid training. Anything that needs the hardware. Background location tracking, Bluetooth equipment, offline-first field work, continuous sensors. Find out where the line actually sits before you promise anything — the difference between a native screen and a wrapped page is precisely the difference between a yes and a refund. Anyone who thinks the app will bring customers. It will not. An app is a retention tool; it works on the audience a business already has. Somebody with no audience is buying the wrong product, and by month two it will be your fault. That last one deserves saying out loud on the call, even though it costs you sales. The client who hears it and still signs is the client who stays. Two minutes at your desk, before you ever call Every one of these is checkable without speaking to anybody. Open their site on your own phone. Not a desktop browser squeezed narrow — an actual phone. If it is painful to use, that pain is what you would be shipping. Look for the moving part. A booking widget, a shop, a timetable, a feed of posts. That thing is what the app is going to be. No moving part, no app. Check whether they already court repeat custom. A newsletter signup, a loyalty card, a members' area. If yes, they already believe in retention and you are selling a better version of something they are already paying for. Search both app stores for their name. An abandoned app from 2019 is one of the best leads in this business. Somebody there has already signed off on the idea once, already has the developer accounts, and already knows the thing they bought was too expensive and too slow to update. Find out who owns the decision. An owner-operator can say yes over coffee. A franchise means head office, a committee and a brand manual — the same money, six months later, if at all. Pick one of the four and stay there Choose a single lane — schedules, baskets, queues or audiences — and work it until you have three or four clients in it. Not because focus is a virtue, but because of what happens to the cost of the second sale. By the second client in the same lane you already have the demo app, the screenshots, the pricing conversation, and answers to the four objections that always come up. By the fourth, prospects start mentioning that they have seen your work at a place down the road. A gym, a solicitor and a bakery as your first three clients means paying the cost of the first client three times over and arriving nowhere. Build the demo before the first call. Not a slide deck — a real app, in their lane, with plausible branding, that the prospect can install on their own phone while you are sitting in front of them. Everything you would have spent an hour explaining becomes self-evident in about ten seconds. Then what Once somebody says yes, the next question is what to charge, and there is a floor below which this business does not work — that is in what to charge a small business for their app . The shape of the business as a whole, including the thing that breaks once you pass about forty clients, is in selling apps to local businesses . And if you are still deciding whether to run this at all, the case for starting now rather than next year is in how to start an AI app-building business .",
+            "url": "https://dev.to/vicgorndesign/who-actually-buys-a-mobile-app-and-who-never-will-34j7",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "bluetooth",
+                "developpement",
+                "git",
+                "ios",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-10-22T20:52:25+00:00",
+            "collected_at": "2026-10-22T21:02:56.732465+00:00"
+        },
+        {
+            "id": "488c2daecbac544779dd23b26c89e41399abc18435e86ad14038072074bf6467",
+            "title": "Why do my Aseprite sheet and image export have different proportions?",
+            "description": "Disclosure: This article was generated with AI for the FrameSprite team, which has a commercial interest in FrameSprite. It received a separate AI editorial review against the cited sources. Executed synthetic fixtures are identified with their runtime and limits; no other editor, engine, production or performance test is implied. Check the sprite's pixel ratio before resizing its artwork. Aseprite can display non-square pixels, while an exported PNG is commonly consumed as a square-pixel grid. Applying the pixel ratio changes the exported geometry in one axis; ordinary export scaling changes both axes. Two exports can therefore differ even when neither lost any painted pixels. Key Takeaways Record stored dimensions, pixel ratio, and export scale separately. Compare one decoded frame before diagnosing an entire sheet. Agree whether the runtime receives native pixels or ratio-adjusted pixels. Write down the three sizes Suppose a source contains 12 by 21 stored pixels with a 2:1 pixel ratio. Its intended wide-pixel presentation is 24 by 21 square pixels. Applying a further uniform scale of three produces 72 by 63 pixels. Exporting the native grid at three times instead produces 36 by 63. Neither number is a DPI setting. Aseprite's export documentation describes the Apply pixel ratio option. The Sprite.pixelRatio API exposes the source ratio separately from sprite width and height. Inspect those values in the actual source; do not infer them from a screenshot of a zoomed editor. An export ledger for this example can be as small as: { \"storedFrameSize\" : [ 12 , 21 ], \"pixelRatio\" : [ 2 , 1 ], \"applyPixelRatio\" : true , \"uniformScale\" : 3 , \"expectedDecodedFrameSize\" : [ 72 , 63 ] } This ledger declares the chosen delivery policy. It does not claim that every exporter exposes the same controls or processes trim and padding in the same order. Compare the export paths in your installed version Save the editable source, then export one frame through the image export path and one through the sheet path. Record the application version, ratio setting, uniform scale, trim policy, and decoded PNG dimensions. Use a recognizable asymmetric frame so a rotation or wrong frame cannot pass the comparison. The historical sheet-export feature discussion establishes why users need this distinction. It is not evidence that your current version lacks the option. Inspect its actual dialog. If the sheet path cannot express the agreed ratio policy, export a separate presentation copy deliberately and regenerate sheet coordinates from that copy. Keep native source pixels intact. For an ordinary enlarged preview without non-square pixels, use the separate native-master preview workflow . Changing the PNG's resolution metadata will not repair the geometry; the DPI versus pixel-dimensions guide explains that boundary. Check the arithmetic independently native = ( 12 , 21 ) pixel_ratio = ( 2 , 1 ) export_scale = 3 expected = tuple ( n * r * export_scale for n , r in zip ( native , pixel_ratio )) assert expected == ( 72 , 63 ) Our Python 3.12.10/Pillow 13.0.0 fixture produced that 72 by 63 result and the comparison below. It illustrates the selected integer-ratio policy; Aseprite was not executed. Download the input , arithmetic results , and fixture script to inspect the assumptions. Accept the sheet only when coordinates agree Measure a decoded frame or an untrimmed cell, rather than dividing total sheet dimensions by frame count when gutters exist. If frames are trimmed, compare each rectangle and its source-size metadata. Confirm that the runtime's sampling and display size apply the ratio exactly once. A wide export plus another horizontal runtime stretch doubles the correction. Finally import the delivered sheet using the declared cell size. The numbered-cell import check detects traversal errors that can otherwise look like a broken export. Keep both the dimensions ledger and the one-frame reference with the handoff. Prepared by the FrameSprite Workflow Team . AI-assisted technical writing with synthetic dimension arithmetic; no Aseprite GUI export was tested. Editorial method · Corrections . Original guide and downloadable materials",
+            "url": "https://dev.to/framesprite-team/why-do-my-aseprite-sheet-and-image-export-have-different-proportions-2gd9",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "python",
+                "web"
+            ],
+            "published_at": "2026-10-22T20:51:57+00:00",
+            "collected_at": "2026-10-22T21:02:56.733110+00:00"
+        },
+        {
+            "id": "b81c60e49605496990d0100ebae6f975469ec9711b8ed1fcd47bb6937a8f3dc1",
+            "title": "Four .pub files, one run: what REVIEW and FAILED actually look like",
+            "description": "Microsoft removed Publisher from Microsoft 365 on October 1, 2026, and support for the perpetual version ended October 13, 2026. The files, of course, are still there. My earlier posts covered the rescue checklist and why batch conversion is not the hard part — verification is. This post is one concrete run, end to end, on a set of files whose expected verdicts were written down before the run took place. The run happened on October 19, 2026, with PubAudit ( pubaudit.py ) and LibreOffice 24.2.7.2, on copies of the files in a scratch folder. The originals were not modified — PubAudit never writes to its inputs — and nothing in this example deletes anything. The four files These are the smoke-test fixtures of the Windows edition of PubAudit, kept in that project's test corpus with their provenance and expected verdicts pinned in advance: File Size (bytes) What it actually is MSPublisher2013-Sample.pub 98,304 A real Publisher 2013 file (from the PRONOM research corpus). Image-heavy. fdo59355-1.pub 10,752 A real Publisher file from LibreOffice's own libmspub test corpus. corrupt-ole.pub 2,048 Derived locally: the first 2,048 bytes of fdo59355-1.pub — a valid OLE2 header with a truncated body. fake-renamed.pub 48 One line of plain text saved with a .pub name. No OLE2 header. The verdicts pinned for this set before any run are: REVIEW , REVIEW , FAILED , FAILED . The set is deliberately built to contain no easy OK — its job is to exercise the two piles people find confusing. The run and the report it wrote python3 pubaudit.py /path/to/folder # Done: 0 OK, 2 REVIEW, 2 FAILED The CSV report, row for row: File Status Pages Text chars Note (shortened) MSPublisher2013-Sample.pub REVIEW 1 7 PDF produced but little/no extractable text — check it visually before deleting the .pub . fdo59355-1.pub REVIEW 2 16 PDF produced but little/no extractable text — check it visually before deleting the .pub . corrupt-ole.pub FAILED — — No PDF produced. Converter said: rc=0, no PDF produced; \"source file could not be loaded\". fake-renamed.pub FAILED — — Not a real Publisher file (missing OLE2 header). All four verdicts match the pinned expectations. The page counts also match what the fixture documentation says these files convert to (one page and two pages respectively) — a small cross-check that the PDFs are the right documents, not just some output. Reading the four rows The two REVIEW rows are successes with homework attached. Both real files converted: a PDF exists for each, with the expected page count. They land in REVIEW rather than OK for one stated reason — the extractable text (7 and 16 characters) is under PubAudit's 20-character floor for a clean OK . That is what image-heavy flyers look like to a text check: the content is in the pictures, not in a text layer. REVIEW here is not a suspicion that conversion failed; it is the report declining to verify what it cannot read. The next step is a visual check, and both originals stay exactly where they are until someone has done it. fake-renamed.pub is the first FAILED shape. At 48 bytes of plain text, it fails the eight-byte OLE2 header check before the converter ever sees it — the note says so in those words. Re-running will never change this row. The file is not a damaged Publisher file; it is a text file wearing the wrong name, to be kept or discarded as what it actually is. corrupt-ole.pub is the second FAILED shape, and the instructive one. It passes the header check (its first 2,048 bytes are a genuine Publisher file's), the converter runs — and exits with code 0 while producing no PDF at all. A tool that trusted the exit code would report this file as converted. The row is FAILED because PubAudit checks that the output file exists, not what the converter claimed. Where the run ends Nothing was deleted, and nothing in this report licenses a deletion yet. The two REVIEW originals wait for eyes; the two FAILED originals are kept — for the renamed text file because it was never a Publisher file, for the truncated file because a better copy or a future converter is its only remaining route, and \"unrecoverable for now\" is a legitimate end state. The same four verdicts are what the Windows edition's engine is pinned to produce on this set. Two independent implementations agreeing on the awkward files — not just the easy ones — is the consistency this fixture set exists to check. What this example does not show No OK row (the fixture set excludes one on purpose; the repository README records a separate seven-file verification run in which five real flyers all came out OK ). No timeout, no missing-converter environment failure, and no large archive. And a four-file run proves nothing about your archive: it shows what the two non- OK verdicts look like when each is earned, so the first real report you read has a reference point. Tool PubAudit is free and MIT-licensed. It converts a folder of .pub files locally via LibreOffice and writes a report classifying every file as OK , REVIEW , or FAILED : Repo: https://github.com/alapha888/pubaudit This worked example in the repo, with links to the per-pile guides: https://github.com/alapha888/pubaudit/blob/main/docs/worked-example-four-files.md Windows edition (graphical app, no command line), $29 one-time: https://alapha888.gumroad.com/l/lvodxo One rule to keep in view throughout: do not delete any original .pub until its replacement PDF has been verified, not just produced.",
+            "url": "https://dev.to/alapha888/four-pub-files-one-run-what-review-and-failed-actually-look-like-h7g",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "git",
+                "programmation",
+                "python",
+                "rust",
+                "web",
+                "windows"
+            ],
+            "published_at": "2026-10-22T20:51:32+00:00",
+            "collected_at": "2026-10-22T21:02:56.733920+00:00"
+        },
+        {
+            "id": "e82721b15ab345a216ed26945df7d3a2b51fd8b8381092456e795aae23e47f89",
+            "title": "Self-Hosted Cloud Object Storage for Marketplace App Data Backup Retention",
+            "description": "Short answer: for a beginner marketplace system retaining signed documents, put the backup in a managed object-storage bucket unless you already operate redundant hosts, offsite copies, monitoring, and restore drills; the decisive question is who can enforce the deletion deadline and still deliver one coherent recovery point. That answer is deliberately less exciting than comparing a monthly storage line item. A signed contract is application data with a legal or operational retention rule attached to it. The bucket is only one component. If the backup job cannot show which document set was captured, when it may be deleted, and how it will be restored without production credentials, the storage choice has not solved the problem. Begin with a recovery drill Consider a marketplace that stores signed seller agreements, buyer invoices, and the metadata needed to connect each document to an order. Before choosing a storage layout, rehearse the recovery of one order's document set into an isolated environment. The drill should answer which archive is selected, which credential can read it, and whether the database and files agree. A nightly backup has two separate obligations: it must preserve a consistent recovery point, and it must stop preserving a document when the deletion deadline arrives. Those obligations pull in different directions. More copies help recovery, while more copies can make deletion incomplete and difficult to prove. Give each backup run an immutable identifier, such as run-2026-08-10T020000Z , and put the database export, document manifest, and metadata snapshot under that identifier. The manifest should record the document key, checksum, logical owner, capture time, and deletion deadline. A completion record should be written only after every expected object can be read back. latest can be a convenience pointer; it should never be the only name that matters. The deletion worker then has something concrete to evaluate. It can find every object whose manifest says that its deadline has passed, remove the backup copies covered by policy, and retain an audit record that identifies the run and the decision. The audit record should not quietly become a second copy of the signed document. Keep the minimum metadata needed to demonstrate the action. This is where self-hosting changes the work. A self-hosted S3-compatible service may give a team control over disks and placement, but the team also owns capacity, replication, node recovery, access protection, and the copies made outside the primary host. One machine with two local disks is still one failure domain. A managed bucket removes some storage-plane operations; it does not remove retention policy, application consistency, or deletion verification. The least complex option is the one whose operational contract your team can actually uphold. What must the deletion record prove? Use three tests before the next restore drill. First, ask whether the backup represents a valid application state. A database dump made during a migration and a document manifest captured five minutes later can both be individually readable while being collectively wrong. Coordinate the snapshot boundary, record the application version, and verify that the archive and manifest belong to the same run. Second, ask whether the deletion deadline applies to every copy. Check the primary bucket, replicas, local staging directories, exported archives, test fixtures, and operator downloads. A policy that deletes the object in one location while leaving an untracked copy on a workstation is not a deletion policy; it is a partial cleanup. Third, ask whether a person can retrieve exactly one approved archive without receiving a long-lived storage credential. A signed URL is useful for that narrow delivery problem. It grants temporary access to a private object, which makes it suitable for an administrator downloading a selected restore input. It is not a backup, a retention rule, or an authorization model for the whole application. The delivery path should be explicit. The restore service requests a link for one run and one object, records the requester and expiry, and passes the link only to the recovery process that needs it. Short-lived links are easier to reason about than URLs copied into tickets or chat. A browser upload path has a separate concern: upload progress can be observed in browser code, but cross-origin policy and credential handling still need an intentional server-side design. The browser event model does not make an object private by itself. Here is a small transport wrapper for a restore input. It accepts a signed URL, retries only a rate-limited request, and replaces the destination only after a complete response has been written. It does not pretend to implement the marketplace's database restore or retention policy. import pathlib import sys import time import urllib.error import urllib.request def download_restore ( signed_url : str , destination : pathlib . Path ) -> None : partial = destination . with_name ( destination . name + \" .part \" ) for attempt in range ( 4 ): request = urllib . request . Request ( signed_url , method = \" GET \" ) try : with urllib . request . urlopen ( request , timeout = 60 ) as response : with partial . open ( \" wb \" ) as output : while chunk : = response . read ( 1024 * 1024 ): output . write ( chunk ) partial . replace ( destination ) return except urllib . error . HTTPError as error : if error . code != 429 or attempt == 3 : raise RuntimeError ( f \" restore download failed with HTTP { error . code } \" ) from error retry_after = error . headers . get ( \" Retry-After \" , \"\" ) delay = int ( retry_after ) if retry_after . isdigit () else 2 ** attempt time . sleep ( delay ) raise RuntimeError ( \" restore retry limit reached \" ) if __name__ == \" __main__ \" : if len ( sys . argv ) != 3 : raise SystemExit ( \" usage: restore.py SIGNED_URL DESTINATION \" ) download_restore ( sys . argv [ 1 ], pathlib . Path ( sys . argv [ 2 ])) The .part file matters. A process killed halfway through a download must not leave a file that the next step mistakes for a valid archive. After download, verify the checksum recorded in the manifest, decrypt using the team's key-management procedure, unpack into an empty recovery directory, and run the database-specific import command with production access disabled. Keep those steps separate so an operator can see whether transport, integrity, decryption, or application restore failed. What does the delivery path actually require? The comparison below is intentionally about ownership rather than brand. Both approaches can be correct; neither creates a recovery plan automatically. Choice Your team must operate Appropriate when Not suitable when Self-hosted object storage Hosts, disks, capacity, monitoring, access control, redundancy, offsite copies, and node recovery You already run infrastructure across the failure domains you need and can rehearse recovery The same small host holds the application and its only backup copy, or nobody owns storage maintenance Managed object storage Backup consistency, credentials, retention rules, deletion evidence, restore code, and provider configuration You want the storage plane maintained while keeping application recovery in your team Policy requires placement or controls the service cannot provide A hybrid layout The managed and self-hosted responsibilities, plus synchronization and reconciliation A local recovery copy is useful but an independent copy is also required The team cannot monitor two copies or explain which copy is authoritative Capacity price is only one input. Object size, request volume, retention duration, retrieval frequency, and network transfer can change the total. AWS publishes those categories in its S3 pricing documentation, but a price page cannot tell you whether a signed document snapshot is consistent or whether its deletion deadline is enforceable. I'm not sure which option is cheapest for a particular workload without those measurements; your mileage may vary. The harder limit is organizational. Self-hosting is a poor beginner choice when the project is trying to learn application recovery, because disk replacement and cluster repair add unrelated failure modes. Managed storage is a poor choice when the required placement, isolation, or retention control is unavailable. Stick with the option that leaves a named owner for each failure mode, then document the boundary instead of calling it “automatic.” How should beginners choose storage for app data backups and signed restore URLs? The decision is usually clearer after the recovery and deletion tests above. A managed bucket fits a team learning application recovery that does not already operate redundant hosts, offsite copies, and monitoring. A self-hosted object-storage service fits a team that already treats storage operations and placement control as deliberate responsibilities. The names matter less than the evidence that the selected boundary can be maintained. Make failure visible in the restore workflow A backup job should fail loudly when it cannot complete a coherent run. It should not report success because one upload returned a success response. Record the expected object count, read back the manifest and archive, compare checksums, and write the completion record last. Emit enough structured events to answer five questions: which run was attempted, which inputs were included, who requested access, which deletion decision was made, and how long restoration took. Test the negative cases, too. Interrupt a download. Supply an expired signed URL. Remove one manifest entry. Try a restore with a key that cannot reach production. Advance a test clock beyond a document's deletion deadline and confirm that every managed copy covered by the test policy is removed. These are inexpensive tests compared with discovering during an incident that the restore script targets the live database or that a stale pointer selects a half-finished run. Keep retry behavior narrow. A rate-limit response may justify waiting according to Retry-After ; an authorization failure needs a visible configuration error, not four more identical requests. A checksum mismatch needs quarantine and investigation, not an automatic overwrite. The exact error taxonomy belongs in the runbook, but the principle is stable: retries should not blur a policy failure into a transport problem. Three words: restore it regularly. Test it. Roll out one recoverable document set Begin with one nightly slice: a database export, its document manifest, and a handful of non-production signed files. Give the run a unique key, define the deletion deadline in test data, and restore it into an isolated environment. Measure operator steps and elapsed time. Then remove a source credential and repeat; a recovery plan that depends on a credential stored only on the failed application host is incomplete. After the first successful drill, add a second failure domain or an independent copy only if the policy requires it. Each copy creates another deletion and reconciliation obligation. Keep the restore command, checksum verification, key retrieval, and cleanup behavior under version control, and review them whenever the schema or document format changes. The decision rule is compact: choose self-hosted storage when you can demonstrate ownership of its failure domains and deletion path; choose managed storage when reducing storage-plane operations lets the team spend its attention on consistent snapshots and tested recovery; choose a hybrid design only when you can operate both sides. The archive is useful only when the marketplace can recover the right documents, for the right run, before the deadline closes. References https://aws.amazon.com/s3/pricing/ https://developer.mozilla.org/en-US/docs/Web/API/XMLHttpRequest_API/Using_XMLHttpRequest",
+            "url": "https://dev.to/zanesterling7589/self-hosted-cloud-object-storage-for-marketplace-app-data-backup-retention-4p5g",
+            "source": "DEV Community",
+            "category": "cloud",
+            "tags": [
+                "aws",
+                "developpement",
+                "git",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-10-22T20:51:12+00:00",
+            "collected_at": "2026-10-22T21:02:56.735415+00:00"
+        },
+        {
+            "id": "2c37c5c777f27a65b9c3681df242157be2a8e7d10761effaedcb80fae574a35a",
+            "title": "How to Read Crypto Liquidations and Funding Rates for Risk (Not Predictions)",
+            "description": "How to Read Crypto Liquidations and Funding Rates for Risk (Not Predictions) Liquidation dashboards look dramatic. A wall of forced orders, a spike in notional, a heatmap lighting up—easy to treat as a buy or sell signal. That is usually the wrong job for the data. This tutorial is a risk-reading workflow : how to combine live crypto liquidations with funding-rate context so you can answer where leverage is stressed , which side is being forced out , and whether positioning looks crowded —without pretending the tape forecasts the next candle. It is informational only and is not investment advice. Crypto derivatives involve substantial risk of loss. What you are actually measuring Three concepts get mixed up in chat: Liquidations — Forced closures reported by venues when margin is insufficient. Aggregators show notional (size × price), side (long/short), coin, and exchange. Funding rates — Periodic payments between longs and shorts on perpetuals that keep the contract tethered to spot. Extremes often mean one side is paying to stay in the trade. Open interest (OI) — Outstanding derivative contracts. Rising OI with a directional move can mean new risk is being added; falling OI can mean risk is leaving. None of these alone is “bullish” or “bearish.” They describe positioning pressure . Your risk process decides what to do with that pressure. A 10-minute reading loop Use this loop on any volatile session. Keep windows short first (1h / 4h), then widen to 12h / 24h so a single burst does not dominate the story. Step 1 — Start with the liquidation map, not Twitter Open a multi-exchange Bitcoin liquidations (or altcoin) view and check, in order: 1h and 4h totals vs the quieter baseline of the prior day (qualitative: “elevated” vs “routine”). Long vs short split in those windows. Coin ranking — is BTC absorbing most notional, or is an alt flush large relative to its usual size? Exchange breakdown — broad across venues, or concentrated on one platform? Largest single prints — outliers that can skew a short window. A useful first sentence to write down: “In the last 4h, forced flow was mostly [long/short], led by [coin], with [broad/concentrated] venue share.” Step 2 — Ask which pattern you are seeing Three patterns show up again and again (adapted from how practitioners read forced-order tapes): Cascade. Price moves sharply, liquidations pile up on the losing side, and the live feed stays busy. Forced selling (or buying) can amplify the swing. Watch whether the 1h window keeps printing after the first burst; a multi-hour unwind looks different from a one-print spike. Leverage flush. Total liquidations jump while spot/perp price barely moves. That often means an over-leveraged cohort is being cleared. Volatility can cool afterward—but that is a positioning observation, not a directional forecast. Venue concentration. One exchange dominates the ranking for the move. Users on that venue may have been running higher leverage or larger size into the swing. Treat cross-venue share as approximate: venues under-report and format feeds differently, so sums are a lower bound. Write which pattern fits before you look at funding. That order keeps you from reverse-fitting the chart to a narrative. Step 3 — Layer funding as crowdedness, not confirmation Funding answers a different question: who is paying to stay leveraged? Practical reads (qualitative—always verify live figures on your data source): Funding elevated and same-side liquidations rising — Crowded side is under stress. Risk managers often reduce size or widen invalidation, rather than add into the squeeze. Funding extreme but liquidations quiet — Crowding without a flush yet. Worth watching; not an automatic entry. Funding flips while liquidations clear the prior crowded side — Positioning may be resetting. Still not a signal by itself; it is a clue that the old crowding thesis weakened. Funding calm while liquidations spike — Shock or cascade from price/liquidity, less from a slow build-up of carry. Focus on cascade vs flush (Step 2). If you track OI as well: rising OI into an already extreme funding regime is a classic “more fuel” risk flag; falling OI into a liquidation spike often means risk is leaving the system. Step 4 — Convert the read into risk actions Translate the loop into process, not prophecy: Observation Risk-oriented response (examples) Cascade in progress on your traded side Cut size, widen stops only with a plan, avoid adding leverage mid-flush Flush with quiet price Expect chop; avoid chasing “the bottom/top” of a leverage wipe Crowded funding + rising same-side liqs Treat as elevated gap/slippage risk into events Single-venue dominance Check whether your venue’s book matches the cross-market story The goal is fewer surprise liquidations of your book—not a perfect call on direction. Common misreads (and how to avoid them) “$X million liquidated means traders lost $X.” No. Public feeds report notional , not P&L. Margin, leverage, and prior unrealized P&L determine losses. A large notional print can correspond to a much smaller equity loss—or a full wipe of thin margin. “Heavy long liquidations = lasting bearish trend.” Forced long closures often cluster on down moves. Once that cohort is cleared, markets sometimes stabilize. The data describes forced flow, not the next weekly candle. “One dashboard total is the whole market.” Many venues publish partial feeds (for example, some push at most one liquidation print per symbol per second). Cross-exchange totals are best read as a timely lower bound , not a complete ledger. “Funding alone is a timing tool.” Extremes can persist. Pair funding with liquidations, OI trend, and your own levels. A minimal daily checklist Copy this into your notes: 1h / 4h liquidation notional: elevated or routine? Long/short split and dominant coin. Broad vs concentrated exchange share; any outlier print? Pattern tag: cascade / flush / concentrated / mixed. Funding: extreme, flipping, or calm—and on which side? OI (if you track it): adding risk or shedding risk? One risk change for your book today (size, leverage, or stand aside). For a live board that aggregates multi-exchange forced orders, long/short splits, coin and exchange rankings, and heatmap-style views, use the CoinBoss liquidations page alongside your funding/OI source of choice. CoinBoss is a crypto derivatives data platform (liquidations, open interest, funding rates, and related market-structure views)—use it as context, not as a trading venue. What this tutorial is not Not a strategy that “buys liquidations” or “fades funding.” Not a claim that any single snapshot predicts price. Not a substitute for exchange risk limits, position sizing, and your own research. If you already watch leverage cascades, practice the loop on a quiet day first. When the tape is loud, muscle memory beats improvisation. Disclaimer: Educational content only. Not investment advice. Always verify figures on live pages and make your own decisions. Crypto derivatives can result in loss of capital.",
+            "url": "https://dev.to/coinboss/how-to-read-crypto-liquidations-and-funding-rates-for-risk-not-predictions-1kge",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "bitcoin",
+                "developpement",
+                "programmation",
+                "web",
+                "windows"
+            ],
+            "published_at": "2026-10-22T20:50:44+00:00",
+            "collected_at": "2026-10-22T21:02:56.736476+00:00"
+        },
+        {
+            "id": "fb9fb6a7a2afe02f5c46e9bc2893d1b5752e0a39139824a8f07586f77e48a156",
+            "title": "\"USDT\" Is at Least Three Different Tokens. Your Token Registry Should Know That.",
+            "description": "If your product handles USDT across networks, there's a good chance your token model treats it as one asset with several \"networks.\" That model is wrong in ways that matter for accounting, risk and support. In practice, what wallets display as \"USDT\" includes at least three structurally different things: Kind Example chains Issued by How it moves cross-chain Native USDT Ethereum, Tron, Solana, TON, Avalanche Tether It doesn't. Each chain has its own supply Exchange-pegged USDT BNB Chain (Binance-Peg BSC-USD) Binance, backed by USDT Via the issuer Omnichain USDT0 Arbitrum, Optimism, Polygon, newer EVM chains Everdawn Labs, backed by USDT locked on Ethereum LayerZero burn-and-mint They're all worth about a dollar. They don't share an issuer, a redemption path or a risk profile. 1. Model issuer and kind, not just chain A registry keyed only by (chain, contract) is necessary but not sufficient. Add the fields that describe what the token actually is: { \"symbol\" : \"USDT\" , \"chain\" : \"arbitrum\" , \"contract\" : \"0x…\" , \"decimals\" : 6 , \"kind\" : \"omnichain\" , \"issuer\" : \"everdawn-labs\" , \"backing\" : \"native-usdt-locked-ethereum\" , \"redeemable_with_tether\" : false } Why it matters: Accounting. Treating Binance-Peg USDT and USDT0 as interchangeable with native USDT in your books means your stablecoin exposure has counterparties you aren't tracking. Risk limits. A depeg, an exploit in a bridge's lockbox or an issuer problem hits one kind without touching the others. Exposure limits should be per kind. Support. \"I sent USDT and received USDT0\" is a real ticket. If your system can't tell them apart, neither can your agents. 2. Never resolve tokens by symbol On most EVM chains, anyone can deploy a contract named \"USDT.\" Explorers on BNB Chain list many of them. Combined with the legitimate variety above, symbol-based resolution is guaranteed to misfire eventually. Keep an explicit allowlist of (chain, contract) pairs and reject everything else, including in admin tools and indexers. 3. Tron needs its own transfer logic TRC20 isn't an EVM chain with a different address prefix. Its fee model is different: Bandwidth covers transaction size. Each account gets a small free daily allowance. Energy covers smart contract execution. A TRC20 transfer is a contract call, so it needs energy. If the sending account hasn't staked TRX for energy, the network burns TRX to pay for it. If there isn't enough TRX, the transaction fails, and the TRX it consumed is still gone. Practical consequences for payouts: // Before a TRC20 payout, check the sender can actually pay for it. const resources = await tronWeb . trx . getAccountResources ( hotWallet ); const energyAvailable = ( resources . EnergyLimit || 0 ) - ( resources . EnergyUsed || 0 ); if ( energyAvailable < estimatedEnergy ) { const trxNeeded = estimateTrxBurn ( estimatedEnergy - energyAvailable ); assertBalanceAtLeast ( hotWallet , trxNeeded ); } Also budget for first-transfer cost . Sending USDT to a Tron address that has never held it costs roughly double, because the transfer has to create the token balance. If you sweep deposits to many fresh addresses, this shows up in your costs. Set feeLimit on TRC20 transactions deliberately. Too low and they fail mid-execution; too high and a bug can burn more than you meant. 4. Cross-network conversion is a trade, not a transfer If your product lets users \"move USDT from Tron to Ethereum,\" it's executing a swap between two different tokens, whatever the UI says. That means: Quote it like a swap. Show the amount received net of the destination network fee and any spread. It won't be exactly 1:1. Track it like a swap. Two legs, two chains, two transaction IDs, and a failure state for each. Label the output precisely. If the destination is USDT0, say USDT0. Don't let a user find out from their wallet. 5. Gas tokens on both sides A user receiving USDT on a chain where they hold no native token can't move it. On Ethereum, that's ETH; on Tron, TRX; on BNB Chain, BNB. If your product delivers USDT to a user's wallet on a network that's new for them, say so before they confirm. Better still, point them to how to get the gas token. Checklist Registry fields for kind , issuer , backing and redeemability Allowlist by (chain, contract) ; never resolve by symbol Exposure limits per token kind, not per symbol Tron payouts check energy and TRX before sending; feeLimit set deliberately First-transfer costs to fresh Tron addresses budgeted Cross-network moves modeled as two-leg swaps, labeled with the actual output token Users warned when they'll receive on a chain without gas Disclosure: I work on SwapCore (swapcore.exchange), a non-custodial instant exchange. Cross-network USDT conversions are one of the most common things people use us for, and most of the edge cases above come from them.",
+            "url": "https://dev.to/swapcoreexchange/usdt-is-at-least-three-different-tokens-your-token-registry-should-know-that-14h4",
+            "source": "DEV Community",
+            "category": "cybersecurite",
+            "tags": [
+                "developpement",
+                "ethereum",
+                "git",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-10-22T20:47:40+00:00",
+            "collected_at": "2026-10-22T21:02:56.737124+00:00"
+        },
+        {
+            "id": "7d297f38d042e7df046b914323a2643538bfab11f779ea64f26d484cbe6324d4",
+            "title": "I Built a Sloth That Organizes My Files While I Do Nothing 🦥 (With Local Open-Source AI)",
+            "description": "This is a submission for the Hacktoberfest Open-Source AI Challenge Week 3: Slow and Steady What I Built Every few weeks, my Downloads folder tells the same story: an invoice named document-final-2.pdf , meeting notes named notes.txt , an appointment reminder saved among work files, and a hundred small decisions I keep postponing. I didn't need a smarter to-do list. I needed something that quietly finished one of those chores. Meet SlothSort , a local-first AI file organizer . Drop supported files into an inbox and let a small open-weight model read what they're about. It suggests folders such as Finance, Work, Health, Learning and Personal—even when the filename gives away almost nothing. But the interesting part isn't deciding which folder sounds right. It's knowing when not to decide . SlothSort compares the similarity of each file against descriptions of my folders. If the best match is sufficiently strong and clearly better than the next-best match, it's eligible for sorting. If it's ambiguous, it waits for me. In the Streamlit interface, I can approve or edit suggestions in a table, then move files as one batch. Each move is recorded, and I can undo the last batch if I change my mind. There's also an opt-in CLI watcher. With the model cached, it can sit on my laptop offline, wait for files to finish copying into the inbox, and file high-confidence documents as they arrive. It leaves uncertain files alone instead of guessing. The result isn't an agent that makes grand promises. It's a tiny, deliberately boring assistant that helps future-me avoid the same chore again. Demo Video: https://drive.google.com/file/d/1W0rryGEoDbMFSZlAUHhUX4KzWopTyPSZ/view?usp=sharing In the video I: Create 11 synthetic files with unhelpful names like note_005.txt . Run semantic matching with the local model and inspect suggestions and top-two gaps. Show a low-confidence file that remains unchecked for review. Approve a batch, show the created category folders, then undo it safely. Restart in offline mode and show that the cached model still performs inference disconnected from the internet. The exact outcome and evaluation numbers will be added after running the model on my PC. Code GitHub: https://github.com/DinukaEk/slothsort-week3 The project is MIT-licensed and includes the local UI, Python CLI, semantic engine, document readers, safe file-moving journal, synthetic dataset, an evaluation script, deterministic tests, and a GitHub Actions workflow. How I Built It AI core: sentence-transformers/all-MiniLM-L6-v2 , an Apache-2.0 open-weight sentence embedding model, run locally through the open-source Sentence Transformers library. The model does not generate prose. It maps the file text and each folder's natural-language description into a shared vector space. SlothSort measures cosine similarity and ranks candidate folders. The top score and its margin over second place determine whether to mark a suggestion as ready or needing review. # Simplified from slothsort/engine.py vectors = encoder . encode ( category_prompts + document_texts ) ranked = sorted ( (( folder , cosine ( doc_vector , category_vector )) for folder , category_vector in category_vectors ), key = lambda pair : pair [ 1 ], reverse = True , ) ready = ranked [ 0 ][ 1 ] >= min_similarity and ( ranked [ 0 ][ 1 ] - ranked [ 1 ][ 1 ] ) >= min_margin It is easy to confuse these similarities with confidence percentages. They aren't calibrated probabilities. That's why manual review and undo are essential to the design. The files are handled by a deliberately narrow pipeline: extract limited plain text, embed locally, preview suggestions, move only selected files, write a SHA-256-backed audit entry, and provide a verified undo. File collisions get numbered names instead of overwriting other data. Watch mode checks stability between scans so it doesn't immediately move half-written files. Test evidence: 32 deterministic unit tests passed in the initial build environment. These exercise the scoring logic, supported/unsafe file types, path validation, no-overwrite behavior, tamper detection, and undo. The unit tests mock embedding vectors; they do not prove production AI classification quality. Real-model evaluation: [PASTE ACTUAL python scripts/evaluate.py --offline RESULT HERE]. The evaluator uses a small synthetic dataset, including one intentionally vague note. It also reports a transparent keyword baseline. It is a toy comparison, not a scientific or production benchmark. Why Does Open Innovation Matter? I didn't want to build an automatic organizer that demands a subscription to decide where notes.txt belongs. With an open-weight model, the user controls the entire inference loop: Privacy: the content is processed on the user's own machine. Local file contents aren't sent to a third-party AI endpoint. Offline usefulness: after downloading the model once, sorting still works without Wi-Fi. I can demonstrate that by disconnecting my laptop during a scan. Custom behavior: the five default folders are plain-text descriptions, not categories baked into an inaccessible hosted model. I can replace descriptions, adjust thresholds, or swap the model. Predictable economics: there are no per-document or per-token API charges; running the model still has local CPU, memory, and electricity costs. I haven't proved this small model is more accurate than every closed API. A larger hosted LLM might interpret unusual documents better. For this specific low-stakes, repetitive chore, however, keeping private content local and making every decision reversible matter more than buying maximum model intelligence. Open innovation makes the shape of the product possible: an assistant I can inspect, modify, run without a provider account, and keep using when a service's pricing changes. The Lazy Payoff The payoff isn't “AI productivity” measured in vibes. It is fewer manual moves . The project includes 11 synthetic demo files. [AFTER RUNNING: ADD NUMBER OF FILES AUTO-ELIGIBLE, NUMBER ACTUALLY MOVED, NUMBER SENT TO REVIEW, AND ANY REAL TIMING YOU RECORDED.] For a transparent illustrative estimate, if a manual file decision takes 20 seconds , organizing 50 eligible files avoids up to 16 minutes 40 seconds of repetitive decisions before review time . That's a scenario, not a measured user study. A more honest success metric is the number of correct moves requiring no correction, which I'll track with the audit journal. My favorite design choice is the boring one: uncertain files aren't silently moved . The sloth can work slowly, but it mustn't break anything while I'm not looking. Thanks for participating in Hacktoberfest! 🦥",
+            "url": "https://dev.to/dinukaek/i-built-a-sloth-that-organizes-my-files-while-i-do-nothing-with-local-open-source-ai-576i",
+            "source": "DEV Community",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "developpement",
+                "git",
+                "intel",
+                "llm",
+                "programmation",
+                "python",
+                "web",
+                "wifi"
+            ],
+            "published_at": "2026-10-22T20:47:14+00:00",
+            "collected_at": "2026-10-22T21:02:56.737966+00:00"
+        },
+        {
+            "id": "714df2670eae237d1835a81f9d2fe152d0cf87c29608211eab4a1874c004f3b3",
+            "title": "What We Missed: Feds Lasso Texas Laptop Farms",
+            "description": "In this video, Dark Reading editors discuss some of the news they didn't get a chance to cover, from busting up North Korea's stateside infrastructure in \"Operation Lonestar Justice\" to Staples' gift card bonanza.",
+            "url": "https://www.darkreading.com/insider-threats/texas-laptop-farms-north-korean-it-workers",
+            "source": "Dark Reading",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "enterprise-security"
+            ],
+            "published_at": "2026-10-22T20:33:10+00:00",
+            "collected_at": "2026-10-22T21:02:53.859674+00:00"
+        },
+        {
+            "id": "03f00b0d2f942b734c8a2cb497d1a98e537800462fc44b6522c1144c918659fc",
+            "title": "DeFi Giant Uniswap Taps 7 Rival Liquidity Sources to Burn UNI Tokens",
+            "description": "The decentralized exchange (DEX) platform Uniswap has turned DEX competitors into potential revenue sources for its UNI token-burning mechanism. Launched Thursday, Aggregator Hooks connect seven external liquidity sources covering more than 90% of decentralized exchange activity across Ethereum, Base, and Robinhood Chain. The upgrade allows Uniswap to collect protocol fees from trades routed through outside […]",
+            "url": "https://news.bitcoin.com/defi/defi-giant-uniswap-taps-7-rival-liquidity-sources-burn-uni-tokens/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto",
+                "ethereum"
+            ],
+            "published_at": "2026-10-22T20:30:44+00:00",
+            "collected_at": "2026-10-22T21:03:14.516884+00:00"
+        },
+        {
+            "id": "1e6095c6e828de757f9a2eee0fde0a09e2745eb65a8b1b615551bd5489ba3fe5",
+            "title": "Capcom confirms data breach affecting 11.7 million accounts",
+            "description": "Japanese gaming giant Capcom has confirmed that hackers breached its membership service, CAPCOM ID, exposing more than 11.7 million customer email addresses and associated information. [...]",
+            "url": "https://www.bleepingcomputer.com/news/security/capcom-confirms-data-breach-affecting-117-million-accounts/",
+            "source": "BleepingComputer",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "malware",
+                "ransomware"
+            ],
+            "published_at": "2026-10-22T20:22:45+00:00",
+            "collected_at": "2026-10-22T21:02:52.750518+00:00"
+        },
+        {
+            "id": "98516d3e7e04cfcdd07fd5b619daf37053f7793eea8f0fbf5e009dd76ce27f98",
+            "title": "Disgraced eMudhra drops out of TLS business after using cert private key of 4",
+            "description": "Flubbed key signing \"ceremony\" allowed minting of web credentials for any site.",
+            "url": "https://arstechnica.com/security/2026/10/disgraced-emudhra-drops-out-of-tls-business-following-certificate-debacle/",
+            "source": "Ars Technica",
+            "category": "technologie",
+            "tags": [
+                "informatique",
+                "innovation",
+                "technologie"
+            ],
+            "published_at": "2026-10-22T20:17:52+00:00",
+            "collected_at": "2026-10-22T21:02:54.627692+00:00"
+        },
+        {
+            "id": "eaf6e95c99cc41352edb71fb8995fa2c15be93e24d28f6260a44228578f24f3e",
+            "title": "Docker is weird",
+            "description": "Comments",
+            "url": "https://codeandcake.dev/posts/2026-10-22-docker-is-weird",
+            "source": "Lobsters",
+            "category": "devops",
+            "tags": [
+                "developpement",
+                "docker",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-10-22T20:09:22+00:00",
+            "collected_at": "2026-10-22T21:02:56.603822+00:00"
+        },
+        {
+            "id": "9358721658f8a91bcccad88d4cb1735af9c093a0af6f3f1a39f2127d7c37cc92",
+            "title": "Google Meet expands real-time translation across 63 languages",
+            "description": "The feature detects and translates 63 languages.",
+            "url": "https://www.androidauthority.com/google-meet-real-time-translation-3726963/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-10-22T20:09:20+00:00",
+            "collected_at": "2026-10-22T21:03:04.900700+00:00"
+        },
+        {
+            "id": "080e7241fa8f3af29b3924711a29a4cd20d5beaf9aa04920cda6728ee32c104b",
+            "title": "Arc browser sunsets December 22 as The Browser Company doubles down on Dia",
+            "description": "Arc was fiercely beloved by a dedicated group of enthusiasts, but it never quite became the mass-market Chrome alternative its makers once envisioned.",
+            "url": "https://techcrunch.com/2026/10/22/arc-browser-sunsets-december-22-as-the-browser-company-doubles-down-on-dia/",
+            "source": "TechCrunch",
+            "category": "web",
+            "tags": [
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-10-22T20:01:51+00:00",
+            "collected_at": "2026-10-22T21:02:54.745573+00:00"
+        },
+        {
+            "id": "55c9b7f636b6e54bd858e22f3b7313a60264301ac44bd5cdb1d7b587fefbe0da",
+            "title": "The secret to fast startup growth isn’t early sales, top names in tech say",
+            "description": "At this year’s Disrupt, Lovable GTM lead Luke Arno, Polsia's Ben Broca, and Theory Ventures’ Tomasz Tunguz gave founders some tips on how to achieve true sales success in the first 90 days.",
+            "url": "https://techcrunch.com/2026/10/22/the-secret-to-fast-startup-growth-isnt-early-sales-top-names-in-tech-say/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-10-22T20:00:00+00:00",
+            "collected_at": "2026-10-22T21:02:54.745666+00:00"
+        },
+        {
+            "id": "b321342c8bd3ae6283e55edb0d11647fb3b421797e7adb7afe4f726cf91f8ab1",
+            "title": "Leaked Mass Effect: Universe trailer gives a taste of what we're all missing",
+            "description": "We can't have nice things, but at least we can get trailers for them.",
+            "url": "https://arstechnica.com/gaming/2026/10/leaked-mass-effect-universe-trailer-gives-a-taste-of-what-were-all-missing/",
+            "source": "Ars Technica",
+            "category": "technologie",
+            "tags": [
+                "informatique",
+                "innovation",
+                "technologie"
+            ],
+            "published_at": "2026-10-22T19:59:37+00:00",
+            "collected_at": "2026-10-22T21:02:54.627758+00:00"
+        },
+        {
+            "id": "10e23a42650fa7b8864e3455f891093dd06401ca2d1985a916462b239fd7c72e",
+            "title": "Starknet Moves Toward Post-Quantum Layer 1 as Voters Back Ethereum Split",
+            "description": "Starknet is taking its first formal steps toward potentially becoming an independent, quantum-resistant Layer 1 blockchain, following a community vote that overwhelmingly supported researching a departure from its current role as an Ethereum Layer 2 network. STRK Holders Approve Layer 1 Exploration The Starknet Foundation announced Thursday that 93.52% of voting power supported exploring the […]",
+            "url": "https://news.bitcoin.com/technology/starknet-moves-toward-post-quantum-l1-voters-back-ethereum-split/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto",
+                "ethereum"
+            ],
+            "published_at": "2026-10-22T19:55:00+00:00",
+            "collected_at": "2026-10-22T21:03:14.517004+00:00"
+        },
+        {
+            "id": "a1ca737d2bd31f6d72d5920886439f77510e61e0c1f7b55922579c1eaeb28af0",
+            "title": "Motorola’s Android 17 rollout reaches another flagship foldable",
+            "description": "The Razr Ultra 2025 joins the Android 17 party.",
+            "url": "https://www.androidauthority.com/motorola-razr-ultra-android-17-update-3726937/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-10-22T19:54:52+00:00",
+            "collected_at": "2026-10-22T21:03:04.900770+00:00"
+        },
+        {
+            "id": "455a608623860c9521743cb18ed1d2d61a36086c06e495177cc1e5d1a1b784a7",
+            "title": "The Regression Tests Nobody Writes: Capturing How Software Actually Behaves",
+            "description": "",
+            "url": "https://stackoverflow.blog/2026/10/22/the-regression-tests-nobody-writes-capturing-how-software-actually-behaves/",
+            "source": "Stack Overflow Blog",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "stackoverflow"
+            ],
+            "published_at": "2026-10-22T19:37:29+00:00",
+            "collected_at": "2026-10-22T21:02:55.728240+00:00"
+        },
+        {
+            "id": "a35ae37c90a4ccbdc3cb795507d87bec41f4b9f59983cfab8b3816eaeb19d671",
+            "title": "Ink droplets in motion snag top prize in Nikon Small World contest",
+            "description": "Ole Bielfeldt of Germany captured a microscopic view of an inkjet printer depositing ink onto paper.",
+            "url": "https://arstechnica.com/science/2026/10/meet-the-2026-winner-of-nikons-small-world-photomicrography-contest/",
+            "source": "Ars Technica",
+            "category": "technologie",
+            "tags": [
+                "informatique",
+                "innovation",
+                "technologie"
+            ],
+            "published_at": "2026-10-22T19:34:40+00:00",
+            "collected_at": "2026-10-22T21:02:54.627821+00:00"
+        },
+        {
+            "id": "507bd11e20574128c54cb9d6c6bd8499d8a0d2f469d29d2b1f6423afe2e7c6d0",
+            "title": "Les supermarchés de l'UE paient d'un firmware de réfrigérateur non mis à jour",
+            "description": "Des centaines de magasins ont subi des pertes se chiffrant en millions d'euros parce qu'ils avaient fait appel à des tiers pour gérer le micrologiciel OT obsolète qui pilotait leurs systèmes de climatisation.",
+            "url": "https://www.darkreading.com/ics-ot-security/eu-grocers-unpatched-fridge-firmware-french",
+            "source": "Dark Reading",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "enterprise-security"
+            ],
+            "published_at": "2026-10-22T19:30:20+00:00",
+            "collected_at": "2026-10-22T21:02:53.859764+00:00"
+        },
+        {
+            "id": "3b859b4c16774ac1647e28c058751ad38bb1677d6c26ef5eab331eff23e7f9c0",
+            "title": "1Password’s new solution mitigates the security risks of AI agent account access",
+            "description": "1Password just made giving your AI agent account access a little safer.",
+            "url": "https://www.androidauthority.com/1password-for-agents-launch-3726912/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-10-22T19:29:07+00:00",
+            "collected_at": "2026-10-22T21:03:04.900840+00:00"
+        },
+        {
+            "id": "27268c51a7cdf00ab0996d901443875164a29f1863b74e5323435bd3544add7d",
+            "title": "Save $380 on the Arlo Ultra 4K HDR security bundle with solar panels",
+            "description": "Arlo’s 3-camera 4K HDR outdoor security bundle drops to $369.99 on Amazon with solar panels and a 6-month plan.",
+            "url": "https://www.androidauthority.com/arlo-ultra-4k-hdr-security-bundle-deal-3726956/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-10-22T19:25:52+00:00",
+            "collected_at": "2026-10-22T21:03:04.900910+00:00"
+        },
+        {
+            "id": "0923e5fbe81374eed14eae4812680e6cc41be04ac35afdf1803afb80d4983423",
+            "title": "Bitcoin Price Won’t Break $100K By End of 2026, Analysts Say—Here’s Why",
+            "description": "Analysts from top crypto firms believe that other investment options, further interest rate tightening, and the still-developing situation in Iran are making it difficult for bitcoin to rise above the $100,000 price mark, even if a year-end uptick does happen. Bitcoin’s $100K Return Seen as Unattainable in 2026 While bitcoin prices have seen a mild […]",
+            "url": "https://news.bitcoin.com/price-predictions/bitcoin-price-wont-break-100k-end-2026-analysts-say-why/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-10-22T19:25:38+00:00",
+            "collected_at": "2026-10-22T21:03:14.517140+00:00"
+        },
+        {
+            "id": "da1afa1409769285b0ab3d1ea0924184ee8956cff5c1c9b4bee9142c226aad2e",
+            "title": "Pour one out for Arc: One of the most hyped browsers is shutting down for good",
+            "description": "And we now know exactly when.",
+            "url": "https://www.androidauthority.com/arc-browser-shutting-down-december-2026-3726900/",
+            "source": "Android Authority",
+            "category": "web",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-10-22T19:20:41+00:00",
+            "collected_at": "2026-10-22T21:03:04.900964+00:00"
+        },
+        {
+            "id": "ef2606a411438bd80e5973fe496e4c293de070d151ae572ddb52f3818c9bb62d",
+            "title": "A complete bypass of eMudhra’s 1FA OTP login system",
+            "description": "Comments",
+            "url": "https://mastodon.catgirl.cloud/@49016/117475976434068995",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-22T19:14:01+00:00",
+            "collected_at": "2026-10-22T21:02:56.415689+00:00"
+        },
+        {
+            "id": "37f56369e2ff40e06833d0b80ebd72a0eb4753f5b2fc8c2ef6eed887bd73402b",
+            "title": "LiteLLM release pipeline hacked to distribute info-stealer malware",
+            "description": "Hackers compromised the LiteLLM project's PyPI package and published malicious Docker images with a payload that steals credentials, secrets, and environment variables. [...]",
+            "url": "https://www.bleepingcomputer.com/news/security/litellm-release-pipeline-hacked-to-distribute-info-stealer-malware/",
+            "source": "BleepingComputer",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "docker",
+                "llm",
+                "malware",
+                "ransomware"
+            ],
+            "published_at": "2026-10-22T19:12:51+00:00",
+            "collected_at": "2026-10-22T21:02:52.750599+00:00"
+        },
+        {
+            "id": "264af0525447e45c75f4bb6b41959459d7639ea237946c43e05068f1faa960fc",
+            "title": "1Password launches a way for AI agents to log in on your behalf without seeing your password",
+            "description": "The new feature allows agents to log into a customer's personal accounts while still protecting the private credentials that secure those accounts.",
+            "url": "https://techcrunch.com/2026/10/22/1password-launches-a-way-for-ai-agents-to-log-in-on-your-behalf-without-seeing-your-password/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-10-22T19:07:09+00:00",
+            "collected_at": "2026-10-22T21:02:54.745738+00:00"
+        },
+        {
+            "id": "5a34460990741de0ec2f306d71086450fe8cea9333bee9066437eb487e523af2",
+            "title": "Arista Warns of Critical VeloCloud SQL Injection Zero-Day Exploited in Attacks",
+            "description": "Attackers are exploiting a zero-day SQL injection flaw in Arista's VeloCloud Orchestrator (VCO), the central management system for VeloCloud SD-WAN networks, the company said in an advisory on October 22. The flaw lets anyone who can log in to the orchestrator, even with a read-only customer account, gain operator privileges, the top level of control over it. For",
+            "url": "https://thehackernews.com/2026/10/arista-warns-of-critical-velocloud-sql.html",
+            "source": "The Hacker News",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "hacking",
+                "vulnerabilites",
+                "zero_day"
+            ],
+            "published_at": "2026-10-22T19:05:17+00:00",
+            "collected_at": "2026-10-22T21:02:52.979233+00:00"
+        },
+        {
+            "id": "7a1c998dec98c68537b40a0d9bce2adad7ff3ad27f0db6c8e22ba69143dc4c09",
+            "title": "\"Disillusioned\" MAHA leader quits as Trump admin's food agenda spoils: Report",
+            "description": "The departure comes amid turmoil in Kennedy's Make America Healthy Again movement.",
+            "url": "https://arstechnica.com/health/2026/10/disillusioned-maha-leader-quits-as-trump-admins-food-agenda-spoils-report/",
+            "source": "Ars Technica",
+            "category": "technologie",
+            "tags": [
+                "informatique",
+                "innovation",
+                "technologie"
+            ],
+            "published_at": "2026-10-22T19:04:06+00:00",
+            "collected_at": "2026-10-22T21:02:54.627879+00:00"
+        },
+        {
+            "id": "dd990ac8a8fa278153a4f3ac6acb27bd4dfa18c912dd2722c8d3ca74d41fdf87",
+            "title": "Electric or gas? BMW goes both ways with new 2027 X5 and iX5.",
+            "description": "460 kW charging and 450 miles of range are among the reasons the EV is the one to get.",
+            "url": "https://arstechnica.com/cars/2026/10/electric-or-gas-bmw-goes-both-ways-with-new-2027-x5-and-ix5/",
+            "source": "Ars Technica",
+            "category": "technologie",
+            "tags": [
+                "informatique",
+                "innovation",
+                "technologie"
+            ],
+            "published_at": "2026-10-22T19:01:23+00:00",
+            "collected_at": "2026-10-22T21:02:54.627935+00:00"
+        },
+        {
+            "id": "1fd5dc2d57e9039460a2aac3e208da2252848a97a772d55a340d5e2ad71b769b",
+            "title": "Canva releases its first image generation model",
+            "description": "Canva is making its new image model available to all users, promising better, more customizable performance at lower costs.",
+            "url": "https://techcrunch.com/2026/10/22/canva-releases-its-first-image-generation-model/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-10-22T19:00:00+00:00",
+            "collected_at": "2026-10-22T21:02:54.745798+00:00"
+        },
+        {
+            "id": "9053b1f287d8b411ac9171031165d68cd30d666459d8028533e037b10d2d6bb3",
+            "title": "OpenAI makes its Jev competitor widely available as decision model competition heats up",
+            "description": "OpenAI is launching its decision model to the world. Can it compete with the original Jev?",
+            "url": "https://techcrunch.com/2026/10/22/openai-makes-its-jev-competitor-widely-available-as-decision-model-competition-heats-up/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "openai",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-10-22T19:00:00+00:00",
+            "collected_at": "2026-10-22T21:02:54.745858+00:00"
+        },
+        {
+            "id": "891b7e0bbf66f86d27b770f3dc53e0fbecfc246eeadf29503262f6d9c70adad7",
+            "title": "Build more responsive apps with the Decisions API",
+            "description": "Fast, focused, low-cost decisions for any application.",
+            "url": "https://openai.com/index/decisions-api",
+            "source": "OpenAI",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "chatgpt",
+                "ia",
+                "openai"
+            ],
+            "published_at": "2026-10-22T19:00:00+00:00",
+            "collected_at": "2026-10-22T21:02:57.387475+00:00"
+        },
+        {
+            "id": "afddc58768771a1464c2e626aa3f9a35322236fa4363e02dcf1eee5b6e2729ff",
+            "title": "Ethereum Draft Targets Faster Finality and Future Quantum Defense",
+            "description": "Ethereum researchers want to slash transaction finality from roughly 16 minutes to 4 minutes, potentially cutting the capital tied up in cross-chain transfers by 75%. Filed this week, the Decoupled Consensus proposal would separate validator responsibilities, strengthen defenses against blockchain reorganizations, and prepare Ethereum for future quantum-resistant cryptography. The ambitious redesign remains an incomplete draft […]",
+            "url": "https://news.bitcoin.com/blockchain/ethereum-draft-targets-faster-finality-future-quantum-defense/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto",
+                "ethereum"
+            ],
+            "published_at": "2026-10-22T18:55:41+00:00",
+            "collected_at": "2026-10-22T21:03:14.517257+00:00"
+        },
+        {
+            "id": "f38bbe934618911796832fc25662621cd71541167c5a85a9053ce96647d5a911",
+            "title": "Your first look at the Galaxy S27 Ultra and Pro batteries is here, sort of",
+            "description": "The rumored Pro and Ultra have left another paper trail ahead of launch.",
+            "url": "https://www.androidauthority.com/galaxy-s27-ultra-pro-battery-certification-photos-3726857/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-10-22T18:50:49+00:00",
+            "collected_at": "2026-10-22T21:03:04.901021+00:00"
+        },
+        {
+            "id": "3434718c4f90dce35b7405b7138a273923ee0fd6d7c696302f3c23d65c498785",
+            "title": "Samsung Galaxy T1 earbuds look like they could be arriving soon",
+            "description": "More new Samsung buds are coming.",
+            "url": "https://www.androidauthority.com/samsung-galaxy-t1-korea-certification-3726881/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-10-22T18:50:06+00:00",
+            "collected_at": "2026-10-22T21:03:04.901096+00:00"
+        },
+        {
+            "id": "bc8366731ce03671c1f701c06916f832394eb984fb4926f8cf122c87a0e15226",
+            "title": "Samsung all but confirms iPhone Duo is goosing Galaxy Z8 sales",
+            "description": "Searches for Samsung foldables just happened to skyrocket following iPhone Duo unveiling.",
+            "url": "https://arstechnica.com/gadgets/2026/10/samsung-all-but-confirms-iphone-duo-is-goosing-galaxy-z8-sales/",
+            "source": "Ars Technica",
+            "category": "technologie",
+            "tags": [
+                "informatique",
+                "innovation",
+                "ios",
+                "technologie"
+            ],
+            "published_at": "2026-10-22T18:49:14+00:00",
+            "collected_at": "2026-10-22T21:02:54.627991+00:00"
+        },
+        {
+            "id": "285861fa05fad723e31f9f3e8cc5c08ddd56d2a55fa2101dc2f998e2ca86ac63",
+            "title": "The Foundations of Scalable AI",
+            "description": "A scalable AI system requires a strong foundation. Data, engineering, platforms, operating models, and governance must converge to work as one. This session from MIT Technology Review’s EmTech Future conference explores what it takes to build that foundation in a highly regulated environment and how a responsible, trustworthy implementation can turn emerging capabilities, including agentic…",
+            "url": "https://www.technologyreview.com/2026/10/22/1146103/the-foundations-of-scalable-ai/",
+            "source": "MIT Technology Review",
+            "category": "recherche_innovation",
+            "tags": [
+                "innovation",
+                "recherche",
+                "rust",
+                "science"
+            ],
+            "published_at": "2026-10-22T18:48:04+00:00",
+            "collected_at": "2026-10-22T21:03:13.468926+00:00"
+        },
+        {
+            "id": "4d0a18eaa787a25f3aea6c2154e9ba08ca8c9beb8793aa46911e134570ac7b7a",
+            "title": "Hedra is a 3D open world game I wrote from scratch while in highschool",
+            "description": "Comments",
+            "url": "https://github.com/maxilevi/project-hedra/tree/pre-ai",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-22T18:44:36+00:00",
+            "collected_at": "2026-10-22T21:02:56.415095+00:00"
+        },
+        {
+            "id": "5595c812cd34051e71017df9d849376dc5423fd4ef5068c051d7220c351d2e34",
+            "title": "Microsoft’s Mustafa Suleyman says its AI outperforms doctors on hard cases as he chases ‘medical superintelligence’",
+            "description": "Microsoft’s new AI diagnostic system beat generalist doctors on hard cases, according to a study in Science. But most of the improvement seems to come from the AI models underneath, not from Microsoft’s system itself.",
+            "url": "https://techcrunch.com/2026/10/22/microsofts-mustafa-suleyman-says-its-ai-outperforms-doctors-on-hard-cases-as-he-chases-medical-superintelligence/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "intel",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-10-22T18:43:53+00:00",
+            "collected_at": "2026-10-22T21:02:54.745948+00:00"
+        },
+        {
+            "id": "449bfdd29ecd926fc641f34fc0b30ace24f71e8b8a7b2c71b3f0f00891952442",
+            "title": "Former OpenAI science lead launches Warp Science to automate wet labs with robots",
+            "description": "Wearing cameras and sensor gloves, the startup’s human chemists will train robots to perform various lab tasks.",
+            "url": "https://techcrunch.com/2026/10/22/former-openai-science-lead-launches-warp-science-to-automate-wet-labs-with-robots/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "openai",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-10-22T18:38:47+00:00",
+            "collected_at": "2026-10-22T21:02:54.746019+00:00"
+        },
+        {
+            "id": "05516fa6d2dd52107a07f998963311b8f9d666f9eeb2618cae628c4a43cef1a2",
+            "title": "Show HN: UI micro interactions prompts for AI",
+            "description": "Comments",
+            "url": "https://www.typeui.sh/micro-interactions",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-22T18:32:57+00:00",
+            "collected_at": "2026-10-22T21:02:56.414974+00:00"
+        },
+        {
+            "id": "2152135b654782a45b7282206782914e99e46006442477eb15251c74dd8486f3",
+            "title": "A16z is the latest VC giant to widen bets beyond crypto and into AI and emerging tech",
+            "description": "",
+            "url": "https://www.coindesk.com/business/2026/10/22/a16z-is-the-latest-vc-giant-to-widen-bets-beyond-crypto-and-into-ai-and-emerging-tech",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-10-22T18:30:57+00:00",
+            "collected_at": "2026-10-22T21:03:14.277177+00:00"
+        },
+        {
+            "id": "243b751a9574a173511e6206edd28f13b518988102c57e9860061804e2f1f9f5",
+            "title": "US official: Russia's stalker satellite sure looks like an orbital weapon",
+            "description": "The Russian official who called commercial satellites \"legitimate targets\" now says concerns are \"unfounded.\"",
+            "url": "https://arstechnica.com/space/2026/10/russia-claims-its-stalker-satellite-is-purely-peaceful-in-character/",
+            "source": "Ars Technica",
+            "category": "technologie",
+            "tags": [
+                "git",
+                "informatique",
+                "innovation",
+                "technologie"
+            ],
+            "published_at": "2026-10-22T18:29:39+00:00",
+            "collected_at": "2026-10-22T21:02:54.628073+00:00"
+        },
+        {
+            "id": "619bf4eda568afa29532a26b5fb2428a758ed296568011dc80c1061e3c7c9962",
+            "title": "Award-Winning AI Literature",
+            "description": "Comments",
+            "url": "https://jamesyu.org/award-winning-ai-literature/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-22T18:28:26+00:00",
+            "collected_at": "2026-10-22T21:02:56.416092+00:00"
+        },
+        {
+            "id": "39f0af155c70bc46b74f91c0f6775ac02659d50ce7d6c59f7ab11abc992f13ba",
+            "title": "AI and the Enclosure of the Scientific Commons",
+            "description": "Comments",
+            "url": "https://arxiv.org/abs/2610.27251",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-22T18:28:16+00:00",
+            "collected_at": "2026-10-22T21:02:56.415225+00:00"
+        },
+        {
+            "id": "2d1e101fb0f5173d75941aa81f00409744dfa28291abb3e8f3dbe96d685b5c11",
+            "title": "Fireblocks Denies Visa Deal Rumors After $2.5B Buyout Report",
+            "description": "Visa reportedly entered late-stage discussions to acquire Fireblocks for approximately $2.5 billion, but the crypto infrastructure company quickly denied the claim. The rumored purchase price represents a nearly 69% discount from Fireblocks’ $8 billion valuation in 2022. The conflicting accounts arrive as major payment networks race to control the technology powering stablecoin transfers, custody, and […]",
+            "url": "https://news.bitcoin.com/finance/fireblocks-denies-visa-deal-rumors-after-2-5b-buyout-report/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-10-22T18:20:24+00:00",
+            "collected_at": "2026-10-22T21:03:14.517368+00:00"
+        },
+        {
+            "id": "0a2dc6ee47efc08262193d24d0b98e97553ba29590450890a6ba8de5322bb8ae",
+            "title": "Google sounds like it’s had enough of the US renaming bodies of water",
+            "description": "After the Gulf of America and Lake America, Google resists rebranding the Atlantic.",
+            "url": "https://www.androidauthority.com/google-maps-atlantic-ocean-3726874/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-10-22T18:17:36+00:00",
+            "collected_at": "2026-10-22T21:03:04.901164+00:00"
+        },
+        {
+            "id": "23aef87bc264519996321572c99ac302cd51e812feb3c1551c54099dde7425cb",
+            "title": "eMudhra to Exit Global SSL/TLS Business After 8 Intermediate CA Keys Found Easily Guessable",
+            "description": "eMudhra, an Indian certificate authority (CA), will withdraw from its global SSL/TLS certificate business, its board decided on Thursday. The decision came five days after a researcher reported recovering the private keys of eight of its intermediate CA certificates. eMudhra said it will replace affected customers' certificates with free ones from partners, though its",
+            "url": "https://thehackernews.com/2026/10/emudhra-to-exit-global-ssltls-business.html",
+            "source": "The Hacker News",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "hacking",
+                "vulnerabilites"
+            ],
+            "published_at": "2026-10-22T18:12:43+00:00",
+            "collected_at": "2026-10-22T21:02:52.979342+00:00"
+        },
+        {
+            "id": "cb508f9355dec287fc5a7fb310b59d11fd856755b548a4147f90e6152260ae79",
+            "title": "AI analysis of CT scans finds 42.9% of patients have coronary inflammation",
+            "description": "Comments",
+            "url": "https://www.biograph.com/newsroom/biograph-completes-first-u.s.-study-with-caristo-diagnostics%E2%80%99-ai-powered-coronary-inflammation-detection-finding-risk-in-over-42-of-asymptomatic-patients",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-22T18:02:54+00:00",
+            "collected_at": "2026-10-22T21:02:56.415640+00:00"
+        },
+        {
+            "id": "0144c916c25fe84eab3c1d0edfa42e1a48252614f7f7b54945723666081a6beb",
+            "title": "Show HN: agent-usage-guard – a Claude Code mod to protect your usage window",
+            "description": "Comments",
+            "url": "https://github.com/rbartoli/agent-usage-guard",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "anthropic",
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-22T18:02:38+00:00",
+            "collected_at": "2026-10-22T21:02:56.415875+00:00"
+        },
+        {
+            "id": "170b2f9537d7ae0947db17ceecf0ff630f1cf01d4b9b9a491aeffe80b8287f48",
+            "title": "What is you opinion on submission quality since the `vibecoding` tag was removed?",
+            "description": "Were concerns about its removal real, or has its absence moderated content to be higher quality? Were there any unexpected consequences? Is anyone willing to admit that their hope for its removal, or fear of its removal was misplaced? Is lobsters better or worse without it?",
+            "url": "https://lobste.rs/s/nmurnh/what_is_you_opinion_on_submission_quality",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-10-22T17:56:51+00:00",
+            "collected_at": "2026-10-22T21:02:56.604536+00:00"
+        },
+        {
+            "id": "9ee9a570421688c3d77910c22364e88e70596a2bf5cf9b89ece4300422777368",
+            "title": "NBA 2K27 drops below $50 on Amazon, saving you $20",
+            "description": "The new NBA 2K27 just got a 29% discount on Amazon, cutting the price on Switch 2, PS5, and Xbox Series X.",
+            "url": "https://www.androidauthority.com/nba-2k27-deal-3726920/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-10-22T17:55:55+00:00",
+            "collected_at": "2026-10-22T21:03:04.901221+00:00"
+        },
+        {
+            "id": "f9e348ffa6891810eea3420b114a87686710603920872448ebbfc1d8ae990f26",
+            "title": "Some T-Mobile customers may finally get something back for those unexpected price hikes (Updated)",
+            "description": "For now, only affected customers in New York qualify.",
+            "url": "https://www.androidauthority.com/t-mobile-2024-price-hikes-refunds-settlement-3726790/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-10-22T17:52:29+00:00",
+            "collected_at": "2026-10-22T21:03:04.901274+00:00"
+        },
+        {
+            "id": "d99ba89c8964f8cde6f533ec1b99a8d8c9747d92184cb870c77945106ab5b4b2",
+            "title": "ThreatsDay: AI Secrets Leak, PingCAP Source Theft, Signal Hang-Up Flaw, Laravel Auth Bypass + 21 More",
+            "description": "This week has already been rough for cybersecurity. Critical PHP and GitLab RCE flaws, serious Linux security bugs, compromised eMudhra certificates, a Node.js RCE flaw, a hacked LiteLLM release, and hundreds of hijacked Tor relays. That's a lot to deal with in just a few days. And the week isn't even over yet. But those big headlines are only half the story. Stolen passwords, exposed",
+            "url": "https://thehackernews.com/2026/10/threatsday-ai-secrets-leak-pingcap.html",
+            "source": "The Hacker News",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "aws",
+                "cybersecurite",
+                "git",
+                "hacking",
+                "javascript",
+                "linux",
+                "llm",
+                "php",
+                "vulnerabilites"
+            ],
+            "published_at": "2026-10-22T17:45:44+00:00",
+            "collected_at": "2026-10-22T21:02:52.979428+00:00"
+        },
+        {
+            "id": "b762bc04f697cb918601992132bffff456e6b85bb3b6a41a9ac3e84c16fc4b3e",
+            "title": "Surprise! 'Shadow Of The Tomb Raider: Definitive Edition' Has Shadow Dropped On Switch 2",
+            "description": "Trilogy bundle also gets a surprise launch. After the previous two games in the 'Survivor' trilogy arrived on Switch 2 with no fanfare, we shouldn't be surprised by today's news. But alas, here we are! Shadow of the Tomb Raider: Definitive Edition has shadow dropped on Switch 2. 'Shadow' caps off the Tomb Raider trilogy in style, with Aspyr once again bringing it our way, bundled with the original release's seven DLC Challenge Tombs for $39.99. And for those who want to get in as quickly as possible, the dev is knocking 10% off full price on the eShop until 4th November. Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/news/2026/10/surprise-shadow-of-the-tomb-raider-definitive-edition-has-shadow-dropped-on-switch-2",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-10-22T17:45:00+00:00",
+            "collected_at": "2026-10-22T21:03:12.621310+00:00"
+        },
+        {
+            "id": "6eb73169f84ce43f98c75fcf0a5b59a0b6373d3829a3919151941cd320d6c61f",
+            "title": "OpenShell – A safe, private runtime for fleets of autonomous AI agents",
+            "description": "Comments",
+            "url": "https://github.com/NVIDIA/OpenShell",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-22T17:44:06+00:00",
+            "collected_at": "2026-10-22T21:02:56.414825+00:00"
+        },
+        {
+            "id": "f34c85a9bc450c250dc1252adf0c3bf9664e758a187d63823da663b72da24afc",
+            "title": "Bitcoin Price Plunges Below $81K Despite $1 Billion in ETF Inflows",
+            "description": "Bitcoin dropped below $82,000 to an intraday low of $80,836 during a late Wednesday sell-off, capping a nearly 4% daily loss and halting a recent two-week high rally. Long Positions Wiped Out Across Broader Crypto Market Bitcoin tumbled below $82,000 Wednesday, just hours after touching two-week highs during a market-wide rally. The retreat sparked debate […]",
+            "url": "https://news.bitcoin.com/market-updates/bitcoin-price-plunges-below-81k-despite-1-billion-etf-inflows/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-10-22T17:43:46+00:00",
+            "collected_at": "2026-10-22T21:03:14.517470+00:00"
+        },
+        {
+            "id": "5b722bd8f8800d222b41b54eac050abdbb126538c4c213e8e25ee688d594a503",
+            "title": "Elon Musk made a $1 billion investment in Skydance, report says",
+            "description": "The investment will provide a much needed financial boost as the company seeks to cut costs and lift its stock price.",
+            "url": "https://techcrunch.com/2026/10/22/elon-musk-made-a-1-billion-investment-in-skydance-report-says/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-10-22T17:36:38+00:00",
+            "collected_at": "2026-10-22T21:02:54.746156+00:00"
+        },
+        {
+            "id": "e5ee44e22867c0cc21586f2bee327dde466fcfbac0f943e922daabf88c10f0be",
+            "title": "Max-severity GitLab bug allows remote code execution over 12 years of releases",
+            "description": "Vendor 'strongly recommends' upgrading to a fixed version 'as soon as possible'",
+            "url": "https://www.theregister.com/security/2026/10/22/max-severity-gitlab-bug-allows-remote-code-execution-over-12-years-of-releases/5304854",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "git",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-10-22T17:36:30+00:00",
+            "collected_at": "2026-10-22T21:02:55.412411+00:00"
+        },
+        {
+            "id": "ec14b6ec9a9998eeaefcce1be245a533314641ddf34e2ab88917b6cc711859cb",
+            "title": "Objects, attributes, maps, oh my",
+            "description": "Comments",
+            "url": "https://bernsteinbear.com/blog/object-shapes/",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-10-22T17:35:52+00:00",
+            "collected_at": "2026-10-22T21:02:56.603779+00:00"
+        },
+        {
+            "id": "5e220181b4a789c5690928d6c1ed1bd5ab404de45dbb4d27f67028edce390048",
+            "title": "Shokz OpenRun Pro headphones get a $70 Amazon discount",
+            "description": "SHOKZ OpenRun Pro drops to $109.95 on Amazon, giving runners open-ear bone-conduction audio for less.",
+            "url": "https://www.androidauthority.com/shokz-openrun-pro-deal-amazon-3726905/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-10-22T17:34:02+00:00",
+            "collected_at": "2026-10-22T21:03:04.901328+00:00"
+        },
+        {
+            "id": "4b4a00d962dd24dd4b9be39017beb3caa3b5b6d9c70cbd49e7fea1e2c8fc5a0f",
+            "title": "AWS CloudFormation now simplifies stack update rollback operations",
+            "description": "AWS CloudFormation now makes it simpler to complete an update rollback and get back to deploying. An update rollback returns your stack to a known good state. Starting today, if some resources cannot roll back automatically, force rollback enables you to complete the rollback it in a single operation. It works across every CloudFormation workflow, from the AWS CLI , and SDKs to AWS CDK and AI agents. With force rollback, CloudFormation completes the update rollback and returns your stack to a deployable state in a single operation, instead of requiring you to identify, list, and retry the operation for each affected resource. Any resource that still needs attention, such as one affected a change outside CloudFormation, is recorded for you to review and resolve it before your next deployment. To get started, run continue update rollback with the force rollback option, then create a drift-aware change set to review any configuration differences before your next deployment. To learn more, see Continue rolling back an update in the AWS CloudFormation User Guide. Force rollback is available in all Regions at no additional cost. Refer to the AWS Region table for service availability details.",
+            "url": "https://aws.amazon.com/about-aws/whats-new/2026/10/aws-cloudformation-cdk/",
+            "source": "AWS What's New",
+            "category": "cloud",
+            "tags": [
+                "amazon",
+                "aws",
+                "cloud"
+            ],
+            "published_at": "2026-10-22T17:30:00+00:00",
+            "collected_at": "2026-10-22T21:03:00.566597+00:00"
+        },
+        {
+            "id": "2f91b6a570c5f179b39ff6c95aa3707d9cb562b1741ca4e81292e8bdb69e77ff",
+            "title": "Security Update on PHP2Shell: Impact for Docker Customers",
+            "description": "On Tuesday, October 20, 2026, Docker began tracking two critical vulnerabilities in PHP, CVE-2026-109618 and CVE-2026-109619, commonly known as PHP2Shell.",
+            "url": "https://www.docker.com/blog/security-update-on-php2shell-impact-for-docker-customers/",
+            "source": "Docker",
+            "category": "cybersecurite",
+            "tags": [
+                "containers",
+                "cve",
+                "devops",
+                "docker",
+                "php"
+            ],
+            "published_at": "2026-10-22T17:22:47+00:00",
+            "collected_at": "2026-10-22T21:03:07.114050+00:00"
+        },
+        {
+            "id": "c10dae251e66227047ef337fa0991940a380f36f7fd843af6b0ced15ecadc1dc",
+            "title": "How bug bounty sharpens one researcher’s security skills",
+            "description": "As Cybersecurity Awareness Month continues, the GitHub Bug Bounty team spotlights @r31n, diving into their research approach, favorite bug classes, and advice for aspiring hackers. The post How bug bounty sharpens one researcher’s security skills appeared first on The GitHub Blog .",
+            "url": "https://github.blog/security/how-bug-bounty-sharpens-one-researchers-security-skills/",
+            "source": "GitHub Blog",
+            "category": "developpement",
+            "tags": [
+                "git",
+                "github",
+                "open-source"
+            ],
+            "published_at": "2026-10-22T17:21:30+00:00",
+            "collected_at": "2026-10-22T21:02:55.644361+00:00"
+        },
+        {
+            "id": "edc5aa170203007490aa6560a43a141278ad8379bd5e2f45e2bc73cbd3e1b47e",
+            "title": "Google Sheets is finally catching up to Excel with support for more chart types",
+            "description": "Box and whisker charts are finally here in Google Sheets.",
+            "url": "https://www.androidauthority.com/google-sheets-adds-box-plot-support-3726846/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-10-22T17:20:18+00:00",
+            "collected_at": "2026-10-22T21:03:04.901379+00:00"
+        },
+        {
+            "id": "1ed4b6e940bacb9a350a44c1f96ee5ca24390efdfb4c40104c923761306994da",
+            "title": "Arista patches new VeloCloud Orchestrator zero-day exploited in attacks",
+            "description": "Arista Networks released security updates to patch an actively exploited zero-day vulnerability affecting VeloCloud Orchestrator (VCO) On-Prem deployments. [...]",
+            "url": "https://www.bleepingcomputer.com/news/security/arista-patches-new-velocloud-orchestrator-zero-day-exploited-in-attacks/",
+            "source": "BleepingComputer",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "malware",
+                "ransomware",
+                "zero_day"
+            ],
+            "published_at": "2026-10-22T17:18:22+00:00",
+            "collected_at": "2026-10-22T21:02:52.750664+00:00"
+        },
+        {
+            "id": "dc9532180f1fffa7676e0a691641e1c4b208ed1be1e1de817dcfc4643f12a1d4",
+            "title": "KeePassXC 2.8 brings Qt 6 UI, auto-type on Wayland",
+            "description": "If KeePassXC is your password-management app of choice on Linux, the new 2.8.0 update is going to please. KeePassXC 2.8.0 sees some “long-awaited new features” arrive, including a Qt6 port of the main app interface, auto-type support on Wayland via XDG Desktop Portals, fingerprint unlock and a new experimental Aarch64 AppImage. The Qt6 port has been a long-gestating effort. There’s no dramatic change to the way that KeePassXC looks and behaves (maybe a bit sharper on HiDPI), but it also benefits from being able to access improvements in platform capabilities, security and so on. Auto-type is what allows your saved login […] You're reading KeePassXC 2.8 brings Qt 6 UI, auto-type on Wayland , a blog post from OMG! Ubuntu . Do not reproduce elsewhere without permission.",
+            "url": "https://www.omgubuntu.co.uk/2026/10/keepassxc-2-8-auto-type-wayland",
+            "source": "OMG! Ubuntu",
+            "category": "linux",
+            "tags": [
+                "desktop",
+                "linux",
+                "ubuntu"
+            ],
+            "published_at": "2026-10-22T17:17:39+00:00",
+            "collected_at": "2026-10-22T21:03:01.842669+00:00"
+        },
+        {
+            "id": "ab18ca8bf39529cc40f72f25a7032895152acebe8b65e493995d092aa66dfa2b",
+            "title": "Amazon cuts $900 off the 2026 MacBook Pro with M5 Max chip",
+            "description": "Apple’s 16.2-inch MacBook Pro with M5 Max drops to a record low $3,499 on Amazon, with 36GB RAM and a 2TB SSD.",
+            "url": "https://www.androidauthority.com/2026-macbook-pro-m5-max-deal-3726891/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-10-22T17:17:19+00:00",
+            "collected_at": "2026-10-22T21:03:04.901443+00:00"
+        },
+        {
+            "id": "641253ab344017248d1aac1730273401b318481381196cd0651b4bc5784b5edc",
+            "title": "Meta shocked by $25B fine after N.M. refused to join multistate settlement",
+            "description": "Meta will appeal a ruling imposing the largest fine Mark Zuckerberg has ever seen.",
+            "url": "https://arstechnica.com/tech-policy/2026/10/meta-whines-new-mexico-is-impossible-to-please-after-historic-25-billion-fine/",
+            "source": "Ars Technica",
+            "category": "technologie",
+            "tags": [
+                "informatique",
+                "innovation",
+                "technologie"
+            ],
+            "published_at": "2026-10-22T17:04:31+00:00",
+            "collected_at": "2026-10-22T21:02:54.628133+00:00"
+        },
+        {
+            "id": "7c53f743c08237d2727ca65e473b4707a4d9bd06671d8e75282cc77ec6ec93c4",
+            "title": "Two CVSS 9.0 Linux KSMBD RCE Flaws Disclosed on Public Mailing Lists Before Kernel Fixes",
+            "description": "Linux servers running KSMBD, the kernel's built-in SMB server, are exposed to two publicly reported remote code execution flaws rated 9.0 by Trend Micro's Zero Day Initiative, with no fix yet in the mainline kernel. One of them, ZDI-CAN-33774, can be triggered before any network authentication. The other, ZDI-CAN-33549, requires the SMB Direct transport and an RDMA-capable network",
+            "url": "https://thehackernews.com/2026/10/two-cvss-90-linux-ksmbd-rce-flaws.html",
+            "source": "The Hacker News",
+            "category": "cloud",
+            "tags": [
+                "aws",
+                "cybersecurite",
+                "hacking",
+                "linux",
+                "vulnerabilites",
+                "zero_day"
+            ],
+            "published_at": "2026-10-22T17:01:53+00:00",
+            "collected_at": "2026-10-22T21:02:52.979517+00:00"
+        },
+        {
+            "id": "62c96f1a5ae2d3c6226c63ac21e0ff15c1f0bcda01ccdecc6e721fb4ca6fbc65",
+            "title": "Albuquerque Bitcoin, Crypto ATM Ban Takes Effect With $500 Daily Fines",
+            "description": "Albuquerque’s ban on crypto ATMs and cashier-facilitated cryptocurrency transactions has taken effect, exposing noncompliant businesses to financial penalties and possible closure. Officials are targeting cash conversion services used in scams that can leave victims unable to recover their money. Crypto ATM Shutdown Begins Across Albuquerque Businesses operating or hosting cryptocurrency ATMs in Albuquerque, New Mexico, […]",
+            "url": "https://news.bitcoin.com/regulation-and-legal/albuquerque-bitcoin-crypto-atm-ban-takes-effect-500-daily-fines/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-10-22T17:00:22+00:00",
+            "collected_at": "2026-10-22T21:03:14.517582+00:00"
+        },
+        {
+            "id": "2cd114f16679bc27fd3baca5c9d7e6286c2b0d376e236bcaf8c86989261cb021",
+            "title": "Review: Steins;Gate Re:Boot (Switch 2) - The Timeless Visual Novel Gets A Fresh Lick Of Paint",
+            "description": "El Psy Kongroo. Want to know why life in a world without time travel is such a bummer? No matter when you decide to take the plunge or how many other games you play, you can only ever experience Steins;Gate for the first time once. Even more than 15 years on from its debut, it is no exaggeration to call 5pb and Nitroplus’ quirky little character drama on the intricacies of time travel a touchstone of visual novels as a medium, and the bar by which many of its ilk continue to be measured. It is conceptually fascinating, hilarious, tragic, existentially horrifying, heartwarming, thrilling, and everything in between. It is a story where an anime catgirl at a maid café ponders whether it’s God or us who observe the flow of time, and it has my endless gratitude for that. Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/reviews/nintendo-switch-2/steinsgate-reboot",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-10-22T17:00:00+00:00",
+            "collected_at": "2026-10-22T21:03:12.621497+00:00"
+        },
+        {
+            "id": "e711e4ad2d55a92aaa6245eb46b3cd397259975cef21727dd8f8932aad8709ce",
+            "title": "Disgraced Indian cert issuer leaves the cert issuing business",
+            "description": "We didn't want to issue SSL/TLS certs anyway, Indian firm suggests after one private key turns out to be the number 4",
+            "url": "https://www.theregister.com/security/2026/10/22/disgraced-indian-cert-issuer-leaves-the-cert-issuing-business/5304848",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-10-22T16:58:25+00:00",
+            "collected_at": "2026-10-22T21:02:55.412482+00:00"
+        },
+        {
+            "id": "813b641e0d8b2015f483e2b5c9e67f10036c8ed8fad869cd2412c709a5db5de9",
+            "title": "Deal drops the Samsung Galaxy Tab S10 FE to its lowest price in months",
+            "description": "Samsung Galaxy Tab S10 FE drops to $419.99 on Amazon with S Pen included, plus a 10.9-inch display and all-day battery life.",
+            "url": "https://www.androidauthority.com/galaxy-tab-s10-fe-deal-3726877/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-10-22T16:48:15+00:00",
+            "collected_at": "2026-10-22T21:03:04.901501+00:00"
+        },
+        {
+            "id": "6af0fd42e696c932c3bba7c8ff2c05a34dc9512cb10a038fff39314f21d9eed2",
+            "title": "Chinese hackers spied on thousands of companies after breaching IT giant ConnectWise",
+            "description": "Microsoft points the blame for ConnectWise's breach at a China-aligned hacker, which relied on AI agents to rapidly hack into thousands of its customers.",
+            "url": "https://techcrunch.com/2026/10/22/chinese-hackers-spied-on-thousands-of-companies-after-breaching-it-giant-connectwise/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-10-22T16:47:17+00:00",
+            "collected_at": "2026-10-22T21:02:54.746229+00:00"
+        },
+        {
+            "id": "df3ea814a9c8af1376f59fe898bdc410748695824ab648e22ae358d9dea616f5",
+            "title": "iPhone Duo isn’t even out yet and it already has better foldable apps than your Android",
+            "description": "However, apps like Spotify and YouTube don’t feature in Apple’s list.",
+            "url": "https://www.androidauthority.com/apple-iphone-duo-launch-day-app-support-3726770/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "ios",
+                "smartphone"
+            ],
+            "published_at": "2026-10-22T16:43:26+00:00",
+            "collected_at": "2026-10-22T21:03:04.901565+00:00"
+        },
+        {
+            "id": "115c1b7c286c40c3d2b123a26ca5e417fdd2981c5a7854ea66a4a45d041473b9",
+            "title": "US-backed vaccine trial on babies canceled after international outcry",
+            "description": "The decried trial was canceled last week before police seized vaccine doses.",
+            "url": "https://arstechnica.com/health/2026/10/unethical-vaccine-trial-on-babies-backed-by-rfk-jr-is-formally-canceled/",
+            "source": "Ars Technica",
+            "category": "technologie",
+            "tags": [
+                "informatique",
+                "innovation",
+                "technologie"
+            ],
+            "published_at": "2026-10-22T16:37:00+00:00",
+            "collected_at": "2026-10-22T21:02:54.628189+00:00"
+        },
+        {
+            "id": "edce12a563674ba4899527ff9ad628291ddc75a27876f417db4d4fe48429db9d",
+            "title": "Put down your pitchforks — Google’s not hiding YouTube’s dislike button",
+            "description": "At least, not where it matters.",
+            "url": "https://www.androidauthority.com/youtube-dislike-button-uploads-3726742/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-10-22T16:30:33+00:00",
+            "collected_at": "2026-10-22T21:03:04.901621+00:00"
+        },
+        {
+            "id": "0e4f8e21236a97be62e9703522e40ad89f3b1c9068773a26fe3e8369074a380f",
+            "title": "Android handhelds are running PS5 games now",
+            "description": "Not big 3D PS5 games, but PS5 games nonetheless.",
+            "url": "https://www.androidauthority.com/android-ps5-emulator-3726803/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-10-22T16:30:30+00:00",
+            "collected_at": "2026-10-22T21:03:04.901669+00:00"
+        },
+        {
+            "id": "1d151c3d24c4476676f9accf900dcedbbc015e9690513cddb5a1df082b2ce9f9",
+            "title": "Expose only share links of a private service with caddy",
+            "description": "Comments",
+            "url": "https://dataswamp.org/~solene/2026-10-21-caddy-forward-auth-public-share-links.html",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-10-22T16:30:14+00:00",
+            "collected_at": "2026-10-22T21:02:56.603736+00:00"
+        },
+        {
+            "id": "8b3c57c8c891d8d71977d1907a53ebe6d46a81986c2a7c5364aed6719bf07d95",
+            "title": "Amazon SageMaker AI announces training session APIs for serverless model customization",
+            "description": "Amazon SageMaker AI serverless model customization now supports training session APIs, giving customers full control over their post-training algorithm without provisioning or managing GPU infrastructure. Managed techniques, including SFT, DPO, and other reinforcement learning methods, let customers pick a technique and a model and have SageMaker AI run the training. With training session APIs, teams get to write the training loop, whether that's reproducing SFT or DPO on their own terms or implementing a custom loss, a new RL reward signal, a data curriculum, or an algorithm straight from the latest research. Operations such as forward_backward(), optim_step(), and sample() become API calls against a live, stateful session, so customers compose whatever training procedure their technique requires while SageMaker AI handles GPU allocation, model and LoRA loading, distributed execution, fault recovery, checkpoint storage, and security. Customers can call these operations directly from their own Python code to drive reinforcement learning, supervised fine-tuning, or custom training objectives against a live session, with checkpointing and resume built in. Billing is per token processed, so local computation like reward scoring isn't billed as GPU time. SageMaker AI is also releasing the SageMaker training sessions cookbook , a set of ready-to-run SFT and RL recipes customers can use as blueprints for their own training loops. Training session APIs are generally available today in US East (N. Virginia), US West (Oregon), and Asia Pacific (Mumbai). To get started, install the SageMaker Python SDK and clone the cookbook, or launch a notebook in SageMaker Studio and connect a coding agent. To learn more, visit the documentation and the Amazon SageMaker AI webpage.",
+            "url": "https://aws.amazon.com/about-aws/whats-new/2026/10/training-session-apis-on-sagemaker-ai",
+            "source": "AWS What's New",
+            "category": "hardware",
+            "tags": [
+                "amazon",
+                "aws",
+                "cloud",
+                "python"
+            ],
+            "published_at": "2026-10-22T16:30:00+00:00",
+            "collected_at": "2026-10-22T21:03:00.566842+00:00"
+        },
+        {
+            "id": "0b851f7076b1209295591bbd297506d5f6b4b1b005e18d9a2e59f20d08dfe0ee",
+            "title": "A farewell to Arc browser",
+            "description": "Comments",
+            "url": "https://arc.net/",
+            "source": "Hacker News",
+            "category": "web",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-22T16:27:47+00:00",
+            "collected_at": "2026-10-22T21:02:56.415397+00:00"
+        },
+        {
+            "id": "2e012e75ec4cdc817142505a21c58aec70cfbba5aacdac25f978bacaa372e375",
+            "title": "Score $91 off the TP-Link Deco 7 BE5000 whole-home Wi-Fi 7 system",
+            "description": "Save 30% on the TP-Link Deco 7 BE5000 3-pack and get Wi-Fi 7 mesh coverage for up to 6,600 sq. ft. on Amazon.",
+            "url": "https://www.androidauthority.com/tp-link-deco-7-be5000-wi-fi-7-system-deal-3726847/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone",
+                "wifi"
+            ],
+            "published_at": "2026-10-22T16:21:31+00:00",
+            "collected_at": "2026-10-22T21:03:04.901724+00:00"
+        },
         {
             "id": "b6d6657fad5ecf52e289a729b30dfbadb6f6fc04abec3c61bd0aba7f53e9daf8",
             "title": "GPUs from Nvidia RTX 5090 stolen $470,000 shipment from Brazil airport appear for sale online, identified by serial numbers",
@@ -18,6 +1425,21 @@
             ],
             "published_at": "2026-10-22T16:18:47+00:00",
             "collected_at": "2026-10-22T16:23:21.403017+00:00"
+        },
+        {
+            "id": "ed1afb148984e9a496e23137809ba1a6148e03c79a6e57006b34d5b16696429b",
+            "title": "Mini brain organoids ‘reading’ Braille key step towards biohybrid computing",
+            "description": "Comments",
+            "url": "https://www.frontiersin.org/news/2026/10/16/mini-brain-organoids-reading-braille-biohybrid-computing-frontiers-artificial-intelligence",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-22T16:16:45+00:00",
+            "collected_at": "2026-10-22T21:02:56.415546+00:00"
         },
         {
             "id": "d62dffffc191d284b2abe425c43fa6415496b1be191bd5382f07adfc2a1ba254",
@@ -100,6 +1522,21 @@
             "collected_at": "2026-10-22T16:23:19.219435+00:00"
         },
         {
+            "id": "fee3d05e48142d8e73fba5970407ec8dd10b8ab4569a2b055bf06b89f3b5e303",
+            "title": "Getting ready to operate GNU Taler in Germany",
+            "description": "Comments",
+            "url": "https://www.taler.net/en/news/2026-13.html",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-22T16:14:31+00:00",
+            "collected_at": "2026-10-22T21:02:56.414877+00:00"
+        },
+        {
             "id": "100f702080884963229f28267569639fc2daf957a5fb13da3354bc1913a54937",
             "title": "Keeping Vector Retrieval Stable While Your Knowledge Base Is Still Loading",
             "description": "Keeping Vector Retrieval Stable While Your Knowledge Base Is Still Loading At 3:17 AM, your agent platform stops responding. Ingestion workers are retrying document chunks. Retrieval latency has spiked from 80ms to 4 seconds. The HNSW index is fine. The problem is that ingestion and retrieval are fighting over the same PostgreSQL pages, and neither path has backpressure logic. This is the production failure that tutorials skip. I am evaluating Tencent/WeKnora as an external integrator, using its stated document-to-RAG, agent, and self-maintaining Wiki scope. The design below is a proposed PostgreSQL retrieval boundary, not a claim about WeKnora's current implementation or measured performance. Keep ingestion outside the answering path Separate document parsing, chunking, and embedding into asynchronous workers. Those workers write versioned chunks into PostgreSQL. Retrieval reads only published document versions; generation receives retrieved text and provenance, never responsibility for repairing ingestion. For agent memory, use the same boundary: proposed memories enter ingestion rather than becoming searchable immediately. Otherwise, an agent can retrieve its own unvalidated output and reinforce it. My proposed generation benchmark topology places an optional relay at https://b-lost.com/v1 , B-Lost's gateway endpoint. It remains outside embedding generation and database timing. Availability, authentication, and model compatibility must be verified before running that baseline; no relay measurements are claimed here. That separation matters: changing an embedding model requires a new embedding space and reindexing, whereas changing a generation endpoint should not. The failure that tutorials miss Consider a production incident reconstruction, not a reported WeKnora outage: concurrent ingestion workers begin inserting into an already large HNSW index. Insert latency rises, workers retry, and retrieval tail latency follows. HNSW updates can contend on internal index-page locks, but \"the index is locked\" is not a sufficient diagnosis. Correlate PostgreSQL wait events ( pg_stat_activity.wait_event_type , wait_event ) with ingestion concurrency, WAL volume, buffer pressure ( shared_buffers exhaustion), and query plans. Storage saturation (IOPS ceiling, write queue depth) and unrelated transaction locks can produce similar symptoms. Check pg_stat_statements for insert durations and pg_locks for blocking queries. The immediate response is bounded ingestion concurrency (semaphore or worker pool size), bounded batches (500-1000 rows per transaction, not 50,000), and exponential retry backoff with jitter, not more workers. For an initial bulk import, loading before building HNSW often reduces write amplification. An existing serving table needs a separately scheduled CREATE INDEX CONCURRENTLY to avoid blocking reads. A second failure often appears as \"bad vectors.\" With inner-product ranking, inconsistent embedding normalization lets vector magnitude distort relevance. With cosine distance, ordinary positive rescaling does not change ranking. Check model revisions (OpenAI text-embedding-3-small vs ada-002 ), truncation (padding vs truncating to 768 dimensions), zero vectors (NaN propagation from malformed input), and filters before blaming normalization. Validate that ingestion and retrieval use identical preprocessing. One runnable retrieval boundary This example requires Python 3, psycopg[binary] , PostgreSQL, and pgvector 0.8 or newer. Save it as retrieve.py . Run python retrieve.py init once, then python retrieve.py query tenant-uuid embedding.json search words . The JSON file must contain a 768-number array from the same embedding model used during ingestion. import json import math import os import sys import psycopg from psycopg.rows import dict_row DSN = os . environ [ \" DATABASE_URL \" ] SCHEMA = \"\"\" CREATE EXTENSION IF NOT EXISTS vector; CREATE TABLE IF NOT EXISTS memory_chunk ( id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, tenant_id uuid NOT NULL, content text NOT NULL, embedding vector(768) NOT NULL, search_document tsvector GENERATED ALWAYS AS (to_tsvector( ' english ' , content)) STORED ); CREATE INDEX IF NOT EXISTS memory_tenant ON memory_chunk (tenant_id); CREATE INDEX IF NOT EXISTS memory_embedding_hnsw ON memory_chunk USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 128); CREATE INDEX IF NOT EXISTS memory_search ON memory_chunk USING gin (search_document); \"\"\" def normalize ( values ): values = [ float ( x ) for x in values ] if len ( values ) != 768 or not all ( map ( math . isfinite , values )): raise ValueError ( \" Expected 768 finite values \" ) norm = math . sqrt ( sum ( x * x for x in values )) if norm == 0 : raise ValueError ( \" Zero embedding \" ) return [ x / norm for x in values ] def rrf ( rankings , k = 60 , limit = 10 ): if k < 1 : raise ValueError ( \" k must be positive \" ) scores , documents = {}, {} for ranking in rankings : seen = set () for rank , row in enumerate ( ranking , start = 1 ): key = row [ \" id \" ] if key in seen : continue seen . add ( key ) documents [ key ] = row scores [ key ] = scores . get ( key , 0.0 ) + 1.0 / ( k + rank ) ordered = sorted ( scores , key = lambda key : ( - scores [ key ], key )) return [ { ** documents [ key ], \" rrf_score \" : scores [ key ]} for key in ordered [: limit ] ] with psycopg . connect ( DSN , row_factory = dict_row ) as conn : if sys . argv [ 1 ] == \" init \" : conn . execute ( SCHEMA ) else : tenant = sys . argv [ 2 ] with open ( sys . argv [ 3 ]) as source : vector = json . dumps ( normalize ( json . load ( source ))) text = \" \" . join ( sys . argv [ 4 :]) conn . execute ( \" SET LOCAL hnsw.ef_search = 100 \" ) conn . execute ( \" SET LOCAL hnsw.iterative_scan = strict_order \" ) conn . execute ( \" SET LOCAL hnsw.max_scan_tuples = 20000 \" ) dense = conn . execute ( \"\"\" SELECT id, content FROM memory_chunk WHERE tenant_id = %s::uuid ORDER BY embedding <=> %s::vector LIMIT 50 \"\"\" , ( tenant , vector )). fetchall () lexical = conn . execute ( \"\"\" SELECT id, content FROM memory_chunk, websearch_to_tsquery( ' english ' , %s) AS q WHERE tenant_id = %s::uuid AND search_document @@ q ORDER BY ts_rank_cd(search_document, q) DESC, id LIMIT 50 \"\"\" , ( text , tenant )). fetchall () print ( json . dumps ( rrf ([ dense , lexical ]), indent = 2 )) Apply the same validation and normalization during ingestion. Treat this schema as the retrieval kernel; document versions and publication state belong in the surrounding ingestion contract. Run initialization separately from serving traffic. Add connection pooling (pgbouncer in transaction mode, or application-level pools with pool_size=20, max_overflow=10 ) to prevent connection exhaustion under load. Spend latency where recall needs it Filtered approximate search is the central trade-off. HNSW may encounter many neighboring vectors belonging to other tenants before finding enough eligible rows. Iterative scanning ( hnsw.iterative_scan = strict_order ) helps, but its scan budget ( hnsw.max_scan_tuples ) is finite. For small tenant datasets (under 10,000 rows), an exact distance sort over tenant-filtered rows may be faster and more complete than approximate search with high filtering overhead. RRF combines lexical and semantic ranks without pretending their raw scores share a scale. It rescues identifiers and exact phrases that embeddings sometimes miss, but cannot recover candidates absent from both lists. Test retrieval quality by measuring recall@10 against a labeled eval set, not by eyeballing results. Finally, tenant predicates are not authorization. Derive tenant identity from authenticated context (JWT claims, session middleware) and enforce database isolation where appropriate (row-level security policies if tenants must share tables). Compare approximate results against exact tenant-filtered search while ingestion runs. That comparison distinguishes a fast query from a retrieval system an agent can trust. What's the hardest choice you've made? The question that keeps me up is this: when do you stop treating ingestion as best-effort background work and start throttling user-facing features to preserve database stability? I've seen teams add circuit breakers that pause document uploads when retrieval p99 crosses 500ms, and I've seen teams accept 2-second retrieval during bulk imports because agents can wait. Both choices are defensible. Both have failed under unexpected load. What's your architecture? Have you hit the wall where approximate search stopped being approximate enough, or where exact search became too slow? What did you change, and what did you wish you'd known six months earlier?",
@@ -169,6 +1606,22 @@
             ],
             "published_at": "2026-10-22T16:12:58+00:00",
             "collected_at": "2026-10-22T16:23:19.222650+00:00"
+        },
+        {
+            "id": "56940b672a75469b8a4bb9fb207c40734fc4e20152c475c57d672550ba7c6293",
+            "title": "Meta Ordered to Pay $25 Billion After Court Finds 43 Million Privacy Violations",
+            "description": "Social media giant Meta was ordered to pay 25 billion in penalties by a New Mexico court on Wednesday as part of a data privacy lawsuit that sprang from the company's Cambridge Analytica data scandal, which came to light in 2018. According to multiple reports from the Associated Press, the New York Times, Reuters, and the Wall Street Journal, state District Court Judge Francis J. Mathew called",
+            "url": "https://thehackernews.com/2026/10/meta-ordered-to-pay-25-billion-after.html",
+            "source": "The Hacker News",
+            "category": "cloud",
+            "tags": [
+                "aws",
+                "cybersecurite",
+                "hacking",
+                "vulnerabilites"
+            ],
+            "published_at": "2026-10-22T16:12:31+00:00",
+            "collected_at": "2026-10-22T21:02:52.979600+00:00"
         },
         {
             "id": "f32908b6de9dbce2db62cd474f97973c730fb2f44655a3913cf67290fec2c07d",
@@ -285,6 +1738,37 @@
             "collected_at": "2026-10-22T16:23:20.386282+00:00"
         },
         {
+            "id": "c4ef979d44385fe4aefb53eb4baf66a9fe0af7d53f5967f2d5f7f71fd6461e6a",
+            "title": "Every AI model has the same \"controversial\" take on humans",
+            "description": "Comments",
+            "url": "https://www.modelcompare.ai/blog/ai-models-controversial-take-on-humans",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-22T16:08:00+00:00",
+            "collected_at": "2026-10-22T21:02:56.415310+00:00"
+        },
+        {
+            "id": "397dafc42afe87a35886dd726d0a1447063954fa0db2f02fe51a5070e34c29fa",
+            "title": "PHP2Shell puts dozens of UK government services out of service",
+            "description": "Ministers report 32 unavailable and four partly disrupted, but no confirmed compromise",
+            "url": "https://www.theregister.com/security/2026/10/22/php2shell-puts-dozens-of-uk-government-services-out-of-service/5304840",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "php",
+                "technologie"
+            ],
+            "published_at": "2026-10-22T16:05:53+00:00",
+            "collected_at": "2026-10-22T21:02:55.412542+00:00"
+        },
+        {
             "id": "5923975de2198253de8518718166e81333fe4e4c643dc541c20cc011473f6a13",
             "title": "TechCrunch Disrupt 2026 Startup Battlefield 200: Celebrating outstanding achievements",
             "description": "Among the Startup Battlefield 200 were many industry-defining companies exhibiting and pitching on the Showcase Stage. Here are the standouts.",
@@ -328,6 +1812,21 @@
             ],
             "published_at": "2026-10-22T16:00:00+00:00",
             "collected_at": "2026-10-22T16:23:31.625164+00:00"
+        },
+        {
+            "id": "8455de1e492a72befbe6c36c53719bd89c5d7ebfd0ba3131b3367ab0faf97c24",
+            "title": "This emulator reimagines Nintendo’s Virtual Boy with a full color display",
+            "description": "Tile-based color palettes go way beyond the four shades of red on original hardware.",
+            "url": "https://arstechnica.com/gaming/2026/10/this-emulator-reimagines-nintendos-virtual-boy-with-a-full-color-display/",
+            "source": "Ars Technica",
+            "category": "technologie",
+            "tags": [
+                "informatique",
+                "innovation",
+                "technologie"
+            ],
+            "published_at": "2026-10-22T15:59:40+00:00",
+            "collected_at": "2026-10-22T21:02:54.628256+00:00"
         },
         {
             "id": "665c4ee64aacf4aeb9d3c4441bb8393090a948a75fbdbfbff6b2f78cbe6a021e",
@@ -521,6 +2020,22 @@
             ],
             "published_at": "2026-10-22T15:26:22+00:00",
             "collected_at": "2026-10-22T16:23:18.861392+00:00"
+        },
+        {
+            "id": "2ca8afa9f4eaa54bb6ba4cf51d641b7ebcec92474d4d07c3650fd78ab1c9587e",
+            "title": "Hackers got a four-day head start on epic PHP2Shell vulnerability",
+            "description": "Hackers were already probing the bug before defenders were told it existed.",
+            "url": "https://arstechnica.com/security/2026/10/hackers-got-a-four-day-head-start-on-epic-php2shell-vulnerability/",
+            "source": "Ars Technica",
+            "category": "cybersecurite",
+            "tags": [
+                "informatique",
+                "innovation",
+                "php",
+                "technologie"
+            ],
+            "published_at": "2026-10-22T15:25:02+00:00",
+            "collected_at": "2026-10-22T21:02:54.628304+00:00"
         },
         {
             "id": "2461578ab7a599369ecf1cb0d7fd15835588cb8dd9991b042a9ac48b79b39dec",
@@ -835,6 +2350,21 @@
             ],
             "published_at": "2026-10-22T14:26:40+00:00",
             "collected_at": "2026-10-22T16:23:18.862110+00:00"
+        },
+        {
+            "id": "0436c85a33c2a671e40302ffd36165e60b095b6958642405bb9011116832baf8",
+            "title": "Sauron recruits his future Ringwraiths in Rings of Power S3 trailer",
+            "description": "\"I will take my place as the conqueror, a sorcerer, a king.\"",
+            "url": "https://arstechnica.com/culture/2026/10/sauron-recruits-his-future-ringwraiths-in-rings-of-power-s3-trailer/",
+            "source": "Ars Technica",
+            "category": "technologie",
+            "tags": [
+                "informatique",
+                "innovation",
+                "technologie"
+            ],
+            "published_at": "2026-10-22T14:22:31+00:00",
+            "collected_at": "2026-10-22T21:02:54.628357+00:00"
         },
         {
             "id": "f1cbebce2f241d592b5d2335fbf4fd44b384f5819bd162ec0851ad191c4ec157",
@@ -1157,6 +2687,21 @@
             ],
             "published_at": "2026-10-22T13:11:13+00:00",
             "collected_at": "2026-10-22T16:23:17.013281+00:00"
+        },
+        {
+            "id": "60e537dfe49e9cc9861fe3f3f5205ca029ff22b072843230a81a06194cf10b59",
+            "title": "Woman faces six years in prison over Cash App account she never opened",
+            "description": "Comments",
+            "url": "https://www.techspot.com/news/114296-woman-spends-three-nights-jail-faces-six-years.html",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-22T13:11:00+00:00",
+            "collected_at": "2026-10-22T21:02:56.415022+00:00"
         },
         {
             "id": "02f60759efe5e16b7f158adf36d6e91ccc8a305dbeab5fb1e30a25031c34db95",
@@ -2248,6 +3793,22 @@
             "collected_at": "2026-10-22T10:56:13.721762+00:00"
         },
         {
+            "id": "760ea34d457135c08086e770dd7f30863e35558ba3887ad0520d770f927aeaf0",
+            "title": "Tell HN: I unknowingly broke the PHP RCE embargo. I am sorry.",
+            "description": "Comments",
+            "url": "https://news.ycombinator.com/item?id=50193416",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "php",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-22T10:11:44+00:00",
+            "collected_at": "2026-10-22T21:02:56.415355+00:00"
+        },
+        {
             "id": "9a2e63caba1553c77bd1c27c273b7f96f0528d29648ecaa9feba86e10c0e5852",
             "title": "Cisco Patches 34 Vulnerabilities Across Multiple Products",
             "description": "Critical-severity security defects could lead to command execution, authentication bypass, and XSS attacks. The post Cisco Patches 34 Vulnerabilities Across Multiple Products appeared first on SecurityWeek .",
@@ -2718,6 +4279,22 @@
             "collected_at": "2026-10-22T10:55:58.453183+00:00"
         },
         {
+            "id": "7dbcc463f86e9deb1032dfb22b07e1fbf0d04cbe21f607c3c2f5e22b8ef98874",
+            "title": "Amazon SageMaker AI now supports serverless model customization for Muse Glimmer, Qwen 3.8 and Ministral 3 models",
+            "description": "Amazon SageMaker AI now supports serverless model customization for Muse Glimmer, Qwen3.8 27B, and Ministral 3 3B, 8B, and 14B models. In addition to deploying these models on SageMaker AI, you can now adapt them to your specific domains and workflows, using supervised fine-tuning (SFT), direct preference optimization (DPO), and reinforcement fine-tuning (RFT) techniques. You can also adapt these models with either low-rank adaptation (LoRA) or full fine-tuning techniques. This launch adds these models to a wide variety of models available for serverless customization on SageMaker AI, including models from the Nova, Gemma 4, Nemotron 3.5, Qwen, Llama, gpt-oss, and DeepSeek families. Model customization lets you tailor foundation models with your proprietary data so a smaller, right-sized model can match frontier-model quality on your tasks, while also reducing cost and latency. You can use labeled data with SFT to improve accuracy on domain-specific tasks, preference data with DPO to align outputs with your organization's tone, or reward signals with RFT to improve performance on new tasks. With serverless customization, SageMaker AI handles all infrastructure provisioning and training orchestration, so you can focus on your data and evaluation rather than cluster management, and only pay for what you use. Serverless model customization on SageMaker AI is available in US East (N. Virginia), US West (Oregon), Asia Pacific (Tokyo), and Europe (Ireland). To get started, navigate to the Models page in Amazon SageMaker Studio to launch a customization job, use the SageMaker Python SDK or use our Agent skills with your choice of coding assistant. To learn more and see the full supported list of models, see the Amazon SageMaker AI model customization documentation .",
+            "url": "https://aws.amazon.com/about-aws/whats-new/2026/10/amazon-sagemaker-muse-qwen-ministral/",
+            "source": "AWS What's New",
+            "category": "cloud",
+            "tags": [
+                "amazon",
+                "aws",
+                "cloud",
+                "python"
+            ],
+            "published_at": "2026-10-22T08:00:00+00:00",
+            "collected_at": "2026-10-22T21:03:00.567332+00:00"
+        },
+        {
             "id": "0e5fad3ca5f8a881acf7d04bb62a3859c2c74e88d36ad866cc1ffd77a9610def",
             "title": "Ensemble forecasting with IBM Granite time-series models",
             "description": "",
@@ -2795,6 +4372,22 @@
             "collected_at": "2026-10-22T10:55:56.450492+00:00"
         },
         {
+            "id": "84258706dfc98576bc047acb7e9d4171e7ad9d76a0825f2305723ef69cab2683",
+            "title": "AWS Lambda MicroVMs is now available in 4 additional AWS regions",
+            "description": "AWS Lambda MicroVMs is now available in 4 additional AWS Regions: Asia Pacific (Hong Kong), Asia Pacific (Malaysia), Asia Pacific (Thailand), and Europe (Spain). With this launch, you can use Lambda MicroVMs in a total of 14 AWS Regions. Lambda MicroVMs is a serverless compute primitive that provides VM-level isolation, near-instant launch and resume speeds, and state preservation for executing user or AI generated code. Developers can use Lambda MicroVMs to give each user or job their own isolated compute environment without managing virtualization infrastructure or choosing between isolation, speed, and state retention. MicroVMs enable secure, stateful, and responsive code execution for applications including AI coding assistants, interactive development environments, and vulnerability scanners. With today's launch, developers can run Lambda MicroVMs closer to their end-users in 4 additional Regions, helping meet latency and data residency requirements. To get started, create a MicroVM image from your Dockerfile, then launch MicroVMs from that image. Give each user or job their own MicroVM with a dedicated HTTPS URL that supports popular connectivity protocols such as HTTP/2, gRPC, and WebSockets. You can use MicroVMs through the AWS Lambda console, AWS CloudFormation, AWS Cloud Development Kit, or with your preferred Agentic development tools using the Agent Toolkit for AWS . To learn more, visit the AWS Lambda MicroVMs developer guide . For information on pricing, see Lambda MicroVMs pricing . Visit the AWS Capabilities by Region page for the latest region availability.",
+            "url": "https://aws.amazon.com/about-aws/whats-new/2026/10/lambda-microvms-4-additional-regions",
+            "source": "AWS What's New",
+            "category": "cybersecurite",
+            "tags": [
+                "amazon",
+                "aws",
+                "cloud",
+                "docker"
+            ],
+            "published_at": "2026-10-22T07:06:00+00:00",
+            "collected_at": "2026-10-22T21:03:00.567514+00:00"
+        },
+        {
             "id": "0316f62ca3327a6fedbe66520a86b51f348e5408fa9bb94ff2cf9eafa136a105",
             "title": "TECNO Unveils New Film Exploring the Human Stories Behind “100 Portraits of Becoming”",
             "description": "As part of TECNO and artist Angélica Dass's global “100 Portraits of Becoming” project, this film reveals the personal journeys behind the portraits, bringing to life a shared vision of seeing beyond the image to understand the people behind it.",
@@ -2807,6 +4400,22 @@
             ],
             "published_at": "2026-10-22T07:02:28+00:00",
             "collected_at": "2026-10-22T10:56:06.933590+00:00"
+        },
+        {
+            "id": "9b855d6ccc453f25a26fcba2528b6bb7564e0858d0d75aded3c95b5d2a041f9b",
+            "title": "Amazon Quick Now Available in the AWS Singapore Region",
+            "description": "Amazon Quick is now available in the AWS Asia Pacific (Singapore) region (ap-southeast-1). This launch allows customers in Singapore to access the full power of Amazon Quick while meeting local requirements for data sovereignty. Amazon Quick provides business users an agentic teammate that quickly answers questions at work and turns those answers into actions. With Amazon Quick, every user is empowered to make better decisions faster and take actions without switching applications using AI they can trust. Today’s launch allows customers to take advantage of Amazon Quick’s capabilities including AI-powered chat, Research, Spaces, and QuickSight dashboards — with their data stored and processed locally within the AWS Singapore region. For a full list of AWS regions where Amazon Quick is available, visit the Quick regional availability page. To learn more, visit the Amazon Quick documentation or product detail page .",
+            "url": "https://aws.amazon.com/about-aws/whats-new/2026/10/amazon-quick-now-available-in-the-aws-singapore-region/",
+            "source": "AWS What's New",
+            "category": "cloud",
+            "tags": [
+                "amazon",
+                "aws",
+                "cloud",
+                "rust"
+            ],
+            "published_at": "2026-10-22T07:00:00+00:00",
+            "collected_at": "2026-10-22T21:03:00.567678+00:00"
         },
         {
             "id": "d9576146a6232b6c37050bcefcd28c176f92d745aa4c6af63761fd91d2935a3c",
@@ -3854,6 +5463,36 @@
             ],
             "published_at": "2026-10-22T00:00:00+00:00",
             "collected_at": "2026-10-22T16:23:16.546693+00:00"
+        },
+        {
+            "id": "eda525050cea8fce4b13823379a8b9659ff224375e0356616ea34596cdb17cc5",
+            "title": "Uber brings ChatGPT Work to all employees with OpenAI",
+            "description": "Uber is rolling out ChatGPT Work to more than 30,000 employees, helping teams research, analyze data, create presentations, and complete complex workflows.",
+            "url": "https://openai.com/index/uber-chatgpt-work-rollout",
+            "source": "OpenAI",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "chatgpt",
+                "ia",
+                "openai"
+            ],
+            "published_at": "2026-10-22T00:00:00+00:00",
+            "collected_at": "2026-10-22T21:02:57.387600+00:00"
+        },
+        {
+            "id": "9fe905956dd45b719c25d6d9d1ad748d23923b6223d3dd6e29e22c792df1bd38",
+            "title": "Glamsterdam on Hoodi Postponed",
+            "description": "The Glamsterdam upgrade on Hoodi, previously scheduled for October 26, 2026 at 17:42:48 UTC (epoch 132,352), has been postponed. A new activation date has not been set. This update supersedes the schedule and activation instructions in the Hoodi testnet announcement....",
+            "url": "https://blog.ethereum.org/en/2026/10/22/glamsterdam-hoodi-delay",
+            "source": "Ethereum Blog",
+            "category": "blockchain_web3",
+            "tags": [
+                "blockchain",
+                "ethereum",
+                "web3"
+            ],
+            "published_at": "2026-10-22T00:00:00+00:00",
+            "collected_at": "2026-10-22T21:03:14.102747+00:00"
         },
         {
             "id": "c47ed6ab9943f8ba7018a1676f62a682e9b80cc8fa48735232adb1cae9c349ab",
@@ -5441,6 +7080,21 @@
             ],
             "published_at": "2026-10-21T18:00:00+00:00",
             "collected_at": "2026-10-21T21:05:17.059668+00:00"
+        },
+        {
+            "id": "c3f9e3269f7297405626ea3b2e5c839c39bc52fcdc28ac495bb33025e440a612",
+            "title": "AWS Service Reference Information now supports global condition keys, service names, and data plane classification",
+            "description": "AWS is expanding programmatic service reference information to help you automate IAM policy management and keep your policies aligned with the latest service updates. The service reference now includes all aws:-prefixed global condition keys in a single machine-readable file, a ServiceName field mapping service identifiers to human-readable names, and an IsDataPlane property identifying which actions are data plane operations. You can automate retrieval of this information to eliminate manual effort, and incorporate it directly into your existing policy management tools and processes. This feature is available at no additional cost. To get started, refer to the documentation on programmatic service reference information .",
+            "url": "https://aws.amazon.com/about-aws/whats-new/2026/10/aws-service-reference-information-global-condition-keys-service-names-data-plane/",
+            "source": "AWS What's New",
+            "category": "cloud",
+            "tags": [
+                "amazon",
+                "aws",
+                "cloud"
+            ],
+            "published_at": "2026-10-21T18:00:00+00:00",
+            "collected_at": "2026-10-22T21:03:00.567939+00:00"
         },
         {
             "id": "9f2c544ee9306da05b5181729c077a1b3a28b4b30ec9aa931170213d14c362f2",
@@ -19328,6 +20982,21 @@
             ],
             "published_at": "2026-10-19T16:09:10+00:00",
             "collected_at": "2026-10-19T18:04:21.449293+00:00"
+        },
+        {
+            "id": "fd80cd4738473f69eef4fc533d9cd1b3656b15c07cf28cea7525e87b993d1d1c",
+            "title": "Dungeon Generation in the Gnomish Mines of NetHack",
+            "description": "Comments",
+            "url": "https://www.boristhebrave.com/2026/10/18/dungeon-generation-in-the-gnomish-mines-of-nethack/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-19T16:06:40+00:00",
+            "collected_at": "2026-10-22T21:02:56.415778+00:00"
         },
         {
             "id": "50686a02ee7438c9d17c407f3fac5bafdc6a13004944ad08a1ff672287a5417d",
@@ -322507,6 +324176,159 @@
             ],
             "published_at": null,
             "collected_at": "2026-10-22T16:23:17.104626+00:00"
+        },
+        {
+            "id": "32b3170e24109d9a6879a006f0024083d479da17f893bd37f372c04cd23a5ba5",
+            "title": "Meta’s AI could still scrape news sites, legal experts say",
+            "description": "Meta has tweaked its business terms to remove language suggesting that it could freely train its AI models on news sites, like The Verge - but legal experts say these changes aren't enough to address their concerns. \"This does nothing to restrict the 'associated with your products or services' [language] that would let Meta scrape […]",
+            "url": "https://www.theverge.com/tech/1017082/meta-terms-update-ai-training-concerns",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-10-22T21:02:54.886337+00:00"
+        },
+        {
+            "id": "50dd0c98f11d38b5c2cfbb130945651b187928b18d12facde775a090fa8ea88d",
+            "title": "Meta turns Muse sharing back on",
+            "description": "Meta has re-enabled Muse sharing after security researchers had reported that public conversation links could be easy to find. The researchers said they had been able to find Muse pages like a marketing company's internal revenue review and a small business owner's loan application. Researchers at Claroc reported earlier this week that Muse the web […]",
+            "url": "https://www.theverge.com/tech/1017066/meta-muse-sharing-back-on-artifiacts",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-10-22T21:02:54.886438+00:00"
+        },
+        {
+            "id": "f6922dc8b925b71734fcf46b6c95bec5f639d2dffc9968c270a72ee5965102cb",
+            "title": "The FCC is beginning to block gadgets with ‘foreign surveillance chips’",
+            "description": "On October 13th, Brendan Carr's FCC gave itself a new power - it can block gadgets for containing any computer chip made by any company on its list of potential threats to national security. Today, it's exercising that power for the first time, blocking two gadgets because they contain \"foreign surveillance chips,\" the FCC claims. […]",
+            "url": "https://www.theverge.com/policy/1017016/fcc-block-foreign-surveillance-chips-hivision-huawei-loophole",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-10-22T21:02:54.886536+00:00"
+        },
+        {
+            "id": "1c3f6e8b2704e3fb6b2bf2ae4d8fe5acd4bb99efe1d9efdba090ec6955d98e12",
+            "title": "Sure, let’s smoosh SpaceX and Tesla together, who cares",
+            "description": "Oh sure, SpaceX's credit risk is pretty high because it's about to borrow another $40 billion to spend on Nvidia chips, but who cares about that? SpaceX and Tesla have formed special committees to discuss a merger! The degree to which you find this merger compelling likely has to do with the degree to which […]",
+            "url": "https://www.theverge.com/ai-artificial-intelligence/1016879/spacex-tesla-cursed-katamari",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "nvidia",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-10-22T21:02:54.886637+00:00"
+        },
+        {
+            "id": "7c0720e50a86584f10735b0bdd4c3d3114355ffb67159b127ab53155fabf49da",
+            "title": "Teenage Engineering launched an instrument amp with a ton of built-in effects",
+            "description": "Teenage Engineering is branching out into instrument amps with the previously leaked EP-35, a multi-input, multi-instrument, battery-powered amp with built-in effects. The back of the unit has a line-in port, as well as a 1/4-inch guitar input and an XLR input for mics, including mics that require phantom power. You can also stream audio to […]",
+            "url": "https://www.theverge.com/gadgets/1017022/teenage-engineering-ep-35-instrument-amp",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-10-22T21:02:54.886742+00:00"
+        },
+        {
+            "id": "366f1744ba675b3fcab9decc1b1b7898b6445aab9f0cc5d7687952f408645318",
+            "title": "Republican politicians have embraced anti-Indian racism — and it’s costing them votes",
+            "description": "Two years ago, University of Houston student Vasant Bhatt was doing everything he could to help Republicans regain power. He knocked doors for Sen. Ted Cruz's reelection campaign and helped organize his community for Donald Trump, two victories he, like many other Republicans, celebrated in 2024. But this week, Bhatt did something unexpected: He voted […]",
+            "url": "https://www.theverge.com/report/1017003/indian-americans-republican-racism-vivek-ramaswamy-texas",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-10-22T21:02:54.886839+00:00"
+        },
+        {
+            "id": "5d9004c8fdabb16d921d4d81d118040c4f96f83359c6faf4284a5dd46d6f25d2",
+            "title": "Google tells Android users to update as parts of Canada adopt permanent daylight saving time",
+            "description": "As the US gets closer to permanently adopting daylight saving time following the House advancing the Sunshine Protection Act in July, there could be some unforeseen consequences to getting an extra hour of sun in the evening all year long. Following the Canadian provinces of British Columbia and Manitoba permanently switching to daylight saving this […]",
+            "url": "https://www.theverge.com/tech/1016977/google-android-incorrect-time-daylight-saving-permanent-canada",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "android",
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-10-22T21:02:54.886937+00:00"
+        },
+        {
+            "id": "7fe7774a3ecb03f8ceb873e92648f0dd881922827043c37e8a02d2df2c278323",
+            "title": "Discord now formats Markdown previews right",
+            "description": "Discord's latest update released today has a big improvement for Markdown previews: they should now render correctly instead of with \"a bunch of symbols,\" according to the company. LLMs and AI agents often rely on Markdown files for instructions and context, so these improved previews could be helpful for people sharing information about AI projects […]",
+            "url": "https://www.theverge.com/news/1017012/discord-markdown-previews-organize-servers-channels",
+            "source": "The Verge",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "gadgets",
+                "internet",
+                "llm",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-10-22T21:02:54.887014+00:00"
+        },
+        {
+            "id": "b761ebc695890e325234b88bf8491ceea929256dd88aabcaeff3f456e023ea85",
+            "title": "The new Fire TV Stick 4K is already half off",
+            "description": "Despite being announced just a few weeks ago, both Amazon and Best Buy are now offering the latest Amazon Fire TV Stick 4K for 50 percent off, bringing the price down to an all-time low of $29.99. The most notable new feature is that the Fire TV Stick 4K no longer requires a separate power […]",
+            "url": "https://www.theverge.com/gadgets/1016792/amazon-fire-tv-stick-4k-2026-deal-sale",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-10-22T21:02:54.887117+00:00"
+        },
+        {
+            "id": "be7b1ecf5be48b75186c826b72f45ece9f59ab7ff81ca82d73b8fb49b9910b69",
+            "title": "Refurbished PS5 consoles include second controller for an extra $18",
+            "description": "A lot of people are snagging a PlayStation 5 ahead of Grand Theft Auto VI’s November 19th launch. You could pay full price at one of many retailers, but why do that when you can save $100 on a Sony-refurbished console that has the same one-year warranty? It’s a great time to consider one because […]",
+            "url": "https://www.theverge.com/gadgets/1016959/refurbished-playstation-5-ps5-console-dualsense-deal-sale-bundle",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-10-22T21:02:54.887207+00:00"
         }
     ]
 }
