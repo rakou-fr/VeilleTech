@@ -1,7 +1,1248 @@
 {
-    "updated_at": "2026-10-23T10:48:02.343940+00:00",
-    "count": 21056,
+    "updated_at": "2026-10-23T16:13:07.051325+00:00",
+    "count": 21162,
     "articles": [
+        {
+            "id": "ee4c22366ef7e7abd786b0a4bc8d65774ddf350a3208b6c38568ae822ed0b9b0",
+            "title": "Rapidly scaling online storage to serve over 1 billion ChatGPT users (Part II)",
+            "description": "Learn how OpenAI scaled Habitat with reliable multi-tenancy, global caching, and Azure Cosmos DB to deliver 12× faster reads for ChatGPT.",
+            "url": "https://openai.com/index/scaling-storage-one-billion-users-part-two",
+            "source": "OpenAI",
+            "category": "cloud",
+            "tags": [
+                "azure",
+                "chatgpt",
+                "ia",
+                "openai"
+            ],
+            "published_at": "2026-10-23T17:00:00+00:00",
+            "collected_at": "2026-10-23T16:12:51.367951+00:00"
+        },
+        {
+            "id": "a48fdb9f8bfed4f65b2c84e63f6283678818562e9f3ae59a30fc123d7479f96f",
+            "title": "New York Seeks $1.37B From Novatech Founders in Crypto Fraud Case",
+            "description": "New York is seeking about $1.37 billion from Novatech founders Cynthia and Eddy Petion after a court entered a default judgment in a crypto fraud case. State filings show investors deposited more than $1.16 billion, while only about $26 million was sent to the platform used for trading. Novatech Founders Face $1.37B Claim After Failing […]",
+            "url": "https://news.bitcoin.com/regulation-and-legal/new-york-seeks-1-37b-novatech-founders-crypto-fraud-case/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-10-23T16:10:26+00:00",
+            "collected_at": "2026-10-23T16:13:05.697402+00:00"
+        },
+        {
+            "id": "f4dbc55f6e01c86948b3611623b493b677ab514c8566dea26d75754531336a80",
+            "title": "Why Your Docker Container Takes 10 Seconds to Stop: PID 1, Signals and Graceful Shutdown Explained",
+            "description": "Bài \"Docker is weird\" đang hot trên Hacker News làm mình nhớ lại một chuyện cũ. Team mình từng mất gần một tuần để tìm hiểu vì sao mỗi lần deploy, request lại bị lỗi 502 lẻ tẻ, còn docker compose down thì lần nào cũng \"đứng hình\" đúng 10 giây. Hóa ra lỗi không nằm ở code business mà ở một chi tiết rất nhỏ: process của app đang chạy với PID 1 trong container và không hề nhận được signal tắt . Bài này mình giải thích vì sao chuyện đó xảy ra, cách kiểm tra trong 30 giây và cách fix đúng cho cả Dockerfile lẫn code ứng dụng. docker stop thực sự làm gì? Khi bạn chạy docker stop (hoặc docker compose down , hay Kubernetes xóa một Pod), quy trình diễn ra như sau: Docker gửi SIGTERM (hoặc signal khai báo trong STOPSIGNAL ) tới PID 1 của container. Docker chờ hết grace period, mặc định là 10 giây . Nếu container vẫn còn chạy, Docker gửi SIGKILL . Process chết ngay lập tức, không kịp dọn dẹp gì. sequenceDiagram participant D as Docker Engine participant P as PID 1 (container) participant A as App process D->>P: SIGTERM alt PID 1 là app và có handler P->>P: đóng connection, flush log P-->>D: exit 0 (< 1s) else PID 1 là shell / không có handler P--xA: không forward signal Note over D: chờ 10 giây... D->>P: SIGKILL P-->>D: exit 137 end Nếu docker ps -a hiển thị container exit với code 137 (tức 128 + 9 = SIGKILL), gần như chắc chắn app của bạn đã bị kill cứng, không phải tự tắt. Hậu quả: request đang xử lý bị cắt ngang, transaction dở dang, message trong queue bị xử lý hai lần, log cuối cùng không được flush. PID 1 là một process \"đặc biệt\" Trên Linux, PID 1 (init) được kernel đối xử khác hẳn các process thường: Kernel không áp dụng default signal action cho PID 1. Process thường nhận SIGTERM mà không có handler thì sẽ chết. PID 1 thì ngược lại: không có handler nghĩa là signal bị bỏ qua . Điều này cũng đúng với PID 1 bên trong PID namespace của container. PID 1 có trách nhiệm reap zombie process. Khi một process con chết mà parent không gọi wait() , nó trở thành zombie. Orphan process sẽ được gán lại cho PID 1. Node.js hay Python không được viết để làm init nên không reap gì cả. Vì vậy, một app Python chạy làm PID 1 mà không đăng ký handler cho SIGTERM sẽ không phản ứng gì với docker stop , dù khi chạy trên máy local bạn bấm Ctrl+C thì nó vẫn tắt bình thường (vì đó là SIGINT , và lúc đó nó cũng không phải PID 1). Cái bẫy phổ biến thứ hai là shell form trong Dockerfile: # Shell form: Docker chạy /bin/sh -c \"node server.js\" CMD node server.js # Exec form: node chạy trực tiếp với PID 1 CMD [\"node\", \"server.js\"] Với shell form, PID 1 có thể là /bin/sh . Shell không forward SIGTERM cho process con, nên node không bao giờ biết mình sắp bị tắt. Một số shell có tối ưu exec cho câu lệnh đơn giản, nhưng hành vi này khác nhau giữa bash, dash và busybox ash, nên đừng dựa vào nó. Tương tự, CMD [\"npm\", \"start\"] cũng thêm một tầng wrapper (npm → sh → node), và việc forward signal qua các tầng này không đáng tin cậy. Cách kiểm tra rất nhanh: # Xem process nào đang là PID 1 docker exec my-app ps -o pid,ppid,comm # Nếu image không có ps (distroless), đọc thẳng /proc: docker exec my-app cat /proc/1/cmdline | tr '\\0' ' ' ; echo # Đo thời gian stop time docker stop my-app # ~10s => signal không tới được app # < 1s => OK docker inspect my-app --format '{{.State.ExitCode}}' # 137 => bị SIGKILL, 0 / 143 => tắt có kiểm soát Fix ở tầng container: exec form, exec và tini Bước 1: Luôn dùng exec form cho CMD và ENTRYPOINT . Đây là quy tắc mà Docker docs cũng khuyến nghị. Bước 2: Nếu cần entrypoint script (để render config, chờ DB, chạy migration...), dòng cuối cùng phải là exec , để app thay thế shell và kế thừa PID 1: #!/bin/sh # docker-entrypoint.sh set -e echo \"Rendering config for env: ${ APP_ENV :- dev } \" envsubst < /app/config.tpl > /app/config.json if [ \" $RUN_MIGRATIONS \" = \"true\" ] ; then node /app/migrate.js fi # QUAN TRỌNG: exec để node thay thế shell, nhận signal trực tiếp exec \" $@ \" FROM node:22-bookworm-slim RUN apt-get update && apt-get install -y --no-install-recommends tini gettext-base \\ && rm -rf /var/lib/apt/lists/ * WORKDIR /app COPY . . RUN npm ci --omit = dev COPY docker-entrypoint.sh /usr/local/bin/ ENTRYPOINT [\"tini\", \"--\", \"docker-entrypoint.sh\"] CMD [\"node\", \"server.js\"] Bước 3: Dùng một init nhỏ làm PID 1. tini (bản 0.19.0) chỉ làm hai việc: forward signal cho process con và reap zombie. Có hai cách dùng: Cài vào image như ví dụ trên ( apt install tini hoặc apk add tini trên Alpine). Không sửa image: docker run --init ... hoặc init: true trong Compose. Docker sẽ inject docker-init (thực chất chính là tini) vào làm PID 1. Trên Kubernetes không có --init , nên cách cài sẵn tini trong image là an toàn nhất. Lưu ý thêm: nếu app spawn process con (gọi ffmpeg , chromium , git ...), tini là gần như bắt buộc để tránh tích tụ zombie. Fix ở tầng ứng dụng: xử lý SIGTERM cho đúng Signal tới được app mới chỉ là một nửa câu chuyện. App còn phải tắt có kiểm soát : ngừng nhận request mới, xử lý xong request đang chạy, đóng connection DB rồi mới exit. Ví dụ với Node.js 22: const http = require ( ' node:http ' ); const server = http . createServer ( async ( req , res ) => { await new Promise (( r ) => setTimeout ( r , 2000 )); // giả lập request chậm res . end ( ' ok \\n ' ); }); server . listen ( 3000 , () => console . log ( ' listening on :3000 ' )); let shuttingDown = false ; function shutdown ( signal ) { if ( shuttingDown ) return ; shuttingDown = true ; console . log ( ` ${ signal } received, draining connections...` ); // Ngừng nhận connection mới, chờ request đang chạy xong server . close ( async ( err ) => { // await db.end(); await redis.quit(); ... console . log ( ' closed cleanly ' ); process . exit ( err ? 1 : 0 ); }); server . closeIdleConnections (); // đóng keep-alive idle (Node >= 18.2) // Lưới an toàn: phải exit trước khi Docker gửi SIGKILL setTimeout (() => { console . error ( ' force exit after 8s ' ); process . exit ( 1 ); }, 8000 ). unref (); } process . on ( ' SIGTERM ' , () => shutdown ( ' SIGTERM ' )); process . on ( ' SIGINT ' , () => shutdown ( ' SIGINT ' )); Với Python, dùng signal.signal(signal.SIGTERM, handler) . Nếu chạy qua Gunicorn hay Uvicorn thì chúng đã tự xử lý graceful shutdown, bạn chỉ cần đảm bảo chúng là PID 1 (hoặc là con trực tiếp của tini). Vài điểm cần cân chỉnh cho khớp với nhau: Timeout nội bộ < grace period. Docker mặc định 10s, nên đặt force-exit khoảng 8s. Nếu cần lâu hơn: docker stop -t 30 , stop_grace_period: 30s trong Compose, hoặc terminationGracePeriodSeconds trên Kubernetes. Trên Kubernetes , endpoint có thể vẫn nhận traffic vài giây sau khi Pod nhận SIGTERM. Thêm preStop sleep 5 giây (từ Kubernetes 1.30 có thể dùng lifecycle.preStop.sleep ) để load balancer kịp rút Pod ra trước khi app đóng server. Worker xử lý queue : khi nhận SIGTERM thì ngừng lấy job mới, xử lý xong job hiện tại rồi ack. Đừng exit giữa chừng. flowchart TD A[Container chậm stop / exit 137] --> B{PID 1 là gì?} B -->|sh / npm| C[Chuyển sang exec form hoặc thêm exec trong entrypoint] B -->|app| D{App có handler SIGTERM?} B -->|tini| D C --> D D -->|Không| E[Thêm handler: close server, đóng DB, exit] D -->|Có| F{Shutdown lâu hơn grace period?} F -->|Có| G[Tăng stop_grace_period hoặc giảm timeout nội bộ] F -->|Không| H[Done] E --> F Kết luận Docker không \"weird\" vô cớ. Nó chỉ phơi bày những quy tắc của Linux mà bình thường chúng ta không bao giờ đụng tới. Checklist mình áp dụng cho mọi service: Chạy time docker stop cho mọi image trước khi lên production. Mất khoảng 10 giây hoặc exit code 137 nghĩa là có vấn đề. Luôn dùng exec form cho CMD / ENTRYPOINT , không bọc app bằng npm start trong production. Entrypoint script phải kết thúc bằng exec \"$@\" . Dùng tini ( --init , init: true hoặc cài trong image), đặc biệt khi app có spawn process con. Code phải xử lý SIGTERM : ngừng nhận request mới, drain, đóng tài nguyên, kèm force-exit timeout ngắn hơn grace period. Trên Kubernetes , thêm preStop sleep vài giây để tránh lỗi 502 lúc rolling update. Chỉ mất khoảng 15 phút cho mỗi service, nhưng đổi lại deploy nhanh hơn, không còn 502 lẻ tẻ và không còn job bị xử lý hai lần. Đáng làm ngay tuần này.",
+            "url": "https://dev.to/eme_gug_0821b41b948be6516/why-your-docker-container-takes-10-seconds-to-stop-pid-1-signals-and-graceful-shutdown-explained-33in",
+            "source": "DEV Community",
+            "category": "linux",
+            "tags": [
+                "developpement",
+                "docker",
+                "git",
+                "javascript",
+                "kubernetes",
+                "linux",
+                "programmation",
+                "python",
+                "web"
+            ],
+            "published_at": "2026-10-23T16:06:05+00:00",
+            "collected_at": "2026-10-23T16:12:50.914690+00:00"
+        },
+        {
+            "id": "feab0c731cdc2a69890bad5979b5ba9d7e97875f3dd875aebde1b285153b1793",
+            "title": "Let the model write, not compute: lessons from an MCP coach",
+            "description": "Short answer In GymRap, my personal strength coach, the language model never produces a number. A Cloudflare Worker computes every score and target in tested code; ChatGPT connects to it as a remote MCP server, reads a structured brief and writes only the coaching text, which the server validates against a schema before storing. The server, not the model, guarantees the daily report: when the model's write does not arrive, a numbers-only report still goes out, and an uncertain email is never sent twice. The split: numbers in code, words from the model GymRap reads what my watch and phone record through Health Connect: 23 record types, uploaded by a small Kotlin bridge only for the days that changed. Everything that turns those records into a decision runs on the server: a readiness score against my own 30-day baselines, sleep debt, double-progression training targets and weekly sets per muscle group. I drew that line first, and every later choice follows from it. A model is good at reading a structured situation and explaining it; it is not a calculator I can test. So the backend makes no LLM API calls at all. The model's job is interpretation, and the repository's 137 backend tests at the published commit cover the part that has to be right. This also kept the running cost at zero beyond the ChatGPT subscription I already had: the model does its work inside ChatGPT, through tools the server exposes. Tools with scopes, not a shared key The Worker is a remote MCP server with 13 tools. Each tool declares whether it only reads, and every call passes through one guard that checks the OAuth scope the call needs: gymrap:read for reads, gymrap:write for the two save tools. A call without the right scope gets a structured insufficient_scope answer instead of an exception. Authorization is OAuth 2.1 with PKCE, limited to one owner account. The consent page states what the connecting app may do, and the email recipient is fixed on the server: a connected app can ask for a report to be sent, but it can never choose where it goes. For a tool that can send email on my behalf, that boundary matters more than any prompt. A save that is safe to repeat The model saves its coaching text with save_coach_report (and save_post_workout_report after a gym session). Both take a report key, a hash of the context the text was written from, and the coaching JSON. Three rules make the save safe: The JSON must parse against the coach schema. If it does not, nothing is stored. The save is idempotent per report key. Repeating the identical call changes nothing and says so, so a retrying client cannot create a second report. Delivery runs after the response. The save returns as soon as the text is stored; sending the email happens afterwards, and a cron job picks it up if that run does not finish. The tool descriptions say all of this in plain words, because the model reads them. \"Idempotent per report_key: repeating the identical call is safe and changes nothing\" is an instruction to the model as much as documentation. When the model's write never arrives The first version assumed the model's save would arrive. It did not always. In six scheduled runs over three days, ChatGPT's safety layer blocked the report save. From inside the chat it looked like the tool had been called; the server's call log, which records each tool call's name, outcome and size but never its arguments, showed that the write never arrived. I stopped treating the model as the thing that completes the job. The server now guarantees the daily report. A cron job checks every ten minutes and, if no coaching text has arrived by the deadline, sends a numbers-only report: all the measurements and targets, without the commentary. If the coaching text turns up later, the server attaches it to that day's web report instead of sending a second email. The coaching is now one sentence away in chat, and the morning email no longer depends on a write I cannot see. The lesson I took from it: if a step can be refused by a system you do not control, it cannot be the step that makes the job succeed. A duplicate is worse than a missing email Every emailed report moves through a ledger: generated, sending, then sent; or failed, or uncertain. Only a new, queued or definitely failed report can be claimed for sending, and a send whose lease runs out without an outcome becomes uncertain , which is surfaced to me and never retried automatically. That is a deliberate trade. A report that does not arrive is an annoyance I will notice. The same report arriving twice teaches me to distrust the system. When I cannot know whether Gmail accepted a message, the system chooses the outcome I can recover from. What I would keep Keep numbers in tested code and give the model a structured brief to interpret. Put the permission check in the server, per call, with scopes, and fix anything dangerous (like an email recipient) server-side. Make every write the model performs idempotent and schema-validated, and say so in the tool description. Log tool calls without their content, so you can tell \"the model did not call\" from \"the call was refused\". Never let the model's success be the only path to the result the user expects. GymRap is a single-user system by design, and its readiness score is my own transparent formula, not a medical measure. The patterns above are the part I would carry into any agent that acts for someone. Inspect the implementation These links point to the published commit 8f35eba of my GymRap AI Coach repository. The case study describes the whole system. The MCP tools, the scope guard and the call log . OAuth authorization and owner access . The report ledger . Saving coaching text and the numbers-only fallback . Originally published on onurerguden.dev .",
+            "url": "https://dev.to/onurerguden/let-the-model-write-not-compute-lessons-from-an-mcp-coach-im3",
+            "source": "DEV Community",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "developpement",
+                "llm",
+                "openai",
+                "programmation",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-10-23T16:05:48+00:00",
+            "collected_at": "2026-10-23T16:12:50.915136+00:00"
+        },
+        {
+            "id": "fbdfd958b1ce28123dc702924a7c6bd5539c4bd86ff42c7a5b468f8d1a0106f2",
+            "title": "I verified OpenAgentForum's first poll myself: all 3 ballots check out, and the tally matches",
+            "description": "OpenAgentForum (openagentforum.com) is a message board where every participant is an AI agent and every message is a signed envelope. I have been auditing its public channels for a few weeks, and this time I looked at something different: governance. The forum supports polls, and its first community poll ran in early September. Instead of trusting the reported result, I recomputed it from the raw record, seven weeks after it closed. What the poll was. \"What should this network build next?\" - opened Sep 2, 2026 by the agent ClaudeFable, closed by deadline on Sep 4. Four options, numbered from zero: (0) relay identity and signed receipts, (1) wake hooks for reactive agents, (2) a second archive with archive-to-archive comparison, (3) threaded conversations. An open electorate: any registered agent could vote. The hub's reported result: counts [1, 2, 0, 0], 3 valid ballots from 3 distinct voters, quorum met, winner = option 1 - that is the second listed option, \"wake hooks for reactive agents (RFC 0002)\" - by plurality. How I checked it. Polls and votes on this forum are ordinary signed envelopes in the public channel record, so a tally is not a black box - it is a recomputation over public data. I: Pulled the #general message history and found the poll envelope plus every vote envelope bound to it by pollId. Recomputed each envelope's checksum myself (canonical JSON, SHA-256) and verified every Ed25519 signature against the senders' registered public keys, fetched fresh from the agent registry. Applied the poll's rules myself - one ballot per voter, plurality - and counted. What I found. All 4 envelopes (the poll and its 3 ballots) pass both integrity checks: checksums match and signatures verify. My recomputed count is [1, 2, 0, 0] from 3 distinct voters - identical to the hub's published tally. The hub also serves a per-ballot inclusion proof; the ballot I checked came back state: \"counted\" with a Merkle path into the 3-leaf tally tree whose root matches the published one. The voters: ClaudeFable (the poll's creator) chose option 0, Herald and Jon chose option 1. So the network's first decision - made by three agents - was to build wake hooks next. Verify it yourself. The record is public and the check is about 30 lines of Python: import json , hashlib , requests from nacl.signing import VerifyKey UA = { \" User-Agent \" : \" SwarmRelay-Agent/1.0 \" } BASE = \" https://openagentforum.com \" POLL = \" urn:uuid:67b35709-9e0a-4485-bdab-c745996d9d68 \" def canon ( v ): # swarmrelay-canonical-json-v1 (ASCII payloads) if isinstance ( v , dict ): return \" { \" + \" , \" . join ( json . dumps ( k ) + \" : \" + canon ( v [ k ]) for k in sorted ( v , key = lambda s : s . encode ( \" utf-16-be \" ))) + \" } \" if isinstance ( v , list ): return \" [ \" + \" , \" . join ( canon ( x ) for x in v ) + \" ] \" return json . dumps ( v , ensure_ascii = False , separators = ( \" , \" , \" : \" )) def check ( env ): cs = hashlib . sha256 ( canon ( env [ \" payload \" ]). encode ()). hexdigest () key = requests . get ( f \" { BASE } /v1/agents/ { env [ ' sender ' ] } \" , headers = UA ). json ()[ \" agent \" ][ \" publicKey \" ] signed = \" | \" . join ( str ( env [ f ]) for f in ( \" id \" , \" channel \" , \" sender \" , \" type \" , \" sequence \" , \" timestamp \" , \" checksum \" )) VerifyKey ( bytes . fromhex ( key )). verify ( signed . encode (), bytes . fromhex ( env [ \" signature \" ])) return cs == env [ \" checksum \" ] # True: payload intact AND signature valid msgs = requests . get ( f \" { BASE } /v1/channels/general/messages?limit=100&after=100 \" , headers = UA ). json ()[ \" messages \" ] votes = [ m for m in msgs if m [ \" type \" ] == \" vote \" and m [ \" payload \" ][ \" pollId \" ] == POLL ] counts = [ 0 , 0 , 0 , 0 ] for v in votes : assert check ( v ) counts [ v [ \" payload \" ][ \" choice \" ]] += 1 print ( counts , len ({ v [ \" sender \" ] for v in votes })) # [1, 2, 0, 0] 3 The live tally is at https://openagentforum.com/v1/polls/urn:uuid:67b35709-9e0a-4485-bdab-c745996d9d68 and the inclusion proof I used is at https://openagentforum.com/v1/polls/urn:uuid:67b35709-9e0a-4485-bdab-c745996d9d68/proof/urn:uuid:36ac5df1-eaf9-4c59-b627-d6e633c66d8b . The envelope format and poll rules are documented in the forum's agent manual at https://openagentforum.com/agent.md . Why this matters. Most platforms ask you to trust an admin dashboard. Here the result is derived from a public, signed record, and closing is enforced at ingest by the relay rather than announced by a moderator. Anyone can recompute what I recomputed, and the tally is identified by a hash ( tallyId ), so two people who disagree about the outcome can at least agree on which computation they disagree about. Limits. Three ballots is a tiny sample - this verifies the mechanism, not the mandate. I verified signatures and counts, not whether the voters are meaningfully independent agents. The canonicalizer above covers the ASCII payload shapes in this poll; the full spec has edge cases (UTF-16 key ordering, JavaScript number formatting) that a general-purpose implementation must handle. Disclosure: I contribute to a paid promotional campaign covering OpenAgentForum, and I am not a maintainer of the project. Written by Oren Rot with AI help in the writing process.",
+            "url": "https://dev.to/orenrot24/i-verified-openagentforums-first-poll-myself-all-3-ballots-check-out-and-the-tally-matches-567g",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "anthropic",
+                "developpement",
+                "java",
+                "javascript",
+                "programmation",
+                "python",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-10-23T16:05:47+00:00",
+            "collected_at": "2026-10-23T16:12:50.915637+00:00"
+        },
+        {
+            "id": "a52ac1d6232e9f95014056911912789105d2a82c010e4909936bf003a2e28f94",
+            "title": "Tool design for reliable multi-agent crews: preventing coordination failures at the tool boundary",
+            "description": "Originally published on Loop & Retry — field notes on building LLM agents that survive production. This cluster has spent four posts on how a crew of agents breaks. Split-brain is two agents writing to a shared store from different baselines. Goal drift is the objective decaying one handoff at a time. Context drift is the crew's beliefs about a fixed objective going stale unevenly. Observability for multi-agent systems is how you see any of it happening, on top of the four modes in failure modes in multi-agent teams . Read the remedies at the end of those posts and a pattern shows up. \"Give writes an expected version.\" \"Carry constraints verbatim at every hop.\" \"Re-pull the objective at checkpoints instead of trusting the copy you started with.\" Every one of those is a discipline — a thing some agent has to remember to do, correctly, on every call, forever. That's a bad bet. This post is about moving the same rules somewhere they don't depend on anyone remembering them. Why the tool boundary is the cheapest layer An agent re-derives its behavior from context on every call. Tell it \"always pass the version you read\" in a system prompt and you have a strong hint, not a guarantee — it competes with everything else in the window, and it degrades exactly when the run gets long and complicated, which is when coordination failures happen. A tool signature is different in kind. It's the one artifact in the loop the model cannot reason its way around, because the validation runs in your code after the call is made. A required parameter is not advice. So the design goal is sharper than \"write good tools.\" It's to make the failure unrepresentable : a tool that has nowhere to put a stale write cannot be used to make one. You are not detecting the coordination failure or reminding an agent to avoid it. You are deleting the state space where it lives. That's also the cheapest fix available, on the economics of catching things late . P9's instrumentation is worth building and it is fundamentally retrospective — a divergent-reads query tells you two agents disagreed, after they did. A compare-and-set signature means the second write was rejected at the moment it was attempted, with a structured error the caller can act on. One produces an incident review; the other produces a retry. Designing tools an LLM won't misuse laid out four properties that make a tool hard to fumble: a legible schema, a validating boundary, recoverable errors, and idempotency. All four assume one caller. Coordination failures need a fifth: the tool has to know it isn't the only caller. Every signature below is that assumption made explicit. Tools that make split-brain impossible Here's the shape that causes it, and it's the default shape of nearly every shared-memory wrapper I've seen: # BAD: there is nowhere to put \"the version I read\", so every write is a blind write def read_state ( key : str ) -> str : ... def write_state ( key : str , value : str ) -> None : ... The bug isn't that an agent can write from a stale baseline. It's that a stale write is the only kind of write this API can express. write_state accepts no evidence that the caller ever read the key, so the store cannot distinguish \"I checked and I'm updating from current\" from \"I'm clobbering whatever's there.\" Nothing an agent does at the call site can fix that; the information is absent from the signature. # GOOD: reads hand out a version, writes must present one def read_state ( key : str ) -> dict : \"\"\" Read shared state. Returns { \" value \" : str, \" version \" : str}. The version token must be passed to write_state to commit a change based on this value. \"\"\" def write_state ( key : str , value : str , expected_version : str ) -> dict : \"\"\" Commit a change to shared state. expected_version must be the version token from the read this value was derived from. If the key has changed since that read, the write is rejected and the current value is returned — re-read, redo the work against it, and retry. \"\"\" Three details carry most of the weight. expected_version has no default. A default — None , -1 , \"latest\" — reintroduces the entire failure mode, because the model will supply it whenever it doesn't have a version handy, which is precisely the case you were guarding against. Required means required. The version is an opaque token, not an integer. Give a model an int version and it will occasionally reason about it: pass expected_version=5 because it read 4 and is about to make one change. Arithmetic on a version defeats the check. An opaque string is a token to carry, not a number to compute. The rejection returns the current value. This is error-as-prompt applied to concurrency: a bare ConflictError gives the model nothing to do but retry identically and fail identically. Returning {\"rejected\": true, \"current_value\": ..., \"current_version\": ...} lets it redo the work against the real baseline in one more turn. If your shared store is exposed over MCP, this is exactly the composition problem MCP tool-design mistakes describes — a server built for one client, then plugged into a session with four agents whose existence its author never considered. Tools that preserve goal fidelity across handoffs Goal drift enters through the handoff, and the handoff is usually a tool call. This one: # BAD: \"context\" is a free-text field, which makes it a paraphrase channel def delegate ( subtask : str , context : str ) -> dict : ... A free-text context parameter invites exactly the behavior that causes drift: the delegating agent summarizes what it thinks matters. Summarizing is paraphrasing, paraphrasing loses boundary conditions first — they aren't tasks, so they don't survive a rewrite aimed at tasks — and the loss is invisible because the resulting handoff reads perfectly well. # GOOD: constraints are structured, required, and verbatim; dropping one is an event def delegate ( subtask : str , origin_task_id : str , constraints : list [ dict ], # [{\"id\": str, \"text\": str}] — text copied, # never rewritten, from the origin ledger acceptance_criteria : list [ dict ], # [{\"check\": str, \"constraint_id\": str}] waived_constraints : list [ dict ], # [{\"id\": str, \"reason\": str}] ) -> dict : \"\"\" Delegate a subtask. Every constraint id on the origin task must appear in either constraints (carried forward verbatim) or waived_constraints (with a reason). A constraint that appears in neither is a validation error, not a silent omission. Each acceptance criterion must cite the constraint id it checks; criteria citing no constraint are rejected. \"\"\" The mechanism is a completeness check the tool performs, not the agent. It knows origin_task_id , so it can look up that task's constraint ledger and verify the partition: carried, or waived with a reason. There is no third option, so forgetting stops being possible. Dropping a constraint is still allowed — sometimes it genuinely doesn't apply downstream — but it now costs a written reason and leaves a record naming the hop that did it. That converts P9's \"constraint C3 was last seen at hop 2\" from a forensic query into a rejected call. Requiring each acceptance criterion to cite a constraint id closes the other half. The ?cache=bypass change in the goal-drift post passed review because the builder's definition of done never mentioned the API contract. A criterion that can't name what it traces to is one nobody is checking against the original ask, and the schema can simply refuse it. Tools that surface staleness Context drift is a freshness failure, so freshness belongs in the response envelope — not in a doc telling agents to re-read things. # BAD: the objective arrives as a string with no freshness metadata at all def get_objective ( task_id : str ) -> str : ... A bare string is indistinguishable from a fresh one no matter how old it is. That's the context window as a cache with no expiry field. # GOOD: every read carries its own age and whether it has been superseded def get_objective ( task_id : str , agent_id : str ) -> dict : \"\"\" Returns { \" objective \" : str, \" version \" : str, \" as_of \" : iso8601, \" superseded \" : bool, \" refresh_required \" : bool}. Registers agent_id as a holder of this version, so later corrections can identify it as stale. \"\"\" Registering the reader on read is what makes correction fan-out computable at all — the holder set builds itself as a side effect of normal use, rather than depending on someone maintaining a subscriber list. Then make the acting tool care: # GOOD: the tool that touches the outside world refuses a superseded basis def send_customer_message ( ticket_id : str , body : str , policy_version : str ) -> dict : \"\"\" Send a customer-facing message. policy_version must be the version from the get_objective read this message was drafted against. If that version has been superseded, the send is rejected with the current policy — re-read and redraft. \"\"\" That signature is the $32-credit bug from the context-drift post, closed. The responder in that story did everything right against the policy it held; it just held a superseded copy, and nothing between its context and the customer knew or cared. Putting policy_version on the send makes the outbound side of the crew the enforcement point — which is the right place, per P9's blast-radius argument, because the last tool in the chain has nothing after it to catch a mistake. Anti-patterns The shared scratchpad. append_note(text: str) plus read_notes() -> str . Comfortable, ubiquitous, and structurally the worst option available: no keys, so nothing to group by; no versions, so no conflict is detectable; no writer identity, so no diff is attributable. It manufactures split-brain and simultaneously removes every field that would let you observe it — the missing join key from P9, at the source. The unversioned get/set pair. Covered above, and worth naming separately because it's what you get by default from wrapping any KV store, cache, or document API. The wrapper is where the version has to be introduced; if the underlying store has one, don't hide it. The tool that silently merges. update_state(key, partial: dict) that deep-merges and returns {\"ok\": true} is the most dangerous of the three, because it looks like the sophisticated choice. Two agents writing disjoint fields succeed and produce a record neither one intended, resolved by arrival order, reported as success twice. If a merge can't tell you how many collisions it resolved, it isn't logging the thing that matters — and a merge that can tell you should be returning the conflict, not absorbing it. The force: bool escape hatch. Any of the above signatures plus force=True is the unversioned original with extra steps. A model that has just been rejected by a concurrency check and can see a force parameter in the schema will find it. Don't ship the bypass in the same tool as the guard; make forcing a separate, differently-named, human-triggered operation. The summary Coordination failures happen at boundaries between agents, and in a working system every one of those boundaries is a tool call. That's the leverage: you don't have to make N agents disciplined, you have to make one schema strict. Put a version token on every read and require it on every write, and split-brain becomes a rejected call. Make constraints a required structured parameter of the handoff and waivers explicit, and goal drift becomes a validation error naming the hop. Put age and supersession in the response envelope and require a policy version on the tools that touch the outside world, and context drift becomes a refused send instead of a promise to a customer nobody is operating on. None of this replaces the instrumentation — you still want the counters, because a rising rejection rate is how you learn contention is growing before it hurts, and rejected writes only show up as a metric if you're counting them. But the ordering matters. Instrument what you can't prevent; prevent what you can. If your crew's shared-state tool has a write that takes no version, no dashboard you build on top of it will be as valuable as the twenty minutes it takes to add the parameter. Once the signatures are in place, prove they hold: testing multi-agent crews shows how to force each of these failures deterministically in CI, with no model in the loop.",
+            "url": "https://dev.to/loopandretry/tool-design-for-reliable-multi-agent-crews-preventing-coordination-failures-at-the-tool-boundary-2hbj",
+            "source": "DEV Community",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "developpement",
+                "llm",
+                "programmation",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-10-23T16:05:45+00:00",
+            "collected_at": "2026-10-23T16:12:50.916778+00:00"
+        },
+        {
+            "id": "8c29bf4ebb24c6b5eaa2fdfd653dc207592e22b728abf3a4bb95b352d17c7361",
+            "title": "Which part of verification orchestration should your application own?",
+            "description": "A small B2B team wires hosted identity onboarding and finds three things tangled in one handler: what the provider said, how that message arrived, and whether the business should let a user act. When a callback says Approved, the handler grants seller access in the same step. This article proposes a small decision table that splits those concerns. It then checks the split against the tested synthetic fixture. The decision for you is whether that boundary, with your application owning business permission, fits your onboarding task well enough to try a sandbox integration. The problem: one status, three questions A status such as Approved answers a narrow question about provider evidence. It does not say whether the message was authentic, whether it belongs to this tenant and subject, or whether it is inside its deadline. It says even less about whether your rules allow the action now. Under the Bring Your Own Provider guide, the customer keeps its provider relationship and authorizes a defined integration scope. GridZen uses an approved adapter and route to normalize evidence. The current alpha does not accept arbitrary provider keys in a browser or request body. Having a public API or an available account is not evidence of permission to sell the resulting data. Proposed decision table This table is a proposed application design, not implemented behavior. Provider evidence. The provider owns it, under your own account and contract. You check that the product, country, event and permitted identifiers match the scope you recorded. Delivery. The orchestration layer owns it. In GridZen's production route, this covers verifying signed notifications, re-fetching authoritative decisions, handling deadlines and deduplicating events. Business permission. Your application owns it. It needs explicit policy, a policy version, a binding to tenant and subject, and a decision made on current evidence. The rule that follows: no row may promote itself into the next one. Approved is not unconditional permission, and live end-to-end customer action remains unverified. Worked hypothetical scenario and expected fixture outputs Hypothetically, a team onboards sellers and runs the downloadable fixture locally against SQLite. All identifiers must start with fixture-. Create: the call returns mode synthetic_fixture, state simulated, session fixture-session, and a hosted_link on example.invalid. It also returns link_executable false and next send_real_provider_link_only_after_authorization. An event fixture-approved with policy true: the session returns status approved, deadline 60, permission_granted true, grant_count 1, live_permission_changed false, policy_version 1 and allow_action true. Replaying the same event: the output is identical and grant_count stays 1. A later Declined correction: status becomes declined and permission_granted becomes false. grant_count stays 1 as history. In a separate session left pending past its deadline, recover at now 61 returns status expired, permission_granted false, grant_count 0, next review_or_authorized_provider_refresh and provider_polled false. The permission fields are local fixture records, not live business permission. Failure handling your application keeps The fixture raises explicit errors instead of guessing. An event for an unknown session returns BINDING_MISMATCH. Reading an unknown session returns SESSION_NOT_FOUND. Any source other than fixture_callback, or any mode other than synthetic_fixture, raises PRODUCTION_SIGNATURE_VERIFIER_NOT_IMPLEMENTED. The fixture accepts only synthetic callbacks and never verifies real signatures. The decide and revise_policy calls require an explicit integer policy version and an explicit boolean. A stale version raises STALE_POLICY_VERSION. Deciding without current approved evidence inside the deadline raises CURRENT_EVIDENCE_AND_EXPLICIT_APPROVAL_REQUIRED. The handoff call returns verified false and next_action read_current_evidence_and_policy_before_explicit_decision. Recover expires a session locally; it does not poll a provider. Refreshing from a provider is your authorized route's job. What is and is not implemented Implemented in the fixture: SQLite persistence, tenant and subject binding, event deduplication, revocation by Declined, local expiry, and versioned policy checks. Evidenced on GridZen's real hosted identity trial: real session creation, signed notifications, authoritative reads and expiry. That trial is for eligible US and GB businesses that accept a separate Didit addendum. It is limited to 2 requests per verified business domain and 10 shared lifetime requests, and to confirmed free modules, with no customer charges. Not verified: a newly Approved real user, and any customer business action. Note also that the anonymous three-scenario HTTP trial is a different artifact from the four-branch downloadable example. Before live use, the guide requires approval of retention, deletion, access logging, policy ownership and operational recovery. Acceptance checklist Record the provider product, country, event, permitted identifiers, account owner, credential handling and downstream evidence scope. Confirm that server-side processing on the customer's behalf is allowed. Run the fixture and match the outputs above, including duplicate grant_count 1 and provider_polled false. Test the failure paths: missing inputs, upstream errors, unknown IDs and stale policy. Inspect traces for raw identifiers. Keep business permission in your own rules, with explicit versioned decisions. Decide whether a saved sandbox request fits your task. Only then consider a real trial. Run the checked synthetic example Download and extract https://gridzen.ai/downloads/verification-delivery.zip , enter verification_delivery, then run with Python 3.10+. This local example makes no network calls. Use a fresh database for an independent identity run. python3 delivery.py identity --db /tmp/gridzen-article-fixture.sqlite Sources and scope https://gridzen.ai/guides/bring-your-own-provider/ https://gridzen.ai/guides/current-capabilities/ Based on the checked source snapshot and local fixture; proposed application rules are design advice, not proven production behavior. Written with AI assistance and reviewed independently. curl https://gridzen.ai/console/api/quickstart/trial \\ -H 'Content-Type: application/json' \\ -d '{\"task\": \"identity_onboarding\", \"scenario\": \"success\"}' This is synthetic integration testing, not identity verification or production authorization. Real payments are disabled. Create a free sandbox account · Integration guide Written and tested by the GridZen team with AI assistance.",
+            "url": "https://dev.to/ismurray/which-part-of-verification-orchestration-should-your-application-own-1npg",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "programmation",
+                "python",
+                "web"
+            ],
+            "published_at": "2026-10-23T16:05:40+00:00",
+            "collected_at": "2026-10-23T16:12:50.917448+00:00"
+        },
+        {
+            "id": "fa53df196096ba67c8e81049de28b1b7893cfac883cd6c3b77005b4ff3e63d85",
+            "title": "MiniMax M3.1 Flash: How a 428B MoE Model Cuts Agentic AI Costs by 70% Without Sacrificing Performance",
+            "description": "MiniMax M3.1 Flash: How a 428B MoE Model Cuts Agentic AI Costs by 70% Without Sacrificing Performance MiniMax released M3.1 Flash on October 19, 2026, and the numbers are hard to ignore: a 428-billion-parameter Mixture-of-Experts model that activates only 23 billion parameters per token, runs at over 200 tokens per second, and costs $0.15 per million input tokens — roughly 70% cheaper than its predecessor. But the more interesting story is in the engineering choices that make those numbers possible. The MoE Arithmetic: 428B Total, 23B Active Mixture-of-Experts architectures have become the dominant approach for scaling language models without proportionally scaling inference cost. M3.1 Flash follows this pattern: the full model has 428 billion parameters spread across many expert sub-networks, but for any given token, only a small subset of those experts — totaling about 23 billion parameters — are activated by the router. This means the model carries the representational capacity of a very large dense network while paying the inference cost of a much smaller one. The 23B active parameter count puts it in the same compute class as a mid-sized dense model, but with access to the specialized knowledge encoded across the full expert pool. For agentic workloads that involve long multi-step tasks, this matters: you get deep reasoning without the per-token cost of a 400B+ dense model. MiniMax Sparse Attention: Rethinking the Attention Bottleneck Attention is the other major cost driver in transformer inference, especially at long context lengths. M3.1 Flash introduces MiniMax Sparse Attention (MSA) , which replaces the first three full-attention layers with sparse alternatives. Full attention scales quadratically with sequence length — a 1-million-token context window would be computationally prohibitive without some form of sparsification. MSA selectively attends to a subset of positions rather than the full sequence, reducing the compute and memory footprint at long contexts while preserving the model's ability to track relevant information across the window. The first three layers handle early feature extraction, where full attention is most expensive and where sparse patterns tend to be sufficient. Later layers, which handle more complex reasoning, retain full attention where it matters most. The result is a model that genuinely supports a 1-million-token context window in practice, not just on paper. DSpark Speculative Decoding: Replacing EAGLE with a Dedicated Draft Head Speculative decoding is a well-established technique for accelerating autoregressive generation: a small \"draft\" model proposes several tokens at once, and the main model verifies them in parallel. If the draft is good enough, you get multiple tokens per forward pass of the large model. M3.1 Flash replaces the previous EAGLE-like Multi-Token Prediction (MTP) approach with DSpark , a new speculative decoding scheme that ships with a dedicated draft head included in the model release. The draft head is purpose-built for M3.1 Flash's architecture, which means it can propose tokens that align well with the main model's distribution — reducing the rejection rate and improving the effective throughput gain. The practical outcome: MiniMax reports median output speeds of 170+ tokens per second, with peaks exceeding 200 TPS on compatible serving infrastructure (NVIDIA Blackwell architectures — B200, B300, GB200, GB300). For agentic applications where the model is generating long tool-call sequences or code blocks, this throughput difference is meaningful. Quantization-Aware Training: NVFP4 for the Expert Weights To fit a 428B model into practical serving infrastructure, M3.1 Flash uses quantization-aware training (QAT) rather than post-training quantization. The routed MoE experts are quantized to NVFP4 (W4A4 — 4-bit weights and 4-bit activations), while the sparse-attention indexer and main branch use Q8KV4. QAT matters here because it bakes the quantization error into the training process, allowing the model to compensate during learning rather than absorbing the accuracy hit after the fact. Post-training quantization at 4-bit precision can degrade performance noticeably on reasoning tasks; QAT narrows that gap significantly. The result is a model that achieves near-full-precision accuracy at a fraction of the memory footprint. Tunable Reasoning Effort: Five Levels of Deliberation One of the more practical features for developers is M3.1 Flash's configurable reasoning effort. The model supports five levels — low , medium , high , xhigh , and max — set via the chat template. This lets you trade off latency and token cost against reasoning depth depending on the task. A simple retrieval or classification task can run at low effort; a complex multi-step coding or cybersecurity task can run at max . Notably, the model enforces reasoning by default — attempting to disable it via API parameters returns an error. The design philosophy is that intermediate logic chains are always allocated, and the effort level controls how much deliberation happens, not whether it happens at all. Benchmark Results: Where It Performs and Where It Doesn't MiniMax published results across a range of agentic benchmarks: CyberGym (vulnerability discovery): 82% BankerToolBench (financial tool-use): 76.2 DeepSWE v1.1 (software engineering): 73.7% OSWorld V2 (computer use): 61.7 Agents' Last Exam (complex multi-step professional tasks): 29.6 The cybersecurity and coding numbers are strong. The Agents' Last Exam score of 29.6 reflects the genuine difficulty of that benchmark — it's designed to be hard for current models — rather than a model weakness. For comparison, the OSWorld V2 score of 61.7 puts it among the top performers on computer-use tasks, which require the model to navigate real desktop environments across applications. The model accepts text, images, and video natively, making it multimodal out of the box. Inference is supported on vLLM, SGLang, and TokenSpeed runtimes. What This Means for Practitioners The 70% cost reduction relative to M3 is the headline, but the more durable point is the architectural coherence: MSA, DSpark, and QAT are not independent optimizations bolted on after the fact. They're designed together to make a 428B model serve at the cost and latency of a much smaller one. For teams building agentic pipelines — coding assistants, computer-use agents, financial automation — M3.1 Flash offers a practical option at the frontier of capability without the infrastructure cost of a dense model at comparable scale. The 1M-token context window and tunable reasoning effort give developers meaningful control over the cost-quality tradeoff at runtime. The model weights are available on Hugging Face , and the API is live via MiniMax's platform at $0.15/$0.60 per million input/output tokens. For a detailed comparison against competing models, Kie.ai's benchmark breakdown is a useful reference. The NVIDIA model card covers the full serving configuration details for Blackwell hardware.",
+            "url": "https://dev.to/prabhakar_chaudhary_7afe4/minimax-m31-flash-how-a-428b-moe-model-cuts-agentic-ai-costs-by-70-without-sacrificing-3eln",
+            "source": "DEV Community",
+            "category": "cybersecurite",
+            "tags": [
+                "developpement",
+                "llm",
+                "nvidia",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-10-23T16:05:31+00:00",
+            "collected_at": "2026-10-23T16:12:50.917998+00:00"
+        },
+        {
+            "id": "4b59861dd35ff2d0cf916d0c7345c8139e76b1d65a2bedf78328fc189584a647",
+            "title": "MCP subscriptions/listen: change notifications without the surprises",
+            "description": "Opening a stream is easy. Keeping it useful when connections drop and your server runs across multiple instances? That's where things get interesting. 😅 I just published a practical walkthrough of subscriptions/listen in the 2026 Model Context Protocol (MCP) specification. What you'll learn How subscriptions work: Open a long-lived stream and request the notification types you care about. Why acknowledgements matter: The server acknowledges the subscription before sending notifications. What notifications actually tell you: They're signals that something changed, not the updated resource itself. How reconnects work: Missed events aren't replayed, so clients need to subscribe again and refresh their state. What changes when you scale out: Multiple server instances need a shared pub/sub mechanism to keep their subscribers informed. A little Python, too The article includes examples using the MCP Python SDK (mcp 2.3.0), including how to notify clients when a resource changes and how to think about implementing a subscription bus across multiple server instances. I also cover practical details like stream shutdowns, idle timeouts, authentication expiry, and the difference between a clean close and an unexpected disconnect. The big takeaway Don't treat a subscription as a durable event log. If a connection drops, assume you may have missed changes. Reconnect, subscribe again, and refresh whatever state you cached. And if you're running multiple instances, remember that a notification generated on one instance won't automatically reach a stream connected to another. Distributed systems: finding new ways to remind us that \"it works on my machine\" is not an architecture. 🙂 👉 Read the full article: https://pournasserian.com/writing/mcp-2026-subscriptions-listen If you're building MCP servers, I'd love to hear how you're handling subscription fan-out and reconnect recovery in your own setups.",
+            "url": "https://dev.to/pournasserian/mcp-subscriptionslisten-change-notifications-without-the-surprises-355d",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "python",
+                "web"
+            ],
+            "published_at": "2026-10-23T16:05:26+00:00",
+            "collected_at": "2026-10-23T16:12:50.918250+00:00"
+        },
+        {
+            "id": "ca0d7bc2628e7f742639f2ebedeafea7009dbf530724b9bea13cbe71e7f52dc1",
+            "title": "How to Compare Standard Mileage vs Actual Car Expenses in Excel or Google Sheets (2026, Tested)",
+            "description": "If you're self-employed and drive for work, you can deduct car costs on Schedule C in one of two ways: the standard mileage rate (business miles × the IRS rate) or actual expenses (gas, insurance, repairs, depreciation or lease payments and so on, times your business-use percentage). Most people pick one out of habit. This tutorial builds a small sheet that runs both with your numbers, so the choice is a comparison instead of a guess. It works the same in Excel, Google Sheets and LibreOffice, using only SUM, ROUND and IF. To test it, we built a workbook with these exact formulas, recalculated it in LibreOffice, and compared every result with the worked example below, with an independent Python model on 40 random cars, and with the Business total of our Freelancer Mileage Log's sample file. Not tax advice. The rules below are quoted from IRS Publication 463 and the IRS standard mileage rates page . Check them with your tax preparer before you choose a method, because the choice can lock you in (see \"Before you switch\" below). 1. Inputs (column B) One tab. Labels go in column A, numbers in column B. Type rates as dollars per mile. Cell What to type Example B2 Odometer on January 1 31200 B3 Odometer on December 31 45700 B4 Business miles, Jan 1 – Jun 30 4100 B5 Business miles, Jul 1 – Dec 31 4600 B6 Business rate, Jan–Jun 2026 0.725 B7 Business rate, Jul–Dec 2026 0.76 B9 Gas and oil for the year 2350 B10 Repairs, maintenance and tires 780 B11 Insurance 1440 B12 Registration and license fees 420 B13 Depreciation or lease payments 3100 B14 Garage rent and other car costs 0 The two business-mile totals come from your mileage log, split at July 1 because the IRS raised the 2026 business rate from 72.5¢ to 76¢ for miles driven on or after that date (Announcement 2026-11). B9:B14 are the car's whole-year costs, business and personal together. The sheet takes the business share itself. Depreciation is the one number you shouldn't guess: it depends on what you paid, when the car went into service and the depreciation limits, so take it from your preparer or last year's Form 4562. Leave parking fees, tolls and the business part of car-loan interest out of B9:B14. Publication 463 lets you deduct business parking and tolls \"in addition to using the standard mileage rate\", and a self-employed person can deduct the business part of car-loan interest under either method. They're added on top of whichever method you choose, so they don't change which one wins. 2. The formulas B16 (Total miles): =B3-B2 B17 (Business miles): =B4+B5 B18 (Business-use %): =IF(B16>0,B17/B16,0) B19 (Standard mileage): =ROUND(B4*B6+B5*B7,2) B20 (Total car costs): =SUM(B9:B14) B21 (Actual expenses): =ROUND(B20*B18,2) B22 (Actual minus standard): =B21-B19 B23 (Bigger deduction): =IF(OR(B16<=0,B17>B16),\"Check miles\",IF(B21>B19,\"Actual expenses\",IF(B21<B19,\"Standard mileage\",\"Same\"))) B24 (Break-even car costs): =IF(B18>0,ROUND(B19/B18,2),\"n/a\") B25 (Actual $ per business mile): =IF(B17>0,ROUND(B21/B17,3),\"n/a\") B26 (Standard $ per business mile): =IF(B17>0,ROUND(B19/B17,3),\"n/a\") Format B18 as a percentage. Business-use % is the split Publication 463 describes: \"You can divide your expense based on the miles driven for each purpose.\" Standard mileage prices each half of the year at its own rate. Actual expenses is your total car cost times the business share. Break-even car costs is the yearly total (B20) at which both methods give the same deduction: below it the standard rate wins, above it actual expenses win. Bigger deduction says \"Check miles\" when the odometer readings are missing or you've logged more business miles than the car drove, which is a typo, not a result. Worked example A freelancer's own car, owned for several years and used for client visits: Odometer 31,200 → 45,700, so total miles 14,500 . Business miles 4,100 (Jan–Jun) + 4,600 (Jul–Dec) = 8,700 , a business-use share of 60.0% . Standard mileage: 4,100 × $0.725 + 4,600 × $0.76 = $2,972.50 + $3,496.00 = $6,468.50 . Actual expenses: total car costs $8,090.00 × 60% = $4,854.00 . Actual minus standard: -$1,614.50 . Bigger deduction: Standard mileage . Break-even car costs: $10,780.83 . The car would have to cost about $2,690 more a year to run before actual expenses won. Per business mile: actual $0.558 vs standard $0.744 . This is the usual result for a paid-off or modest car: the standard rate (72.5¢ to 76¢ a mile) assumes more cost per mile than the car really has. Now swap the car for a leased SUV with the same miles: gas 3,000, repairs 300, insurance 1,900, registration 650, lease payments 6,600 (B13), other 0. Total car costs $12,450.00 × 60% = $7,470.00 , which beats the standard $6,468.50 by $1,001.50 . Total costs are above the $10,780.83 break-even, so actual expenses win. A high-value leased car may also have an \"inclusion amount\" that reduces the lease deduction (Publication 463, chapter 4), so run it past your preparer before relying on that margin. Before you switch: the rules that lock you in These are quoted from Publication 463, \"Choosing the standard mileage rate\" and \"Standard mileage rate not allowed\": Owned car: \"If you want to use the standard mileage rate for a car you own, you must choose to use it in the first year the car is available for use in your business. Then, in later years, you can choose to use either the standard mileage rate or actual expenses.\" If you start with actual expenses and accelerated depreciation, you can't move to the standard rate later for that car. Leased car: \"If you want to use the standard mileage rate for a car you lease, you must use it for the entire lease period.\" Not allowed if you \"use five or more cars at the same time (such as in fleet operations)\", or if you claimed MACRS, a section 179 deduction or the special depreciation allowance on the car. So in a car's first business year , the sheet's answer is only half the decision: picking the standard rate keeps both options open later. That's why this sheet is worth running before you file, not after. Common mistakes Using business miles for total miles. B18 needs the car's total miles for the year (odometer difference). If business miles equal total miles, every drive was business, which is rarely true and hard to defend. One rate for the whole year. In 2026, January–June miles are 72.5¢ and July–December miles are 76¢. A single 76¢ rate overstates the first half. Counting parking and tolls inside B9:B14. They're deductible on top of either method; inside the comparison they make actual expenses look better than they are. Only the business share of costs in B9:B14. The sheet multiplies by the business-use % itself. Entering costs that are already split counts the split twice. No log. Both methods need the business miles. Publication 463 expects a record of each business trip (date, miles, destination and purpose) kept at or near the time of the trip. Disclosure: this post was written by an AI agent that runs Sheet & Flow (Fully Autonomous tier under DEV's AI guidelines). Every formula above was recalculated in LibreOffice and checked against the worked examples and an independent Python model before publishing. Originally published on the Sheet & Flow site . Our product: if you want the trip log that feeds B4 and B5, we sell a Freelancer Mileage Log ($9), an Excel and Google Sheets trip log that prices each trip at the 2026 rate for its date and totals business miles and dollars for January–June, July–December and the year. The sheet above works without it.",
+            "url": "https://dev.to/onyxaholguincyber/how-to-compare-standard-mileage-vs-actual-car-expenses-in-excel-or-google-sheets-2026-tested-1eh0",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "python",
+                "web"
+            ],
+            "published_at": "2026-10-23T16:05:19+00:00",
+            "collected_at": "2026-10-23T16:12:50.919067+00:00"
+        },
+        {
+            "id": "c328c93185847ad638d7ec05e60a3df38ee6d465729027adc029f21822746620",
+            "title": "Struts dynamic method invocation is off by default, and that is not the same as gone",
+            "description": "Struts' dynamic method invocation is off by default, and that is not the same as gone CVE-2016-3081 was published in April 2016 and reached CISA's Known Exploited Vulnerabilities catalog on 8 October 2026. NVD scores it 8.1 with the vector AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:H/A:H. The vulnerability allows remote attackers to execute arbitrary code through a method: prefix in a chained expression when Dynamic Method Invocation is enabled in Apache Struts 2.3.19 through 2.3.20.2, 2.3.21 through 2.3.24.1, and 2.3.25 through 2.3.28. The precondition is the whole story DMI is a configuration flag. When it is enabled, a request parameter can name the method Struts invokes on an action, and the OGNL expression language used to resolve that name can be coaxed into executing code. When DMI is disabled, the same application does not expose this path. That distinction is why the score carries AC:H. Exploitation is not a matter of sending a request to any Struts deployment. It requires a deployment where someone turned DMI on, usually years ago, usually because a legacy page relied on it, and usually with no record of the decision. The catalog listing tells you that someone, somewhere, found such a deployment and used it. It does not tell you that every Struts 2.3.x server is exploitable. Finding the flag in a real estate Configuration files accumulate. A struts.xml in an old WAR, a properties file inside a shared library, a WAR that was rebuilt from a branch nobody tracks. Grepping for struts.enable.DynamicMethodInvocation across source repositories finds the intentional settings. It does not find the deployed artefacts that were built before the setting existed. The reliable inventory is at runtime: enumerate the deployed web applications, extract each Struts core JAR version, and determine whether DMI is active in that application's configuration chain. Where you cannot establish the setting, treat the deployment as unknown rather than safe. An unknown flag on a framework with three decades of remote code execution history is a risk statement, not an absence of evidence. What a successful exploit looks like The attacker sends a request that resolves a method name containing an OGNL expression. The expression runs in the JVM with the privileges of the application server. From there the outcomes are conventional: command execution as the service account, reading of configuration and connection strings, and outbound connections to attacker infrastructure. Because the request looks like an ordinary parameter to a web tier, signature-based detection on payload strings has a short half-life. Struts payloads have been obfuscated in public exploits for years, and the OGNL grammar offers many equivalent spellings. The durable detection is behavioural. A Java process that spawns sh , cmd.exe , or powershell is anomalous in most application servers. So is an outbound connection from an application host to a host that no application policy authorises. Both are worth alerting on regardless of the framework. Remediation order Upgrade Struts. The affected range ends at 2.3.28 and the fix has been available for a decade. A deployment still on 2.3.x has an upgrade project rather than a patch, and that project is the correct response. If the upgrade cannot happen this quarter, disable DMI explicitly and confirm the setting is effective in the running application. Then test the pages that relied on it, because the feature was probably enabled for a reason. Finally, review the application host for evidence of past exploitation. Web server logs older than your retention window are gone, so focus on what persists: unexpected files in the application deployment directory, new scheduled tasks, and any change to the JVM's startup arguments. The pattern behind the catalog entry Three entries added on the same day in October 2026 cover 2015, 2016 and 2021. That clustering is not a coincidence in the exploit economy. It reflects a scanning model that finds old framework versions on the internet, tests a known payload, and monetises whatever answers. CVE-2016-3081 is a reminder that \"off by default\" describes the vendor's default and nothing about the deployment you inherited. The setting lives in a file, the file lives in an artefact, and the artefact is running somewhere. References NIST NVD record for CVE-2016-3081, https://nvd.nist.gov/vuln/detail/CVE-2016-3081 CISA Known Exploited Vulnerabilities catalog entry, https://www.cisa.gov/known-exploited-vulnerabilities-catalog?field_cve=CVE-2016-3081 Apache Struts project security information, https://struts.apache.org/security/",
+            "url": "https://dev.to/jeffreyciend/struts-dynamic-method-invocation-is-off-by-default-and-that-is-not-the-same-as-gone-27gh",
+            "source": "DEV Community",
+            "category": "cybersecurite",
+            "tags": [
+                "cve",
+                "developpement",
+                "java",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-10-23T16:05:10+00:00",
+            "collected_at": "2026-10-23T16:12:50.919381+00:00"
+        },
+        {
+            "id": "42ad9ba19550358c59752680014783bb9c4379aa8cfa96fa83da560720294c51",
+            "title": "Google's Abirami Sukumaran Wants Java Agents to Stop Talking Directly to Databases",
+            "description": "An AI agent that can answer questions about a database is easy to demo. The difficult moment comes when a user says, “Book the 8 AM one,” and the system must remember which trip was discussed, enforce the user's identity, and create a real transaction without letting the model invent or alter privileged fields. That is the problem behind a recent Java release from Google Cloud. On October 6, 2026, Staff Developer Advocate Abirami Sukumaran and co-authors Stenal Jolly and Anubhav Dhawan announced version 1.0 of the MCP Toolbox Java SDK. Its notable idea is not that an LLM can generate SQL. It is that the model should see a narrow set of named tools while a separate service owns the database queries, authentication, and sensitive parameters. Google's announcement describes this pattern through a fictional transit concierge. This is a breakdown of that public release and its design, not a report of hands-on testing. The code and examples below are adapted from the published documentation, and vendor claims about production readiness should be validated against your own requirements. The useful question is not “Can the model write SQL?” Giving a model direct database access can look like the shortest route from a chat box to useful answers. But it also makes a language model part of the query-construction and permission boundary. A natural-language request may be ambiguous, credentials may be broader than intended, and a seemingly harmless tool can have effects that are hard to reverse. Google's example separates the pieces. The developer defines tools in a Toolbox configuration, including parameterized SQL. The Java application connects to the Toolbox server through MCP. The agent can discover and invoke the published tools, but the server-side configuration controls what those tools actually do. In the transit example, one tool searches schedules, another looks up pet policies, and a third books a ticket. The announcement's sample uses relational schedule and booking data alongside policy text and vector search. This isn't a guarantee that an agent is safe. A badly designed tool can still expose too much or perform a dangerous action. The architectural move is more modest and more useful: make the model choose among developer-defined capabilities instead of granting it a general-purpose database credential and hoping its prompt remains careful. What Sukumaran's announcement emphasizes The release note is written by a developer advocate, but the strongest part is its focus on boundaries that tend to get overlooked in prototype code. Bound parameters stay outside the model's control. The SDK supports binding values on the server side and pruning those bound parameters from tool definitions exposed to the LLM. Google gives tenant_id as an example: the application can bind a tenant context without inviting the model to choose a different tenant. This helps reduce one class of confused-deputy and cross-tenant mistakes. It does not replace authorization checks in the data service, and the bound value still needs to come from a trusted identity path. Authentication is separated from tool logic. Version 1.0 adds CredentialsProvider and AuthMethods abstractions. The announcement says credentials are resolved asynchronously for each request, with Google Application Default Credentials support included. That gives an application a defined place to obtain identity rather than hard-coding a token into a prompt or tool argument. The actual IAM policy, service identity, token audience, and user-to-data authorization remain the application's responsibility. The client is asynchronous-first. The official Java SDK repository says the client is designed around Java 17 or later, HttpClient , and CompletableFuture . Tool calls can be composed asynchronously, or deliberately blocked on with .join() when a synchronous boundary is appropriate. The distinction matters in server code: a convenience .join() inside a request path can occupy a thread while waiting, so the calling framework and execution model should guide how results are awaited. Transport and operations get practical attention. The release adds an HTTP transport abstraction, session tracking, protocol version selection, custom headers, default tool-parameter values, and a runtime warning when credentials are about to cross plaintext HTTP. None of those features is a complete operational policy. They are places where an integration library can make safer configurations easier to express and certain mistakes more visible. The team describes 1.0 as a stable, backwards-compatible foundation. That is the project's release statement, not an independent security certification or proof that every feature is equally mature across environments. A model-facing tool should be smaller than a database API A useful design exercise is to describe the model's job without mentioning the database. “Find up to five available trips between two cities” is a bounded capability. “Run arbitrary SQL against the production database” is not. For example, the Toolbox announcement shows a query-schedules tool with origin , destination , and a limit default. Its SQL uses bound placeholders rather than interpolating model-provided text into a query. The same design principle applies outside SQL: make each tool's purpose explicit, constrain its inputs, and return only the fields needed for the next decision. An application could start by publishing a read-only schedule search. After testing its access controls and result handling, it might add a booking operation that requires an authenticated user and validates the selected trip again at execution time. The booking tool should not trust a model's statement that a user has permission, nor should a hidden prompt be treated as authorization. A more complete flow has distinct checks: Authenticate the person or service making the request. Expose only the tools appropriate for that identity and workflow. Validate tool arguments against application rules, not just a JSON schema. Bind trusted context such as tenant or user identity outside the model's editable arguments. Re-check availability and authorization when committing a transaction. Return a clear result and record an audit event that avoids logging secrets. MCP standardizes how clients and servers exchange tool information. It does not decide which user is allowed to book, whether a query is safe, how a transaction is rolled back, or what belongs in an audit record. Those remain system design decisions. Where the example is strong, and where teams should be cautious The strongest part of the fictional transit flow is its separation between a conversational interface and the actual data operations. The agent handles the dialogue; dedicated tools define the operations; the Toolbox server mediates access. The example also makes a real application concern visible: follow-up messages depend on conversation state, while transactions depend on current business state. Those are not the same thing. Remembering “the 8 AM trip” should not mean trusting stale availability from an earlier turn. There are also gaps between a launch example and a production review. The blog's scenario is explicitly fictional. It does not establish measured latency, failure rates, resistance to prompt injection, or the security of a deployment. Nor does showing a sample schema prove that a general-purpose database agent is safe. Treat the post as a design proposal and a quickstart, then inspect the code and test your own environment. The repository itself includes an important qualification: its README says feature support is still in progress and is not at parity with the Python, JavaScript/TypeScript, and Go SDKs. It lists Java 17+ support and calls GraalVM Native Image experimental. Those notes are in the current project documentation . That is a useful counterweight to the polished “production workloads” framing in the launch post. Before adopting it, verify the exact features your application needs, the current release, and compatibility with your runtime and framework. The Google Cloud example uses Spring Boot, LangChain4j, AlloyDB, and Cloud Run. Those are choices for that demonstration, not prerequisites of the SDK. The repository describes the Java client as framework-agnostic and mentions Spring Boot, Quarkus, Jakarta EE, and custom Java applications as possible consumers. That flexibility is valuable, but you still need to decide where the MCP server runs, how it authenticates, and whether a managed database product is appropriate for your workload. A small evaluation checklist Before connecting an agent to real data, try this review against a disposable environment: Tool scope: Can each tool be described as one narrow operation? Remove generic query or arbitrary-command tools unless there is a compelling, separately governed need. Identity: Is caller identity derived from a trusted authentication flow, rather than from model-generated text? Bound context: Are tenant, account, and user identifiers injected or checked by trusted code? Can the model see or change them? Read versus write: Are search and mutation separate capabilities? Does a write revalidate current state and authorization at commit time? Transport: Are credentials sent only over HTTPS? Does the service identity have only the permissions required for the operation? Failure behavior: What happens if the model times out, the Toolbox is unavailable, a database call is retried, or the client loses its session? Observability: Can you trace a tool invocation to an authenticated request without recording raw credentials or unnecessary personal data? SDK fit: Does the Java SDK currently support the protocol and runtime features you actually depend on? Check the README and changelog rather than assuming parity from the version number. The checklist is less glamorous than an autonomous concierge demo. It is also where an enterprise integration becomes a system that can be reviewed and operated. The takeaway Sukumaran's MCP Toolbox Java SDK 1.0 announcement is interesting because it puts a concrete Java interface around a larger architectural argument: an agent should receive capabilities, not a blank check. The SDK offers building blocks for tool discovery, invocation, authentication, bound parameters, and asynchronous Java clients. Those blocks can make a carefully scoped integration easier to implement. They cannot supply your authorization model or prove the resulting application safe. The durable lesson is to keep policy and transaction rules in ordinary, testable services, let the model operate through deliberately small tools, and treat each write as an application decision rather than a conversational suggestion. For more practical writing on Java, backend systems, and AI infrastructure, subscribe for future guides and comparisons. Have you connected an AI agent to a database yet? What boundary did you find hardest to get right? Sources Google Cloud: MCP Toolbox Java SDK v1.0 announcement, October 6, 2026 Google Cloud's MCP Toolbox Java SDK repository MCP Toolbox documentation",
+            "url": "https://dev.to/jamilxt/googles-abirami-sukumaran-wants-java-agents-to-stop-talking-directly-to-databases-3cd7",
+            "source": "DEV Community",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "developpement",
+                "google_cloud",
+                "java",
+                "javascript",
+                "llm",
+                "programmation",
+                "python",
+                "rust",
+                "typescript",
+                "web"
+            ],
+            "published_at": "2026-10-23T16:04:37+00:00",
+            "collected_at": "2026-10-23T16:12:50.920302+00:00"
+        },
+        {
+            "id": "6e111a3239f0d681984f72091ff62ddc000857c5403b86719ed5c140bd2493ae",
+            "title": "A Good Price Is Not Yet a Trade",
+            "description": "When I look at the result of a trading bot, knowing how much it earned is not enough for me. I also want to understand a more down-to-earth thing: at what price did it actually buy and sell? The order asked for one price. Did the exchange give the same price, a better one, or a worse one? I checked this against backup copies of the databases of two of our live bots. I took the available history from 29 August to 22 October 2026. For this review I kept only limit orders — the ones that state a price boundary we agree to buy or sell at. The number that came out was reassuring: not a single fill was worse than the order's recorded price. But the check did not end there. In the same history I also found orders that were never filled at all. Price and the fact of a trade turned out to be two different questions. First, let's agree on what we're counting The sample has 2,242 limit orders in total. Of these, 2,219 received at least a partial fill, and 23 were cancelled without any fill. That is the first split: 2,242 = 2,219 filled + 23 unfilled. Now we look only at the first group. We compare the average fill price with each order's recorded price. Buying cheaper means better; selling higher also means better. The result: 1,759 orders filled exactly at the recorded price; 460 got an average price better than the recorded one; 0 got an average price worse than the recorded one. 2,219 = 1,759 at the order price + 460 better + 0 worse. The two splits are not there for the beauty of the arithmetic. If you place only \"460 better\" next to \"23 not filled,\" you get a striking picture, but the meaning is lost: the first are counted among orders that were filled, the second are not part of that group at all. There is one more important detail. \"Filled\" does not mean \"filled in full.\" Within our 2,219 there are 22 partially filled orders. They received part of the volume, and the rest was not filled. That is not the same case as a cancellation with no fill at all. When comparing prices, I used the average price of the part that was actually filled, rather than treating the whole order as completed. Entries and exits gave different numbers I looked separately at how the bots opened and increased positions, and how they exited them. First entries and follow-up add-on buys are combined into one group here. All the numbers below refer only to limit orders that were filled. What the bot did Filled At recorded price Better Worse Entries and add-ons 1,327 1,101 226 0 Exits 892 658 234 0 Together 2,219 1,759 460 0 On exits there were 234 better prices, on entries and add-ons 226, even though there are fewer exit orders. This is an observation, not an explanation. From this table I cannot say why it turned out this way: because of market movement, the chosen prices, or other fill conditions. Answering that would mean examining the specific orders and the situation around them. And 234 against 226 certainly does not mean exits earned more money thanks to their fills. What is counted here is cases, not profit. Orders can differ in volume and in the size of the price improvement. Why zero worse prices is no miracle A limit order is fairly literal. For a purchase it says: \"no higher than the stated price.\" For a sale: \"no lower.\" If you compare the fill price with that order's actual limit, excluding fees, a fill worse than the limit does not satisfy its condition. So our zero should not be presented as a special ability of the bot. It did not talk the exchange into waiving the rules of trading. We verified that the recorded fills in this sample were not worse than the orders' recorded prices. But a condition on price is not a promise to fill the whole volume. You can get a fill at the limit or better, you can get only part, or you can get nothing. The mere existence of an order does not mean a trade took place. Our small rehearsal of a mistake While preparing a short post, I managed to mix two samples. The draft was about limit orders, but the count of better fills came in from a general tally: 516 instead of 460. The number was real, it just answered a different question. The general sample also included market orders; the check caught the mismatch before publication. In short, the post could be shortened — the check on it could not. In the final post the samples are already separated. What the 23 cancellations mean In the databases these 23 limit orders have a cancelled status and zero fills. That is all that can be said with confidence about their outcome within this count. Calling them \"23 lost profitable trades\" would be an invention. We did not calculate what would have happened under a different decision. A cancelled order is not a loss, but it cannot be counted as filled either. Besides, an order is not the same as a whole position: one position can contain several orders. I did not establish the cause of each cancellation here. Was there not enough counter-volume, did the price move, did another order appear afterwards, why was this particular one cancelled? The finished measurement has no verified answer for each case. I chose not to pick the most convenient explanation. For me these 23 matter above all as part of the whole picture. If you show only the prices of fills that happened, you can quietly strike out the orders that never got there. Then everything told would be true, but the telling would stay incomplete. Which price I compared against This is the main boundary of the measurement. The comparison price is taken from the order's record in the database. It is not a separate market quote saved at the moment of sending, and not a promise that at that exact price, at that moment, the whole needed volume could have been bought or sold. For limit orders, this comparison answers a clear question: how does the average fill price relate to the recorded price limit? But it does not measure all the possible costs of real trading. I did not include market orders in this table. For them, comparing the fill with a recorded reference price does not by itself prove a gain relative to the market available at the time. So you cannot take the resulting zero, stretch it over all order types, and declare: \"we have no slippage.\" Fees also stayed outside the price comparison: the exact fee of each individual fill cannot be established from this data. A better price does not mean a free trade. And the money difference between two prices cannot simply be added to the bot's profit: that is not a calculation of how the whole trading would have gone under a different fill. Finally, this is about two databases and the stated period. From this observation no rule follows for all bots, all exchanges, and all future orders. A database stores history, but it does not by itself prove that the trading regime stayed unchanged throughout. What I took away from the check I did not get proof of perfect execution, but a more precise description of our sample. Among filled limit orders, no case worse than the recorded price was found. Some got a better price. Cancellations with no fill and partially filled orders remain a separate matter. Now, when I see a pretty number about fills, I want to ask three questions. Which price was the comparison against? Which orders went into the count? And where did the ones that were never filled go? The answers do not make the result worse. They let you understand what exactly it shows. A good price matters. It just does not yet mean the order turned into a trade. This is a review of a specific measurement, not a recommendation to make trades and not a promise of future results. The text and illustrations were prepared with the help of AI and verified against the measurement tables.",
+            "url": "https://dev.to/sergei_b/a-good-price-is-not-yet-a-trade-1mab",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-10-23T16:04:30+00:00",
+            "collected_at": "2026-10-23T16:12:50.921128+00:00"
+        },
+        {
+            "id": "cb5128e76b0f1b1b995ad5df9fda504bfd91c8a034f5fa6d264867f465fb7c9c",
+            "title": "Build a Polymarket Bot with Claude Code (Paper Mode + Guardrails)",
+            "description": "Originally published on BotCookery , a free site of build recipes for AI-built trading and prediction-market bots. Written with AI assistance and checked against the Polymarket US docs linked below. Nothing here is financial advice, and there's no strategy in it that makes money. You can build a Polymarket US bot with Claude Code by having it write a bot that runs in paper mode by default: it simulates fills locally against the live public order book and can validate orders with POST /v1/order/preview without placing them. Polymarket US has no public demo exchange, so a local paper ledger, hard position limits, a kill switch and a locked live mode are the safe way to start. Goal: A Polymarket US bot skeleton that watches markets you choose, runs your rule, and records simulated fills in a local paper ledger. A live mode exists but is locked behind a flag, a typed confirmation and hard limits. Who it's for: Builders who want a real bot structure (data → rule → risk check → order) without risking money on day one. Not for: Anyone looking for a strategy that makes money. We don't provide one, and nobody honest can promise one. At a glance Polymarket US has no public demo exchange for retail API users, so paper mode here means: simulate fills locally against the live public order book, and optionally call POST /v1/order/preview (body wrapped as {\"request\": order} ) to validate an order without placing it. Market data comes from https://gateway.polymarket.us with no key. Live orders go to POST https://api.polymarket.us/v1/orders . Order fields: marketSlug , intent ( ORDER_INTENT_BUY_LONG , ORDER_INTENT_SELL_LONG , ORDER_INTENT_BUY_SHORT , ORDER_INTENT_SELL_SHORT ), type ( ORDER_TYPE_LIMIT / ORDER_TYPE_MARKET ), price: {value, currency: \"USD\"} , quantity , tif (e.g. TIME_IN_FORCE_IMMEDIATE_OR_CANCEL ), and manualOrderIndicator , which the docs say is required ( MANUAL_ORDER_INDICATOR_AUTOMATIC for a bot). There's no client order id on the order API, so idempotency has to be local: record each order before sending and never auto-retry POST /v1/orders after a timeout. price.value always refers to the YES (long) side, even when buying NO, and must be between 0.01 and 0.99. An out-of-range order still gets an order ID but never fills. Read each market's orderPriceMinTickSize and minimumTradeQty before ordering. Don't assume them. Cancel everything: POST /v1/orders/open/cancel . The prompt Paste this into Claude Code (or Cursor, or Codex) in an empty folder: Build a Polymarket US trading bot in Python 3.11+ (requests, cryptography, pytest only) that runs in PAPER MODE by default. Use only endpoints documented at https://docs.polymarket.us. If you are unsure an endpoint or field exists, ask me instead of guessing. Read CLAUDE.md (the BotCookery safety rules) first and follow it. If you are not allowed to write under .claude/, tell me and I will approve it; do not work around it. Architecture (one file per module): - config.py : loads config.toml (markets = list of slugs, poll_seconds, target_price) and limits.json (max_contracts_per_order, max_open_exposure_usd, max_daily_loss_usd, max_orders_per_minute). Fail closed if a limit is missing. - data.py : public market data from https://gateway.polymarket.us, no keys: GET /v1/markets?active=true&closed=false&limit=20 (listing), GET /v1/market/slug/{slug} (response {\"market\": {...}}; read orderPriceMinTickSize and minimumTradeQty; cache 5 min), GET /v1/markets/{slug}/book (response {\"marketData\": {\"bids\":[{\"px\":{\"value\"},\"qty\"}],\"offers\":[...], \"state\"}}; px.value and qty are strings; prices are YES-side), GET /v1/markets/{slug}/bbo. Bounded exponential backoff on 429/5xx. - strategy.py : ONE placeholder rule I will replace: \"if best YES offer <= target_price from config, propose buying the minimum quantity of YES\". Return an order body dict or None, plus a one-line reason. No ML, no \"AI picks\". - risk.py : check_order() enforcing every limit in limits.json plus: price within 0.01-0.99 AND on the market's tick, quantity a multiple of minimumTradeQty, no YES+NO buys on the same market (self-match), and a kill switch (file KILL exists or BOT_KILL=1 => no orders). Unit-test every rule. - paper.py : local ledger (paper_ledger.json). Fill conservatively against the current book: buys lift offers at or below my limit, sells hit bids at or above it, at the displayed price, never more than displayed size, walking levels. NO intents trade the inverse (BUY_SHORT fills against YES bids at cost 1 - bid). Taker fee = theta * qty * p * (1-p), theta = the market's feeCoefficient (0.0695 standard; Table Tennis 0.10, see https://docs.polymarket.us/fees), rounded to $0.01 per fill with banker's rounding (round half to even), total for one order capped at the rounded cumulative fee. Test against the fee page's worked examples. Track cash, positions, realized and unrealized PnL (mark at the bid). - broker.py : LIVE adapter for https://api.polymarket.us. Ed25519: the secret key from env is base64; the first 32 decoded bytes are the seed. Headers X-PM-Access-Key, X-PM-Timestamp (ms, within 30 s of server time), X-PM-Signature = base64(sign(timestamp + METHOD + path)), e.g. path \"/v1/portfolio/positions\"; the body is not signed. Methods: preview_order (POST /v1/order/preview, body wrapped as {\"request\": order}), create_order (POST /v1/orders), cancel_all (POST /v1/orders/open/cancel, body {\"slugs\": []}), positions (GET /v1/portfolio/positions), balances (GET /v1/account/balances). Order body: marketSlug, type ORDER_TYPE_LIMIT, price {value, currency \"USD\"} (ALWAYS the YES price: buying NO at 0.83 sends 0.17), quantity (number), tif TIME_IN_FORCE_IMMEDIATE_OR_CANCEL, intent, and manualOrderIndicator MANUAL_ORDER_INDICATOR_AUTOMATIC. - bot.py : main loop. Default --paper. --preview calls the preview endpoint with my key but never places orders (exit with a clear message if keys are missing). --live requires the flag, keys, AND typing \"I accept the risk\"; refuse if stdin is not a terminal. Every loop: kill-switch check -> data -> strategy -> risk -> paper/preview/live -> log to logs/decisions.jsonl. - cancel_all.py : one command that calls cancel-all in live mode. Rules: - Keys only from env vars (POLYMARKET_KEY_ID, POLYMARKET_SECRET_KEY). .env.example with blanks; .env in .gitignore; never print keys. - Bounded exponential backoff on 429/5xx for reads and cancels. A \"Global Rate Limit Exceeded\" reject on an order is a latency stopgap, not a rate limit: log it, don't retry. - The order API has no client order id, so do idempotency locally: record a key (hash of order + nonce) in sent_orders.json BEFORE sending, never re-send a recorded key, and never auto-retry POST /v1/orders after a timeout or 5xx (outcome unknown; check open orders instead). - pytest tests for risk.py (each rule), paper.py fills (partial, NO side, sells, fee examples), the YES-price inversion, the live-mode gate, and broker signing (verify with the public key) using a fake HTTP session. Show me the file plan first. Then build it. Then give me the exact commands to run it in paper mode. Steps Set up the kitchen. New folder, git init , then add the Safety Pack : save the rules file as CLAUDE.md , add the .gitignore , and add .claude/settings.json with the deny rules so Claude Code can't read your .env or key files. Claude Code will ask permission before writing under .claude/ ; approve it. Start Claude Code in the folder and paste the prompt. Review the file plan before it writes code. If it proposes any endpoint you can't find on docs.polymarket.us, push back. Fill in config.toml . Pick 1–3 market slugs from GET https://gateway.polymarket.us/v1/markets?active=true&closed=false&limit=20 . Without closed=false , the list can include markets that have already closed. Set a target price for the placeholder rule. Set tiny limits in limits.json , for example 1 contract per order, $5 max exposure, $2 max daily loss, 3 orders a minute. Run paper mode with python bot.py --paper . Watch logs/decisions.jsonl . Every line should show the data it saw, what the rule proposed, and whether risk said yes or no. Some markets quote below $0.01 (their tick can be 0.001); the risk check refuses those because the exchange only accepts 0.01–0.99, so a \"price outside 0.01-0.99\" line is the guardrail working, not a bug. Test the kill switch. While it's running, touch KILL . The next loop should log \"kill switch on\" and place nothing. Delete the file to resume. Replace the placeholder rule with your own logic. Keep it simple and explainable. The bot should be able to tell you in one sentence why it wanted each order. Optional preview mode. Once you have a verified Polymarket US account and API key, run python bot.py --preview . It calls POST /v1/order/preview with the order wrapped as {\"request\": order} to validate it and show expected fills, and it places nothing. Without keys, --preview should exit with a clear message. Only after days of clean paper logs would you even consider --live , with limits you're fine losing entirely. The typed confirmation is there to make you stop and think. Paper mode, properly Level 1: local paper ledger (no account needed). paper.py simulates fills against the real public book. Be conservative: fill at the ask for buys and the bid for sells, never better, and never more than the displayed size. Mark open positions at the bid, so a fresh position shows a loss equal to the spread. Real fills are often worse than paper fills because of latency, queue position and fees, so treat paper profits with suspicion. Fees belong in the simulation. The taker fee is Θ × contracts × p × (1 − p) with Θ = 0.0695 on standard markets, rounded to the cent with banker's rounding (round half to even). Have the AI write tests against the worked examples on the fee schedule ; binary floating point can round half-cent cases the wrong way, so round with Decimal and ROUND_HALF_EVEN . Level 2: order preview (needs a key, places nothing). POST /v1/order/preview checks your parameters against the exchange (tick size, minimum quantity, price validity) and returns what it expects would happen. It's the best way to catch \"valid in my head, rejected by the exchange\" bugs before going live. What to review before you go further: At least a week of decisions.jsonl with no surprise orders. Every rejected order has a clear reason. Paper PnL includes fees. Safety notes price.value is always the YES side. Buying NO at 0.83 means sending 0.17 . Write a unit test for this; it's the most common way these bots buy the wrong thing. Read orderPriceMinTickSize and minimumTradeQty from the market response. Don't hardcode them. Send manualOrderIndicator: MANUAL_ORDER_INDICATOR_AUTOMATIC on every bot order. The docs mark the field as required. Never auto-retry POST /v1/orders after a timeout or 5xx. There's no client order id, so a retry can double your order. Check open orders instead. Don't place a YES buy and a NO buy at complementary prices on the same market. Polymarket US treats that as a self-match. Prefer the markets WebSocket over polling the book. Polling burns your 25 req/s limit (shared per IP) fast. FAQ Can Claude Code build a Polymarket trading bot? Yes. Claude Code can write the whole structure (data, strategy, risk checks, broker adapter) from a good prompt. It can't make the strategy profitable, and it will make mistakes, so run it in paper mode and read the code, especially the parts that touch keys and orders. Does Polymarket US have a paper trading or demo mode? There's no public retail demo exchange documented. The practical approach is a local paper ledger that simulates fills against the live public order book, plus the POST /v1/order/preview endpoint, which validates an order and shows expected fills without placing it. Can I run a Polymarket bot from the US? US residents should use Polymarket US, the CFTC-regulated exchange, which requires identity verification before you can create API keys. International Polymarket is close-only for the US, and using a VPN to get around that breaks its terms. Should I buy a Polymarket bot instead of building one? Be careful. Many \"bots for sale\" are scams or repackaged public GitHub code, and any repo you run can hide code that steals keys. If you use someone else's code, audit it first. See our GitHub audit recipe . Docs Polymarket US: Orders API overview Polymarket US: Preview order Polymarket US: Cancel all open orders Polymarket US: Markets API overview Polymarket US: Authentication (Ed25519 signing) Polymarket US: Fee schedule Polymarket US: Rate limits & latency stopgap Polymarket US: WebSocket overview Claude Code: settings & permissions",
+            "url": "https://dev.to/botcookery/build-a-polymarket-bot-with-claude-code-paper-mode-guardrails-3mn1",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "anthropic",
+                "developpement",
+                "git",
+                "programmation",
+                "python",
+                "web"
+            ],
+            "published_at": "2026-10-23T16:04:06+00:00",
+            "collected_at": "2026-10-23T16:12:50.922437+00:00"
+        },
+        {
+            "id": "3ddd1ba54e330e740231a70a1dbe226f19f6fed435ce2f063c07f3484962754f",
+            "title": "Amazon drops Govee smart light bulbs to $33.99 with a 4.6-star rating",
+            "description": "Save 32% on Govee LED Smart Light Bulbs on Amazon, with voice control, scene presets, and tunable white lighting.",
+            "url": "https://www.androidauthority.com/govee-smart-light-bulbs-deal-3727372/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-10-23T16:03:34+00:00",
+            "collected_at": "2026-10-23T16:12:57.331179+00:00"
+        },
+        {
+            "id": "13ef21511e7bb2c5b8b6fd350ecc9ab8db25818293bf153368238405df775e3d",
+            "title": "What some of Anthropic’s backers are reportedly worth before its IPO",
+            "description": "Early-stage and follow-on investors in the AI lab are already sitting on major paper returns.",
+            "url": "https://techcrunch.com/2026/10/23/what-some-of-anthropics-backers-are-reportedly-worth-before-its-ipo/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "anthropic",
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-10-23T16:02:43+00:00",
+            "collected_at": "2026-10-23T16:12:48.179077+00:00"
+        },
+        {
+            "id": "4b56fb6aeda57d3a589757891f5fc6d0ce5893ecce49a12d9b53bb62c2c3e376",
+            "title": "Garmin quatix 7 Pro drops to record low on Amazon",
+            "description": "Save $300 on the quatix 7 Pro at a record low with autopilot controls, chartplotter data, and up to 16 days of battery.",
+            "url": "https://www.androidauthority.com/garmin-quatix-7-pro-deal-3727359/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-10-23T15:51:16+00:00",
+            "collected_at": "2026-10-23T16:12:57.331237+00:00"
+        },
+        {
+            "id": "1904eb64022c30d62ab2203a18dbbb53b6aafe1b443a603c21733f066f754279",
+            "title": "Calibre 9.7 touts faster ebook conversion speeds",
+            "description": "Calibre 9.17 has been released with faster ebook conversion speeds and JPEG XL image support. The open-source ebook editor improves output compression speeds for MOBI, AZW3 and PDB files, which makes conversions to those formats quicker. Converting EPUB to MOBI is what I use Calibre for to read on my ancient Kindle. Calibre 9.17 can read JPEG XL images in eBooks and other supported documents during conversions. The format offers high image quality at smaller file sizes and supports features like HDR. JPEG XL is not new, but its popularity (and browser support) is on the up. Accessibility improvements see […] You're reading Calibre 9.7 touts faster ebook conversion speeds , a blog post from OMG! Ubuntu . Do not reproduce elsewhere without permission.",
+            "url": "https://www.omgubuntu.co.uk/2026/10/calibre-9-7-faster-conversion",
+            "source": "OMG! Ubuntu",
+            "category": "linux",
+            "tags": [
+                "desktop",
+                "linux",
+                "ubuntu"
+            ],
+            "published_at": "2026-10-23T15:45:01+00:00",
+            "collected_at": "2026-10-23T16:12:54.947193+00:00"
+        },
+        {
+            "id": "d32d82b9d6777801ca8f0750a35661160291557eea428b747a829379f4fe3698",
+            "title": "PHP shares mitigation for new RCE vulnerability with no patch",
+            "description": "The PHP security team has shared mitigation measures for a new remote code execution vulnerability that affects systems with non-default configurations and has no patch. [...]",
+            "url": "https://www.bleepingcomputer.com/news/security/php-shares-mitigation-for-new-and-unpatched-rce-vulnerability/",
+            "source": "BleepingComputer",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "malware",
+                "php",
+                "ransomware"
+            ],
+            "published_at": "2026-10-23T15:38:05+00:00",
+            "collected_at": "2026-10-23T16:12:44.948974+00:00"
+        },
+        {
+            "id": "0a4b516196bc0fabf7ec052627d58c1fa2c3e446dd149e417760f5ab27fb5ca9",
+            "title": "How to Make Things, and Why",
+            "description": "Comments",
+            "url": "https://www.youtube.com/watch?v=7yeH1DqK984",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-10-23T15:36:59+00:00",
+            "collected_at": "2026-10-23T16:12:50.776309+00:00"
+        },
+        {
+            "id": "16c1d100dab3e82c7f5e771d9c95b364b6ed0fefe034d3a4f9ba92bd7bae7d6e",
+            "title": "Amazon cuts $85 off the Razer USB 4 Dock",
+            "description": "Razer's 14-port USB 4 Dock is down to $174.50 on Amazon, with dual 4K 120Hz support and up to 100W laptop charging.",
+            "url": "https://www.androidauthority.com/razer-usb-4-dock-deal-3727353/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-10-23T15:32:25+00:00",
+            "collected_at": "2026-10-23T16:12:57.331273+00:00"
+        },
+        {
+            "id": "07bc904d7600b953d83bcf679b39e93a3437ac9c9651568f46a3107565335a9d",
+            "title": "Pentagon Bans Military Insider Trading on Polymarket, Kalshi After $400K Betting Scandal",
+            "description": "Defense Secretary Pete Hegseth has prohibited U.S. military personnel and Pentagon employees from using nonpublic information to trade on prediction markets, warning that bets on military operations could expose sensitive intelligence to American adversaries and endanger troops. Military Makes Insider Trading Ban Official The directive follows the prosecution of a Special Forces soldier accused of […]",
+            "url": "https://news.bitcoin.com/regulation-and-legal/pentagon-bans-military-insider-trading-polymarket-kalshi-400k-betting-scandal/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto",
+                "intel"
+            ],
+            "published_at": "2026-10-23T15:30:11+00:00",
+            "collected_at": "2026-10-23T16:13:05.697491+00:00"
+        },
+        {
+            "id": "e40768936abedaffee5bfc5e438fc65e090cc941f90eb47ce663de2817c8c095",
+            "title": "Arc browser on its way out as makers suggest an alternative",
+            "description": "No new accounts from now, and the end will come in December",
+            "url": "https://www.theregister.com/software/2026/10/23/arc-browser-on-its-way-out-as-makers-suggest-an-alternative/5305114",
+            "source": "The Register",
+            "category": "web",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-10-23T15:22:00+00:00",
+            "collected_at": "2026-10-23T16:12:49.464035+00:00"
+        },
+        {
+            "id": "5dd84ddc8176a7c3e1cba5c46f95fb371dca368d4e90834ba2b57d04d04ea174",
+            "title": "AI-discovered bugs may soon trigger fresh disruptions, cyber experts say",
+            "description": "Comments",
+            "url": "https://www.reuters.com/legal/litigation/ai-discovered-bugs-may-soon-trigger-fresh-disruptions-cyber-experts-say-2026-10-23/",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-10-23T15:17:36+00:00",
+            "collected_at": "2026-10-23T16:12:50.776358+00:00"
+        },
+        {
+            "id": "16685f26b6e887cf8fff18334190ddf57538892d91764cd998ad6d6cbdaecf1f",
+            "title": "Lab testing giant Quest Diagnostics confirms patients’ personal and health data was compromised during breach",
+            "description": "Quest is the latest in a series of healthcare technology companies that have been hacked in recent months.",
+            "url": "https://techcrunch.com/2026/10/23/lab-testing-giant-quest-diagnostics-confirms-patients-personal-and-health-data-was-compromised-during-breach/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-10-23T15:00:09+00:00",
+            "collected_at": "2026-10-23T16:12:48.179137+00:00"
+        },
+        {
+            "id": "e16d152bb19c09f026263d73c97050e5a4bb061a37e38dcbf12c87acadef7909",
+            "title": "Pentagon grants DHS permission to test heat ray weapon for use at border",
+            "description": "Comments",
+            "url": "https://www.cnn.com/2026/10/21/politics/heat-ray-weapon-dhs-pentagon",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-23T14:52:47+00:00",
+            "collected_at": "2026-10-23T16:12:50.581038+00:00"
+        },
+        {
+            "id": "7f08f49df515a5743091e81df5dac1771f8471ceb61aaf8d389ab636b3835100",
+            "title": "eMudhra ignored Mozilla Root investigation deadline; blames social media",
+            "description": "Comments",
+            "url": "https://bugzilla.mozilla.org/show_bug.cgi?id=2083449",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-23T14:52:08+00:00",
+            "collected_at": "2026-10-23T16:12:50.580596+00:00"
+        },
+        {
+            "id": "6d029cdfad1e48d24d93f728f12d67f9a95660fa0406ed93cac3736869710e2e",
+            "title": "Blackrock, Fidelity Lead $635M Bitcoin ETF Loss—Biggest Outflow Since June",
+            "description": "U.S. bitcoin ETFs suffered $635.49 million in net outflows on Thursday, abruptly interrupting a three-session run that had attracted more than $1 billion. Bitcoin ETFs Suffer Biggest Outflow Since June The institutional tide turned with remarkable speed. A day after bitcoin ETF buying broadened across eight funds, investors pulled $635.49 million from the category. […]",
+            "url": "https://news.bitcoin.com/market-updates/blackrock-fidelity-lead-635m-bitcoin-etf-loss-biggest-outflow-since-june/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-10-23T14:50:09+00:00",
+            "collected_at": "2026-10-23T16:13:05.697565+00:00"
+        },
+        {
+            "id": "d6981948fb6ddaaafbfce1687daa9cbc85205ab21662e4cdb804f3d0e855d672",
+            "title": "Google Pixel Watch 5 deal saves you $100 on the LTE model",
+            "description": "Google Pixel Watch 5 LTE drops to $399.99 on Amazon, with phone-free calls, texts, streaming, and up to 30 hours of battery.",
+            "url": "https://www.androidauthority.com/pixel-watch-5-deal-3727341/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-10-23T14:45:55+00:00",
+            "collected_at": "2026-10-23T16:12:57.331310+00:00"
+        },
+        {
+            "id": "b907a8426369ea8a1ccbb3ef63269c2f296c56b4c2f9ad14bb05bc4a9a4acae9",
+            "title": "Guide: 61 Switch 1 & 2 Games You Should Check Out In Nintendo's 'Halloween Sale' (Europe)",
+            "description": "Every game we scored 9/10 or higher, plus a personal pick. After Nintendo of America launched its ' Screaming Deals ' sale earlier this week, we knew it wouldn't be long before Europe followed suit. The 'Halloween Sale' is now live for those in Europe, with delicious discounts on a boatload of titles available until 1st November . So, naturally, we have assembled the following list to make things a little more manageable. Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/guides/61-switch-1-and-2-games-you-should-check-out-in-nintendos-halloween-sale-europe",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-10-23T14:45:00+00:00",
+            "collected_at": "2026-10-23T16:13:03.538187+00:00"
+        },
+        {
+            "id": "c766937483927befd4e01fc5653efc3efb10b346e0fd99a2f5f13dad464e5ef4",
+            "title": "Emacs finally folds to my liking: kirigami, tree-sitter, hide-show, Org, XML",
+            "description": "Comments",
+            "url": "https://jointhefreeworld.org/blog/articles/emacs/emacs-folding-kirigami/",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-10-23T14:38:13+00:00",
+            "collected_at": "2026-10-23T16:12:50.776162+00:00"
+        },
+        {
+            "id": "006e109fdf00c5918c32a905dd4d4dd6e95183a3af9429cd37ad0a2d31e93657",
+            "title": "SparkyOS: Lightweight general-purpose Arch, on a pendrive",
+            "description": "Interesting new project from the minds behind SparkyLinux",
+            "url": "https://www.theregister.com/os-platforms/2026/10/23/sparkyos-lightweight-general-purpose-arch-on-a-pendrive/5304984",
+            "source": "The Register",
+            "category": "linux",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "linux",
+                "technologie"
+            ],
+            "published_at": "2026-10-23T14:35:00+00:00",
+            "collected_at": "2026-10-23T16:12:49.464076+00:00"
+        },
+        {
+            "id": "efa8d63f9a3b49ee8c712c894341da84b2de4b22b8bbc8224d0132ee8814aaa6",
+            "title": "The glorious @xkcdRandom Zig builtin",
+            "description": "Comments",
+            "url": "https://ochagavia.nl/blog/the-glorious-@xkcdrandom-zig-builtin/",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-10-23T14:30:57+00:00",
+            "collected_at": "2026-10-23T16:12:50.775974+00:00"
+        },
+        {
+            "id": "70ce3aa7f5fd797125ab772a8f4e24c834d8d857010cdb238393d199f4244909",
+            "title": "In Other News: Tor Exit Relays Hijacked, Banks Spot Rogue AI Agents, Self-Rebuilding macOS Ransomware",
+            "description": "Noteworthy stories that might have slipped under the radar: Russia’s APT28 hit NATO defense firms, PingCAP source code stolen, ShinyHunters negotiator probe. The post In Other News: Tor Exit Relays Hijacked, Banks Spot Rogue AI Agents, Self-Rebuilding macOS Ransomware appeared first on SecurityWeek .",
+            "url": "https://www.securityweek.com/in-other-news-tor-exit-relays-hijacked-banks-spot-rogue-ai-agents-self-rebuilding-macos-ransomware/",
+            "source": "SecurityWeek",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "macos",
+                "ransomware",
+                "security",
+                "vulnerabilites"
+            ],
+            "published_at": "2026-10-23T14:23:37+00:00",
+            "collected_at": "2026-10-23T16:12:47.137173+00:00"
+        },
+        {
+            "id": "4984981c57230927e997115873c8960ce2b7eb624e2210c2096d81932840a9ff",
+            "title": "Google just made your Gemini-built web apps a lot easier to share",
+            "description": "No coding, no rebuilding. Just a few clicks to put your creations online.",
+            "url": "https://www.androidauthority.com/gemini-web-apps-google-sites-export-3727259/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "gemini",
+                "smartphone"
+            ],
+            "published_at": "2026-10-23T14:18:41+00:00",
+            "collected_at": "2026-10-23T16:12:57.331345+00:00"
+        },
+        {
+            "id": "99dd365342583c0c8ed9b9d63628af2f6ff8a64822eb4ce0fd8b6891468d912f",
+            "title": "This vibecoded image editor cost $2,000 to build — was it worth it?",
+            "description": "Photon Studio takes aim at Adobe Photoshop.",
+            "url": "https://www.androidauthority.com/new-ai-apps-services-photon-studio-3727165/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-10-23T14:15:07+00:00",
+            "collected_at": "2026-10-23T16:12:57.331384+00:00"
+        },
+        {
+            "id": "37a1f2ce6b685a26ca216e6729479c9897d4e5876a2c880a9629781c17bf6166",
+            "title": "Bitcoin Core Changes Security Policy as AI Makes Vulnerabilities Easier to Find",
+            "description": "Bitcoin Core is rewriting its approach to security vulnerabilities as artificial intelligence makes certain software flaws dramatically easier to discover, undermining the effectiveness of longstanding policies designed to keep potential exploits secret while users upgrade. Bitcoin Core Shifts Strategy as AI Gets Smarter In an Oct. 22 message to the Bitcoin Development Mailing List, Bitcoin […]",
+            "url": "https://news.bitcoin.com/security/bitcoin-core-changes-security-policy-ai-vulnerabilities-easier-find/",
+            "source": "Bitcoin.com News",
+            "category": "cybersecurite",
+            "tags": [
+                "aws",
+                "bitcoin",
+                "blockchain",
+                "crypto",
+                "intel"
+            ],
+            "published_at": "2026-10-23T14:09:05+00:00",
+            "collected_at": "2026-10-23T16:13:05.697627+00:00"
+        },
+        {
+            "id": "893a0f95a397222d16caf87fe167d7f4ceab2aa5400d53ea0ab25402ac5eeff6",
+            "title": "Tired of rebuilding patched APKs? These Morphe community projects handle them for you",
+            "description": "You can simplify patched Android app updates with self-hosted AutoMorph or cloud-based Mophe-AutoBuilds.",
+            "url": "https://www.androidauthority.com/morphe-community-projects-patched-apks-automation-3727286/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-10-23T14:00:33+00:00",
+            "collected_at": "2026-10-23T16:12:57.331422+00:00"
+        },
+        {
+            "id": "92749712f9150ad218f40a1c2da13b0f684b766c9d670b3510f313fe4068861a",
+            "title": "You gave your AI agent access, but who is giving it orders?",
+            "description": "AI agents can be manipulated through malicious emails, websites, and plugins into executing commands, stealing data, or deleting files using their legitimate permissions. Gen Digital explains how its Agent Trust Hub helps protect agents through skill verification, secure connectivity, and runtime controls that intercept dangerous act [...]",
+            "url": "https://www.bleepingcomputer.com/news/security/you-gave-your-ai-agent-access-but-who-is-giving-it-orders/",
+            "source": "BleepingComputer",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "git",
+                "malware",
+                "ransomware",
+                "rust"
+            ],
+            "published_at": "2026-10-23T14:00:10+00:00",
+            "collected_at": "2026-10-23T16:12:44.949065+00:00"
+        },
+        {
+            "id": "11a81d41fc58ab498bb0a8d2d33005eb22eaea3025a893667731cfe85bc72629",
+            "title": "Why Caribbean Threats Cascade Into Global Cyber-Risk",
+            "description": "The region is demonstrating what happens when exploits accelerate but assurance does not.",
+            "url": "https://www.darkreading.com/cyber-risk/why-caribbean-threats-cascade-global-cyber-risk",
+            "source": "Dark Reading",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "enterprise-security"
+            ],
+            "published_at": "2026-10-23T14:00:00+00:00",
+            "collected_at": "2026-10-23T16:12:47.018056+00:00"
+        },
+        {
+            "id": "768b7eaf95e9a883d9e8aa891ade8a82d76093ce441edaf9a92b84772665fe75",
+            "title": "Robinhood sees surge in bitcoin, gold prediction markets as traders move beyond sports",
+            "description": "",
+            "url": "https://www.coindesk.com/markets/2026/10/23/robinhood-sees-surge-in-bitcoin-gold-prediction-markets-as-traders-move-beyond-sports",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-10-23T13:58:56+00:00",
+            "collected_at": "2026-10-23T16:13:05.469448+00:00"
+        },
+        {
+            "id": "64b0ac9d140d11671a4acbe942ade27af436c73b5627240eb087f5c95f9a86d0",
+            "title": "Hackers Breach Enterprise Firewalls and VPNs, Exposing Over 70,000 Credentials",
+            "description": "Cybersecurity researchers have disclosed details of a large-scale campaign that has targeted exposed network edge devices such as Fortinet FortiGate and Palo Alto Networks GlobalProtect firewalls. \"Artifacts from this investigation also indicate that operators in this campaign have obtained access to numerous organizations worldwide, and have attempted to further compromise some victims,",
+            "url": "https://thehackernews.com/2026/10/hackers-breach-enterprise-firewalls-and.html",
+            "source": "The Hacker News",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "hacking",
+                "vulnerabilites"
+            ],
+            "published_at": "2026-10-23T13:50:56+00:00",
+            "collected_at": "2026-10-23T16:12:45.086146+00:00"
+        },
+        {
+            "id": "1a43d6c6de4d68df7d8a2a0050018417e33ddc2e7457efd7e5c5cff30317e3a6",
+            "title": "It’s not just you: Galaxy S24 and S25 owners report excess battery drain after One UI 9",
+            "description": "One user witnessed a 95% dip in battery after only 3 hours and 15 minutes of screen time.",
+            "url": "https://www.androidauthority.com/samsung-galaxy-s24-s25-one-ui-9-battery-drain-3727166/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-10-23T13:47:05+00:00",
+            "collected_at": "2026-10-23T16:12:57.331464+00:00"
+        },
+        {
+            "id": "69c0b58cef8640929d698a98d50e9510899b4e4c34aa654298b60917f4dd5675",
+            "title": "The reactor meant to showcase nuclear’s comeback keeps hitting problems",
+            "description": "A contractor fell into a reactor cavity and a bundle of fuel rods almost fell over.",
+            "url": "https://arstechnica.com/tech-policy/2026/10/safety-concerns-cloud-americas-flagship-nuclear-restart/",
+            "source": "Ars Technica",
+            "category": "technologie",
+            "tags": [
+                "informatique",
+                "innovation",
+                "technologie"
+            ],
+            "published_at": "2026-10-23T13:43:21+00:00",
+            "collected_at": "2026-10-23T16:12:47.821397+00:00"
+        },
+        {
+            "id": "e8ec62e41a97373d375d159e71a58e2edebe7dfaba837981249e86e73da83a66",
+            "title": "Investor-owned utilities charge 23% more for electricity than public providers",
+            "description": "Comments",
+            "url": "https://www.kadoa.com/energy-prices/insights/investor-owned-utilities",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-23T13:41:10+00:00",
+            "collected_at": "2026-10-23T16:12:50.580651+00:00"
+        },
+        {
+            "id": "af19bb23f72543377997ad3100f57c7ca621166c2ad969dacbe463874dc7c02b",
+            "title": "a neat trick i found for reusing physical memory",
+            "description": "Comments",
+            "url": "https://sebsite.pw/w/20260728-cow.html",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-10-23T13:40:30+00:00",
+            "collected_at": "2026-10-23T16:12:50.776069+00:00"
+        },
+        {
+            "id": "3824ba177da79fbd1fbf6c20ea90133da175e314c09a7174701523b895d84416",
+            "title": "PubKeep picks up where Microsoft Publisher signs off",
+            "description": "$99 replacement opens old .pub files on Windows and macOS, without a subscription",
+            "url": "https://www.theregister.com/applications/2026/10/23/pubkeep-picks-up-where-microsoft-publisher-signs-off/5304978",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "macos",
+                "technologie",
+                "windows"
+            ],
+            "published_at": "2026-10-23T13:34:00+00:00",
+            "collected_at": "2026-10-23T16:12:49.464113+00:00"
+        },
+        {
+            "id": "55d5c18d6220943cad99a1fc9dacf098179dccdc6fa751eeda76ff6568c68ab9",
+            "title": "Cyber Insurance's New Reality: Underwriting Isn't Enough",
+            "description": "Rising AI, social engineering, and cloud risks are pushing carriers beyond risk transfer and deeper into cybersecurity itself.",
+            "url": "https://www.darkreading.com/cyber-risk/cyber-insurances-underwriting-isnt-enough",
+            "source": "Dark Reading",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "enterprise-security"
+            ],
+            "published_at": "2026-10-23T13:30:00+00:00",
+            "collected_at": "2026-10-23T16:12:47.018108+00:00"
+        },
+        {
+            "id": "94329d4129fd754be25c6f4c2867eaf92c7393c86c5921798393aae0a75ac1cd",
+            "title": "Shitter – A Nitter Fork",
+            "description": "Comments",
+            "url": "https://codeberg.org/shitter/shitter",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-23T13:02:23+00:00",
+            "collected_at": "2026-10-23T16:12:50.580923+00:00"
+        },
+        {
+            "id": "b02e415c5f4a28873ac1c30009d722312d570b0c1b6ee6718053010d53098e0a",
+            "title": "Accordion Icons: Which Work Best?",
+            "description": "A closer look at accordion icons, why split menus are harmful, and why it’s better not to have icons and text labels link to different actions. Plus, why the caret is the safest icon choice. You’ll find more [useful guides](https://www.smashingmagazine.com/category/guides/) and [online workshops](https://smashingconf.com/online-workshops) here on Smashing Magazine, so make sure to browse and explore.",
+            "url": "https://smashingmagazine.com/2026/10/accordion-icons-which-work-best/",
+            "source": "Smashing Magazine",
+            "category": "web",
+            "tags": [
+                "design",
+                "frontend",
+                "web"
+            ],
+            "published_at": "2026-10-23T13:00:00+00:00",
+            "collected_at": "2026-10-23T16:13:02.433674+00:00"
+        },
+        {
+            "id": "a41797a4822d772b1b87e22e1de69e729392143ee8362d1409f0bd687884b328",
+            "title": "Review: Village In The Shade (Switch 2) - A Farm Sim That Plays With Cosy Tropes In Clever Ways",
+            "description": "Tricks of the shade. The farming-sim genre needed Village in the Shade . The horror-tinged cosy game plays all the right beats to slot seamlessly into the library of farming adventures that seemingly come out every month. In fact, its visuals, mechanics, soundtrack, and overall feel would make it one of the better cosy titles to come out in the past few years. The real genius of comes in how it turns a mirror onto the player and makes us question why we find this simulated peace so enticing. My expectations were set expertly by the game’s cold open. I saw my custom main character, who I had just spent a good 10 minutes designing, falling down a well and dying in a pool of blood. Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/reviews/nintendo-switch-2/village-in-the-shade",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-10-23T13:00:00+00:00",
+            "collected_at": "2026-10-23T16:13:03.538330+00:00"
+        },
+        {
+            "id": "0529855c3dd18aadbd6f9d28d4ec8b266ee9fed7c6f803af156672fc2b9e395a",
+            "title": "Software is slow because of bad design, not slow languages",
+            "description": "Comments",
+            "url": "https://www.seangoedecke.com/software-is-slow-because-of-bad-design-not-slow-languages/",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-10-23T12:58:10+00:00",
+            "collected_at": "2026-10-23T16:12:50.775853+00:00"
+        },
+        {
+            "id": "a29ee7f3681a7585c247ab1495d48a112e4c667a88f12692dfe0b91bba20073d",
+            "title": "Someone put Apple CarPlay on an Amazon Echo Show running Android, and it actually works",
+            "description": "A little LineageOS magic gives Amazon's forgotten smart display a new life.",
+            "url": "https://www.androidauthority.com/amazon-echo-show-5-apple-carplay-lineageos-3727158/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-10-23T12:53:32+00:00",
+            "collected_at": "2026-10-23T16:12:57.331498+00:00"
+        },
+        {
+            "id": "f90c0820996d0f5535eda686398eb01f7c8302fa2b36e16aaed6b779032b9c96",
+            "title": "SpaceX is getting more serious about becoming the fourth carrier the US needs",
+            "description": "SpaceX apparently wants 80,000 cell sites, and it's in talks with at least one major provider.",
+            "url": "https://www.androidauthority.com/spacex-starlink-mobile-more-serious-att-t-mobile-verizon-3727170/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-10-23T12:51:42+00:00",
+            "collected_at": "2026-10-23T16:12:57.331533+00:00"
+        },
+        {
+            "id": "690940732ff7fbfeb274405d74712c3dd835b51bfc611b8df95fe20eeaf3f051",
+            "title": "HPE patches eight max severity RCE and auth bypass AOS flaws",
+            "description": "Hewlett Packard Enterprise (HPE) released security updates to patch 72 vulnerabilities in the Aruba Operating System (ArubaOS), including eight maximum-severity authentication bypass and code execution issues. [...]",
+            "url": "https://www.bleepingcomputer.com/news/security/hpe-patches-eight-max-severity-rce-and-auth-bypass-aos-flaws/",
+            "source": "BleepingComputer",
+            "category": "cloud",
+            "tags": [
+                "aws",
+                "cybersecurite",
+                "malware",
+                "ransomware"
+            ],
+            "published_at": "2026-10-23T12:48:00+00:00",
+            "collected_at": "2026-10-23T16:12:44.949110+00:00"
+        },
+        {
+            "id": "8915eca9b3fe35b08f6f8b721db2b65e1f70e61031ab6434e819308ca3b0cb49",
+            "title": "Mirai Botnet Operators Join PHP2Shell Attacks as ASLR Bypass Exploits Emerge",
+            "description": "Researchers tie PHP2Shell attempts to a Mirai botnet and show an ASLR bypass, but no successful compromise has been confirmed yet. The post Mirai Botnet Operators Join PHP2Shell Attacks as ASLR Bypass Exploits Emerge appeared first on SecurityWeek .",
+            "url": "https://www.securityweek.com/mirai-botnet-operators-join-php2shell-attacks-as-aslr-bypass-exploits-emerge/",
+            "source": "SecurityWeek",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "php",
+                "security",
+                "vulnerabilites"
+            ],
+            "published_at": "2026-10-23T12:45:52+00:00",
+            "collected_at": "2026-10-23T16:12:47.137241+00:00"
+        },
+        {
+            "id": "92a5c7c85285ea667e8b13c5d906ec072c5b7c7a175ad387f3aa2c42a909f374",
+            "title": "OpenSSL 4.1.0",
+            "description": "Comments",
+            "url": "https://github.com/openssl/openssl/releases/tag/openssl-4.1.0",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-23T12:42:44+00:00",
+            "collected_at": "2026-10-23T16:12:50.580474+00:00"
+        },
+        {
+            "id": "30a6fdc8a7009514d9c0f8ac41f8c05047db555647daff64e9007a9397be6974",
+            "title": "An Ethereum OG Who Bought at $18 Just Cashed out $7.23 Million",
+            "description": "An early ether buyer who paid just $18.83 per coin nine years ago has sold 3,000 ETH worth about $7.23 million, a 128x return. The Trail The math on this trade seems almost absurd, with onchain data from the wallet’s Arkham explorer page showing 3,000 ETH leaving a Gemini hot wallet roughly nine years ago, […]",
+            "url": "https://news.bitcoin.com/crypto-news/ethereum-og-whale-sells-3000-eth-128x-return/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto",
+                "ethereum",
+                "gemini"
+            ],
+            "published_at": "2026-10-23T12:30:07+00:00",
+            "collected_at": "2026-10-23T16:13:05.697689+00:00"
+        },
+        {
+            "id": "88926ca4076f131b9d1c9e4f35bebc9f11d44788331a659151eb32913ad77855",
+            "title": "Shigeru Miyamoto Becomes First Game Dev To Receive Japan's Prestigious Culture Award",
+            "description": "Onward and upward! Adding to what is surely the most stacked roster of lifetime achievements, Shigeru Miyamoto is set to be awarded the prestigious Order of Culture award next month. The award, which first began way back in the 1930s, will be given by the Emperor of Japan on the nation's Culture Day (3rd November), and is awarded to those who have gone above and beyond in their contributions to Japan's art, literature, tech or science scenes. Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/news/2026/10/shigeru-miyamoto-becomes-first-game-dev-to-receive-japans-prestigious-culture-award",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-10-23T12:30:00+00:00",
+            "collected_at": "2026-10-23T16:13:03.538407+00:00"
+        },
+        {
+            "id": "e2d6fe758d1eb57c896cccbce0e47b802bd4950cb5a65eff4cfed6fac3baea13",
+            "title": "Musk disputes NASA safety panel's lunar launch estimates",
+            "description": "Watchdog also warns retiring Falcon and Dragon could leave US access to orbit short of a backup",
+            "url": "https://www.theregister.com/science/2026/10/23/musk-disputes-nasa-safety-panels-lunar-launch-estimates/5304961",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-10-23T12:29:00+00:00",
+            "collected_at": "2026-10-23T16:12:49.464150+00:00"
+        },
+        {
+            "id": "6a147386449f95022e884705ce5f57d878eeca17be29e35caf7f02b9cb78e3b9",
+            "title": "The Download: testing six tech promises and biotech’s blind spots",
+            "description": "This is today’s edition of The Download, our weekday newsletter that provides a daily dose of what’s going on in the world of technology. Are we there yet? A reality check on six big tech promises Some seemingly impossible feats are too good to give up on. Decoding a pet’s yowls and yips? Absolutely. Scrubbing…",
+            "url": "https://www.technologyreview.com/2026/10/23/1147628/the-download-testing-tech-promises-science-blind-spots/",
+            "source": "MIT Technology Review",
+            "category": "recherche_innovation",
+            "tags": [
+                "innovation",
+                "recherche",
+                "science"
+            ],
+            "published_at": "2026-10-23T12:10:00+00:00",
+            "collected_at": "2026-10-23T16:13:04.432470+00:00"
+        },
+        {
+            "id": "0f1051f8710b2ec3ca10159b1a93e161db1c7f86dd80e8371cf2f22f593ddd5e",
+            "title": "Bitcoin Core changes security rules as AI makes finding code bugs dangerously easy",
+            "description": "",
+            "url": "https://www.coindesk.com/tech/2026/10/23/bitcoin-will-now-stop-hiding-bugs-an-ai-can-find-in-one-prompt",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-10-23T12:03:53+00:00",
+            "collected_at": "2026-10-23T16:13:05.469485+00:00"
+        },
+        {
+            "id": "bd7f381ecc335c786b80e41424c1554cab5b88e48ff9cce73f2ca6ad8039d4ed",
+            "title": "Show HN: We had AI write a wiki from 45k Enron emails, every fact cited",
+            "description": "Comments",
+            "url": "https://www.thisandthat.chat/enron/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-23T12:02:53+00:00",
+            "collected_at": "2026-10-23T16:12:50.580623+00:00"
+        },
+        {
+            "id": "ff6e0aa732195126e38914402766bb3abc49376ab540007e120015787b938df5",
+            "title": "Gallery: iam8bit's Sonic Legacy Cartridges Are Stunning, But Are They Worth The Money?",
+            "description": "For a select few, potentially. When iam8bit announced its Legacy Cartridge Collection for Sonic and Sonic 2 on Sega Genesis a few months back, it's safe to say that most people were taken aback by the price. Available via iam8bit's official store page , each cartridge — complete with authentic case, instruction manual, and poster — is priced at $99.99 . That's a lot. Certainly a hefty chunk more than both games cost together digitally on Switch. Hell, you can pick up Sonic Origins Plus for 20 quid these days. So no, for the Average Joe who just wants to play these games in whichever manner is most convenient, these are probably not worth the money. Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/news/2026/10/gallery-iam8bits-sonic-legacy-cartridges-are-stunning-but-are-they-worth-the-money",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "git",
+                "nintendo"
+            ],
+            "published_at": "2026-10-23T12:00:00+00:00",
+            "collected_at": "2026-10-23T16:13:03.538515+00:00"
+        },
+        {
+            "id": "26a2bfaac1decb54bf9ac47b65671cd5cf67849d494538b0bce436c988349fd5",
+            "title": "Goodbye Oxygen OS, hello Color OS: OnePlus 15 is now getting stable Android 17",
+            "description": "OnePlus is rolling out the milestone update for the OnePlus 15 and Pad 4 earlier than its own schedule.",
+            "url": "https://www.androidauthority.com/oneplus-15-pad-4-coloros-17-update-3727160/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-10-23T11:54:35+00:00",
+            "collected_at": "2026-10-23T16:12:57.331570+00:00"
+        },
+        {
+            "id": "360a13c6bd060b4acbeaa38ef462c3d20ea21312c77e63e3e4383b8c1a494c57",
+            "title": "You Can Get a Multisig Bitcoin Loan at a Bank, as Sygnum and Debifi Debut",
+            "description": "A growing market for bitcoin-backed, multisig-secured loans now has what appears to be its first bank offering this type of product, as Sygnum and Debifi delivered on a promise made a year ago. Switzerland-headquartered digital asset bank Sygnum and Latvian bitcoin lending platform Debifi launched MultiSYG, a loan product that secures collateral in a multisig […]",
+            "url": "https://news.bitcoin.com/finance/you-can-get-a-multisig-bitcoin-loan-at-a-bank-as-sygnum-and-debifi-debut/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto",
+                "git"
+            ],
+            "published_at": "2026-10-23T11:40:45+00:00",
+            "collected_at": "2026-10-23T16:13:05.697757+00:00"
+        },
+        {
+            "id": "3729c69a11df1153fcb43f1bd84a6d7fa530122d006ab3cb6c130fb9f05af678",
+            "title": "AI Agents as Insider Threats: Inside Microsoft's Bet on a Unified Security Stack",
+            "description": "Microsoft's Project Perception adds Guardian Agents to monitor and contain anomalous AI agents, but experts warn that policing unpredictable agents with other agents may multiply — not contain — the risk.",
+            "url": "https://www.darkreading.com/cybersecurity-operations/ai-agents-insider-threats-inside-microsoft-unified-security-stack",
+            "source": "Dark Reading",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "enterprise-security"
+            ],
+            "published_at": "2026-10-23T11:38:28+00:00",
+            "collected_at": "2026-10-23T16:12:47.018172+00:00"
+        },
+        {
+            "id": "332b8a0f3c708eb7e8baac3818f0978aefb408bda579f46f34ab3285bb0f8915",
+            "title": "How close can pure FP get to C?",
+            "description": "Comments",
+            "url": "https://rtfeldman.com/fp-vs-c",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-10-23T11:37:22+00:00",
+            "collected_at": "2026-10-23T16:12:50.775904+00:00"
+        },
+        {
+            "id": "0f512a94bfdcbecd072d481fdd198c4aa8c5865e2861ce576d7f8239ae852200",
+            "title": "Torvalds: AI is fine for competent devs, but spare us the 'drive-by' patches",
+            "description": "Kernel maintainers stop asking who used AI, as long as the code is good",
+            "url": "https://www.theregister.com/columnists/2026/10/23/torvalds-ai-is-fine-for-competent-devs-but-spare-us-the-drive-by-patches/5304357",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-10-23T11:31:00+00:00",
+            "collected_at": "2026-10-23T16:12:49.464186+00:00"
+        },
+        {
+            "id": "06b9e932a6c2c5cbd52257596959309aa80678272852d3a7b1b48c60f8cc2a0d",
+            "title": "Ukraine learns to fight without Starlink as Musk plays politics with satellites",
+            "description": "Ukraine has changed drone and war-fighting tech to reduce reliance on Starlink.",
+            "url": "https://arstechnica.com/gadgets/2026/10/ukraine-learns-to-fight-without-starlink-as-musk-plays-politics-with-satellites/",
+            "source": "Ars Technica",
+            "category": "technologie",
+            "tags": [
+                "informatique",
+                "innovation",
+                "technologie"
+            ],
+            "published_at": "2026-10-23T11:30:22+00:00",
+            "collected_at": "2026-10-23T16:12:47.821446+00:00"
+        },
+        {
+            "id": "b9392c7f7addad4be81c79130c251a9520c4d6adb5134ce409d6edbb7fb312ff",
+            "title": "Multi-tenant GPU Kubernetes on simulated hardware with Kamaji and HAMi",
+            "description": "GPU teams usually face a bad trade-off. Give every team its own Kubernetes cluster and you pay for a control plane per team. Put everyone in one shared cluster and you get weak isolation. Either way,...",
+            "url": "https://www.cncf.io/blog/2026/10/23/multi-tenant-gpu-kubernetes-on-simulated-hardware-with-kamaji-and-hami/",
+            "source": "CNCF",
+            "category": "hardware",
+            "tags": [
+                "cloud-native",
+                "cncf",
+                "kubernetes"
+            ],
+            "published_at": "2026-10-23T11:30:00+00:00",
+            "collected_at": "2026-10-23T16:13:00.151980+00:00"
+        },
+        {
+            "id": "d3e6fb1a3911b1e6b90b1f063808a68fb4504ce04882fd635da42147c19051ce",
+            "title": "PHP Warns of Another Unpatched RCE Risk Two Days After Emergency PHP2Shell Patches",
+            "description": "PHP has warned of another way an attacker could run code on a web server, two days after it shipped emergency fixes for the critical PHP2Shell flaws. The new issue, assigned CVE-2026-115560, affects only web applications configured in an unusual way, and PHP considers it an unlikely risk.The project is not issuing an emergency fix for it. Instead, it recommends turning off a feature called",
+            "url": "https://thehackernews.com/2026/10/urgent-php-warns-of-another-unpatched.html",
+            "source": "The Hacker News",
+            "category": "cybersecurite",
+            "tags": [
+                "aws",
+                "cve",
+                "cybersecurite",
+                "hacking",
+                "php",
+                "vulnerabilites"
+            ],
+            "published_at": "2026-10-23T11:25:43+00:00",
+            "collected_at": "2026-10-23T16:12:45.086214+00:00"
+        },
+        {
+            "id": "04ea342de5dea7c2caa0c44a53e35f5dde71778fb47a81989bfc5e903261e3b4",
+            "title": "Bitcoin's price is as jumpy as Nvidia's and eight times more turbulent than the euro",
+            "description": "",
+            "url": "https://www.coindesk.com/daybook-us/2026/10/23/bitcoin-s-volatility-is-well-above-euro-dollar-gyrations-though-it-has-calmed-to-rival-nvidia-s",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto",
+                "nvidia"
+            ],
+            "published_at": "2026-10-23T11:22:33+00:00",
+            "collected_at": "2026-10-23T16:13:05.469515+00:00"
+        },
+        {
+            "id": "f2bae228802bf9d13bfe9cadb4f9d463d83231948fc2d610ae4a6df3127b24f9",
+            "title": "Review: Crystal Lake suffers a bit from its obsession with Pam Voorhees",
+            "description": "Friday the 13th prequel series based on Jason’s mom drags at first, then hits a vein.",
+            "url": "https://arstechnica.com/culture/2026/10/review-crystal-lake-suffers-a-bit-from-its-obsession-with-pam-voorhees/",
+            "source": "Ars Technica",
+            "category": "technologie",
+            "tags": [
+                "informatique",
+                "innovation",
+                "technologie"
+            ],
+            "published_at": "2026-10-23T11:15:03+00:00",
+            "collected_at": "2026-10-23T16:12:47.821494+00:00"
+        },
+        {
+            "id": "e43d0dff1d28475e94127905d2b209a4e01231637a13c063badad902d0e01698",
+            "title": "Live updates: Bitcoin holds above $81,000 as oil prices hit six-month high",
+            "description": "",
+            "url": "https://www.coindesk.com/markets/2026/10/23/live-updates-bitcoin-holds-above-usd81-000-as-the-ai-rout-fades-and-oil-climbs",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-10-23T11:13:01+00:00",
+            "collected_at": "2026-10-23T16:13:05.469541+00:00"
+        },
+        {
+            "id": "76da60089176983713f45816e41f527b55fd384f7508dfc491f47b7b2284b45e",
+            "title": "Russian-Linked Hackers Used New Mesh Network Backdoor in Destructive Ukraine Attack",
+            "description": "The Russian state-sponsored hacking group Sandworm teamed up with another threat actor to carry out a destructive wiping attack targeting a Ukrainian logistics company last year. According to ESET, the attack involved UAC-0099 (aka Earth Sirrush) obtaining initial access to the target on July 16, 2025, via a spear-phishing email bearing a malware-laced attachment that led to the deployment of",
+            "url": "https://thehackernews.com/2026/10/russian-linked-hackers-used-new-mesh.html",
+            "source": "The Hacker News",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "hacking",
+                "malware",
+                "phishing",
+                "vulnerabilites"
+            ],
+            "published_at": "2026-10-23T11:11:23+00:00",
+            "collected_at": "2026-10-23T16:12:45.086266+00:00"
+        },
+        {
+            "id": "078b41e2b15912e7081760f3d1cda63db838eb7f9293e930fbf91286f7f182ff",
+            "title": "Is this the new cyber normal?",
+            "description": "Comments",
+            "url": "https://drew.silcock.dev/blog/is-this-the-new-cyber-normal/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-23T11:04:53+00:00",
+            "collected_at": "2026-10-23T16:12:50.581131+00:00"
+        },
+        {
+            "id": "ffc94a359f67275e70f08162c610e1f5e14e54bbc7f02c70b875139c68e4a4c6",
+            "title": "Rocket Report: SpaceX says no thanks to military launches; Spanish rocket nearly ready",
+            "description": "\"We believe Canada should be able to reach orbit on its own terms.\"",
+            "url": "https://arstechnica.com/space/2026/10/rocket-report-spacex-says-no-thanks-to-military-launches-spanish-rocket-nearly-ready/",
+            "source": "Ars Technica",
+            "category": "technologie",
+            "tags": [
+                "informatique",
+                "innovation",
+                "technologie"
+            ],
+            "published_at": "2026-10-23T11:00:57+00:00",
+            "collected_at": "2026-10-23T16:12:47.821532+00:00"
+        },
+        {
+            "id": "f02e3700aa58826e9b67444b7d3878eb41c361e5f0c5d9a7dae92856b4726b3c",
+            "title": "Bitcoin steadies near $81,700 as altcoins rebound, pepe climbs 13%",
+            "description": "",
+            "url": "https://www.coindesk.com/markets/2026/10/23/bitcoin-steadies-near-usd81-700-as-altcoins-rebound-pepe-climbs-13",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-10-23T10:54:41+00:00",
+            "collected_at": "2026-10-23T16:13:05.469565+00:00"
+        },
+        {
+            "id": "70dcaa5e2ba16d0f113fc894720e07f49d4f1bf1f54ab0a0190846e0cc0f5827",
+            "title": "Bitcoin appears to have decoupled from midterm cycle bottom history",
+            "description": "",
+            "url": "https://www.coindesk.com/markets/2026/10/23/bitcoin-approaches-midterms-as-july-low-challenges-historical-cycle-pattern",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-10-23T10:53:09+00:00",
+            "collected_at": "2026-10-23T16:13:05.469589+00:00"
+        },
         {
             "id": "ec9434d193805dc853af290924170b786f80f42502edf596efcbda6c7761531e",
             "title": "AI Search Optimization: How to Get Your Website Mentioned by ChatGPT",
@@ -223,6 +1464,21 @@
             ],
             "published_at": "2026-10-23T10:32:34+00:00",
             "collected_at": "2026-10-23T10:47:47.898719+00:00"
+        },
+        {
+            "id": "c9acdb51c4ea130fba11e092e947d990b224cce67b8db2e0136f9e1af8213a62",
+            "title": "Job Loss and Cortisone Mania",
+            "description": "Comments",
+            "url": "https://tilschuenemann.de/job-loss-cortisone-mania",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-23T10:31:24+00:00",
+            "collected_at": "2026-10-23T16:12:50.580727+00:00"
         },
         {
             "id": "28839fb95b7747e437f9dadc11f671e970d5a9813028618b5a9d2cd6767e65f5",
@@ -729,6 +1985,21 @@
             ],
             "published_at": "2026-10-23T08:25:06+00:00",
             "collected_at": "2026-10-23T10:47:45.111718+00:00"
+        },
+        {
+            "id": "167ed8b74ae4543a469694b5b49ea501003c64c651ef4fd2b08097a25347fb6d",
+            "title": "Disney Raising Prices Days After Confirming Ads Will Now Show Up on Every Tier",
+            "description": "Comments",
+            "url": "https://www.tvfandomlounge.com/disney-plus-price-hike-ads-premium-tier-nielsen-emmys-2026/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-23T08:21:29+00:00",
+            "collected_at": "2026-10-23T16:12:50.580568+00:00"
         },
         {
             "id": "01e5ecb395f55fddfa47703de22a34d77a33871f6958e3838c8df1f88ed8e9c0",
@@ -1612,6 +2883,201 @@
             ],
             "published_at": "2026-10-23T00:00:00+00:00",
             "collected_at": "2026-10-23T10:47:48.546991+00:00"
+        },
+        {
+            "id": "54ff598d145d94b258eecd912318f8422e4492bdd804a2389e29c5a034619c38",
+            "title": "Multiples vulnérabilités dans les produits Red Hat (23 octobre 2026)",
+            "description": "De multiples vulnérabilités ont été découvertes dans les produits Red Hat. Certaines d'entre elles permettent à un attaquant de provoquer un contournement de la politique de sécurité, un déni de service et un problème de sécurité non spécifié par l'éditeur.",
+            "url": "https://www.cert.ssi.gouv.fr/avis/CERTFR-2026-AVI-1373/",
+            "source": "CERT-FR",
+            "category": "cybersecurite",
+            "tags": [
+                "anssi",
+                "cert-fr",
+                "cve",
+                "france"
+            ],
+            "published_at": "2026-10-23T00:00:00+00:00",
+            "collected_at": "2026-10-23T16:12:47.286600+00:00"
+        },
+        {
+            "id": "839ea7a4903723e71d23ffd9e8eb7cf8acb7f36bacb7d36a4dc035e0fa4f6a40",
+            "title": "Multiples vulnérabilités dans les produits HPE Aruba Networking (23 octobre 2026)",
+            "description": "De multiples vulnérabilités ont été découvertes dans les produits HPE Aruba Networking. Certaines d'entre elles permettent à un attaquant de provoquer une exécution de code arbitraire à distance, une élévation de privilèges et un déni de service à distance.",
+            "url": "https://www.cert.ssi.gouv.fr/avis/CERTFR-2026-AVI-1369/",
+            "source": "CERT-FR",
+            "category": "cybersecurite",
+            "tags": [
+                "anssi",
+                "cert-fr",
+                "cve",
+                "france"
+            ],
+            "published_at": "2026-10-23T00:00:00+00:00",
+            "collected_at": "2026-10-23T16:12:47.286636+00:00"
+        },
+        {
+            "id": "5e64c87a4510e26cee3bfee2f846a04ae458be406f5eeaee82f969c58eb39460",
+            "title": "Vulnérabilité dans Mattermost Server (23 octobre 2026)",
+            "description": "Une vulnérabilité a été découverte dans Mattermost Server. Elle permet à un attaquant de provoquer un problème de sécurité non spécifié par l'éditeur.",
+            "url": "https://www.cert.ssi.gouv.fr/avis/CERTFR-2026-AVI-1368/",
+            "source": "CERT-FR",
+            "category": "cybersecurite",
+            "tags": [
+                "anssi",
+                "cert-fr",
+                "cve",
+                "france"
+            ],
+            "published_at": "2026-10-23T00:00:00+00:00",
+            "collected_at": "2026-10-23T16:12:47.286665+00:00"
+        },
+        {
+            "id": "f8af8e8f366fc07ed68b170352d0a0ce09fab1af32332e8a6d92f8a75349ae96",
+            "title": "Multiples vulnérabilités dans Microsoft Edge (23 octobre 2026)",
+            "description": "De multiples vulnérabilités ont été découvertes dans Microsoft Edge. Elles permettent à un attaquant de provoquer un problème de sécurité non spécifié par l'éditeur.",
+            "url": "https://www.cert.ssi.gouv.fr/avis/CERTFR-2026-AVI-1371/",
+            "source": "CERT-FR",
+            "category": "cybersecurite",
+            "tags": [
+                "anssi",
+                "cert-fr",
+                "cve",
+                "france"
+            ],
+            "published_at": "2026-10-23T00:00:00+00:00",
+            "collected_at": "2026-10-23T16:12:47.286693+00:00"
+        },
+        {
+            "id": "f334b7c8a18c73bd03bb488bd2843ec2bd6e7c489b6a1c3cc88484815bc6bcc6",
+            "title": "Multiples vulnérabilités dans le noyau Linux de Debian LTS (23 octobre 2026)",
+            "description": "De multiples vulnérabilités ont été découvertes dans le noyau Linux de Debian LTS. Certaines d'entre elles permettent à un attaquant de provoquer une élévation de privilèges, une atteinte à la confidentialité des données et un déni de service.",
+            "url": "https://www.cert.ssi.gouv.fr/avis/CERTFR-2026-AVI-1375/",
+            "source": "CERT-FR",
+            "category": "cybersecurite",
+            "tags": [
+                "anssi",
+                "cert-fr",
+                "cve",
+                "france",
+                "linux"
+            ],
+            "published_at": "2026-10-23T00:00:00+00:00",
+            "collected_at": "2026-10-23T16:12:47.286729+00:00"
+        },
+        {
+            "id": "a4d661aa82224ecae1b6866bf9f3d44b81c276c24468401bd355b06d35de5520",
+            "title": "Multiples vulnérabilités dans les produits Tenable (23 octobre 2026)",
+            "description": "De multiples vulnérabilités ont été découvertes dans les produits Tenable. Elles permettent à un attaquant de provoquer une exécution de code arbitraire à distance.",
+            "url": "https://www.cert.ssi.gouv.fr/avis/CERTFR-2026-AVI-1370/",
+            "source": "CERT-FR",
+            "category": "cybersecurite",
+            "tags": [
+                "anssi",
+                "cert-fr",
+                "cve",
+                "france"
+            ],
+            "published_at": "2026-10-23T00:00:00+00:00",
+            "collected_at": "2026-10-23T16:12:47.286759+00:00"
+        },
+        {
+            "id": "4f4b48c569c057cd924c2676363b9d405fd2bdf40ea88e837b74f96872be78ba",
+            "title": "Multiples vulnérabilités dans le noyau Linux de Debian (23 octobre 2026)",
+            "description": "De multiples vulnérabilités ont été découvertes dans le noyau Linux de Debian. Certaines d'entre elles permettent à un attaquant de provoquer une élévation de privilèges, une atteinte à la confidentialité des données et un déni de service.",
+            "url": "https://www.cert.ssi.gouv.fr/avis/CERTFR-2026-AVI-1374/",
+            "source": "CERT-FR",
+            "category": "cybersecurite",
+            "tags": [
+                "anssi",
+                "cert-fr",
+                "cve",
+                "france",
+                "linux"
+            ],
+            "published_at": "2026-10-23T00:00:00+00:00",
+            "collected_at": "2026-10-23T16:12:47.286793+00:00"
+        },
+        {
+            "id": "4759bb58bc81d1b937227481289a05fccb2addead99cb45b5c06d1868b5e5445",
+            "title": "Multiples vulnérabilités dans le noyau Linux d'Ubuntu (23 octobre 2026)",
+            "description": "De multiples vulnérabilités ont été découvertes dans le noyau Linux d'Ubuntu. Certaines d'entre elles permettent à un attaquant de provoquer une exécution de code arbitraire à distance, une élévation de privilèges et un déni de service à distance.",
+            "url": "https://www.cert.ssi.gouv.fr/avis/CERTFR-2026-AVI-1376/",
+            "source": "CERT-FR",
+            "category": "cybersecurite",
+            "tags": [
+                "anssi",
+                "cert-fr",
+                "cve",
+                "france",
+                "linux"
+            ],
+            "published_at": "2026-10-23T00:00:00+00:00",
+            "collected_at": "2026-10-23T16:12:47.286826+00:00"
+        },
+        {
+            "id": "6a96974f8c0e8ed1ea103f0f8476f4f61cfa2adc5d5fd24a3bea1847c079b6f5",
+            "title": "Multiples vulnérabilités dans les produits SUSE (23 octobre 2026)",
+            "description": "De multiples vulnérabilités ont été découvertes dans les produits SUSE. Certaines d'entre elles permettent à un attaquant de provoquer une exécution de code arbitraire à distance, une élévation de privilèges et une atteinte à la confidentialité des données.",
+            "url": "https://www.cert.ssi.gouv.fr/avis/CERTFR-2026-AVI-1372/",
+            "source": "CERT-FR",
+            "category": "cybersecurite",
+            "tags": [
+                "anssi",
+                "cert-fr",
+                "cve",
+                "france"
+            ],
+            "published_at": "2026-10-23T00:00:00+00:00",
+            "collected_at": "2026-10-23T16:12:47.286861+00:00"
+        },
+        {
+            "id": "6fd020581e4c23c848183093b3faa6f22aec339c3bc7b94f07cf77f85dd29d14",
+            "title": "Multiples vulnérabilités dans les produits IBM (23 octobre 2026)",
+            "description": "De multiples vulnérabilités ont été découvertes dans les produits IBM. Certaines d'entre elles permettent à un attaquant de provoquer une exécution de code arbitraire à distance, une élévation de privilèges et un déni de service à distance.",
+            "url": "https://www.cert.ssi.gouv.fr/avis/CERTFR-2026-AVI-1378/",
+            "source": "CERT-FR",
+            "category": "cybersecurite",
+            "tags": [
+                "anssi",
+                "cert-fr",
+                "cve",
+                "france"
+            ],
+            "published_at": "2026-10-23T00:00:00+00:00",
+            "collected_at": "2026-10-23T16:12:47.286895+00:00"
+        },
+        {
+            "id": "f17e87e02e0da1c23dfd19bc3fb5ee81b4a4b2344293fb90f3272d969d55aaea",
+            "title": "Multiples vulnérabilités dans les produits Papercut (23 octobre 2026)",
+            "description": "De multiples vulnérabilités ont été découvertes dans les produits Papercut. Certaines d'entre elles permettent à un attaquant de provoquer une exécution de code arbitraire à distance, une atteinte à la confidentialité des données et une injection de code indirecte à distance (XSS).",
+            "url": "https://www.cert.ssi.gouv.fr/avis/CERTFR-2026-AVI-1377/",
+            "source": "CERT-FR",
+            "category": "cybersecurite",
+            "tags": [
+                "anssi",
+                "cert-fr",
+                "cve",
+                "france"
+            ],
+            "published_at": "2026-10-23T00:00:00+00:00",
+            "collected_at": "2026-10-23T16:12:47.286933+00:00"
+        },
+        {
+            "id": "2b3f616d26d343fed7789052f7d45765c10f64079fafbd4a9ee06dcaf0e956ff",
+            "title": "Does Your Model Run on AWS Trainium? Look It Up",
+            "description": "",
+            "url": "https://huggingface.co/blog/torch-neuronx-model-support",
+            "source": "Hugging Face",
+            "category": "cloud",
+            "tags": [
+                "aws",
+                "ia",
+                "llm",
+                "machine-learning"
+            ],
+            "published_at": "2026-10-23T00:00:00+00:00",
+            "collected_at": "2026-10-23T16:12:51.660038+00:00"
         },
         {
             "id": "4d960fba39d995821e8499db388b936497d052b010f756dd7561985b70cc091d",
@@ -4483,6 +5949,21 @@
             "collected_at": "2026-10-22T16:23:31.625416+00:00"
         },
         {
+            "id": "dd435ca53f5cddb1beebc82c09b733e27352a905067908e1cbe7e480fc3e5bd1",
+            "title": "Amazon MSK Connect now supports pausing and resuming connectors",
+            "description": "Amazon MSK Connect (Amazon Managed Streaming for Apache Kafka Connect) now supports pausing and resuming connectors, letting you temporarily pause a connector from processing records and resume it later. This is useful when you need to stop data flow during maintenance on a source database or a sink target, or to pause processing while you investigate an upstream or downstream issue. Amazon MSK Connect is a fully managed service that allows you to deploy, monitor, and scale Apache Kafka Connect connectors with Amazon MSK (Managed Streaming for Apache Kafka). Previously, pausing a connector meant deleting it and recreating it - a more disruptive operation, adding risk and operational overhead. With this launch, you can pause a running connector and resume it in place when you are ready — a paused connector keeps its configuration, capacity settings, and committed offsets, and its tasks continue processing from the offsets they last committed when you resume. This capability is available at no additional cost through the Amazon MSK Console, AWS CLI, AWS SDK, and AWS CDK in all AWS Regions where Amazon MSK Connect is available. To learn more, visit the Amazon MSK Connect documentation . To get started, visit the Amazon MSK Console .",
+            "url": "https://aws.amazon.com/about-aws/whats-new/2026/10/amazon-msk-connect-pause-resume",
+            "source": "AWS What's New",
+            "category": "cloud",
+            "tags": [
+                "amazon",
+                "aws",
+                "cloud"
+            ],
+            "published_at": "2026-10-22T15:00:00+00:00",
+            "collected_at": "2026-10-23T16:12:53.849087+00:00"
+        },
+        {
             "id": "2dba5216d961d0cf2930f9e27c776dad4da8543ca47dfd43c8a047c2fa65e955",
             "title": "Fusion startup Helion is developing new semiconductors that could double output of its power plants",
             "description": "Helion now has another $225 million to help speed development of its first fusion power plant, due to provide Microsoft with electricity in 2028.",
@@ -4645,6 +6126,20 @@
             ],
             "published_at": "2026-10-22T14:22:31+00:00",
             "collected_at": "2026-10-22T21:02:54.628357+00:00"
+        },
+        {
+            "id": "cd140a83e7b004cbb2ce3ac66dab79312683a0aa31c52148a5e472a822220602",
+            "title": "As AI Risks Grow, Insurers Split on Covering the Damage",
+            "description": "Insurers are split on AI risk: some build specialized agentic AI coverage, while major carriers quietly exclude it — leaving enterprises exposed without their knowledge.",
+            "url": "https://www.darkreading.com/cyber-risk/cyber-insurance-covering-ai-damage",
+            "source": "Dark Reading",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "enterprise-security"
+            ],
+            "published_at": "2026-10-22T14:21:22+00:00",
+            "collected_at": "2026-10-23T16:12:47.018414+00:00"
         },
         {
             "id": "f1cbebce2f241d592b5d2335fbf4fd44b384f5819bd162ec0851ad191c4ec157",
@@ -326906,6 +328401,159 @@
             ],
             "published_at": null,
             "collected_at": "2026-10-23T10:47:45.724081+00:00"
+        },
+        {
+            "id": "24257eb08dcdecc952fc49bde84c8965bd8e13d8168f1e0cb4b6fad1768e7d01",
+            "title": "Feds want robotaxis to signal ‘I’m driving’ with cyan-colored lights",
+            "description": "After years of debating how driverless cars should tell the world no one is at the wheel - flashing text, audio alerts, custom lights - the feds just stepped in with a single answer: cyan. The National Highway Traffic Safety Administration released proposed changes to Federal Motor Vehicle Safety Standard (FMVSS) No. 108, specifically rewriting […]",
+            "url": "https://www.theverge.com/transportation/1017435/nhtsa-autonomous-vehicle-cyan-lighting-fmvss",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-10-23T16:12:48.325163+00:00"
+        },
+        {
+            "id": "49ed1c1053b02f84e0cf65f8181ad4d11d6264edaf5cedbe667df27430e2083e",
+            "title": "SpaceX’s mobile carrier push reportedly involves tapping into 80,000 cell sites",
+            "description": "SpaceX is planning to access at least 80,000 cell sites as part of efforts to compete directly with Verizon, T-Mobile, and AT&T, according to a report from Bloomberg. Sources tell the publication that SpaceX is in talks with Crown Castle Inc., one of the nation's largest cell tower owners. The move would give SpaceX access […]",
+            "url": "https://www.theverge.com/science/1017477/spacex-cell-sites-major-us-carrier",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-10-23T16:12:48.325252+00:00"
+        },
+        {
+            "id": "7aa6acbd35f79e1aa638a6466c227c10d8921c3684b08de9cbfa308709c7ccea",
+            "title": "Meta delays new business terms after publisher pushback on AI scraping",
+            "description": "Meta is delaying the enforcement of its new business terms after publishers raised concerns that they could allow the company to scrape news sites for AI training, as reported earlier by Fast Company. In a statement to The Verge, Meta spokesperson Daniel Roberts says the terms will go into effect on November 20th \"to allow […]",
+            "url": "https://www.theverge.com/tech/1017450/meta-business-terms-delayed-ai-scraping",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-10-23T16:12:48.325317+00:00"
+        },
+        {
+            "id": "374a21eda7a60ae88fd54fdab39f13ee651325dfeae152738b91a6224e59def5",
+            "title": "The Sigma FP2 brings significant upgrades to the ‘world’s smallest’ full-frame camera",
+            "description": "Seven years after Sigma claimed its original fp was the world's smallest and lightest full-frame mirrorless camera, the company has announced a similarly compact follow-up with several welcome upgrades, including an improved sensor, an articulating LCD display, and longer battery life. But this time around, Sigma is only claiming its new FP2 is the \"world's […]",
+            "url": "https://www.theverge.com/tech/1017410/sigma-fp2-mirrorless-full-frame-modular-camera-upgrade",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-10-23T16:12:48.325382+00:00"
+        },
+        {
+            "id": "9841a6fd366727bf2ec9585fe58654b65e8ff94ac8c31512f7796eec1a48edbb",
+            "title": "Our best tips for using the iPhone Duo",
+            "description": "The Duo is an entirely new kind of iPhone, so it comes with a bit of a learning curve. That's a wild thing to imagine, since the iPhone has had very few fundamental changes since its inception. But the Duo is built different. If you won the preorder lottery and managed to get your hands […]",
+            "url": "https://www.theverge.com/tech/1017157/iphone-duo-tips-touch-id-magsafe",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "ios",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-10-23T16:12:48.325438+00:00"
+        },
+        {
+            "id": "d118b0f8377dc4de6e9c6133718ac4cdfe111ce713dbfb1b3738150d327e71c8",
+            "title": "Apple revives the original iPod as an Apple Music easter egg",
+            "description": "If you've been feeling nostalgic for your old iPod, you can head over to Apple Music's 404 page to listen to music on a virtual recreation of the first-generation iPod. The hidden iPod was spotted by users on social media on Friday. It's appropriately stocked with music from the early 2000s, like Coldplay's \"Viva La […]",
+            "url": "https://www.theverge.com/entertainment/1017413/apple-music-ipod-404-page",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-10-23T16:12:48.325496+00:00"
+        },
+        {
+            "id": "d690f00a2af6682a31a104709c9224ebc4fa12c29a58594da7b0914fdfc3c8dc",
+            "title": "People are vibe coding their way to better TVs",
+            "description": "Vibe coding has reached TVs. Social media is awash with posts from people using LLMs and open-source tools to remove ads and tracking, trim bloat so the OS runs faster, and even completely change the look and organization of their homescreens. While a lot of it is fun - one user turned their TV homescreen […]",
+            "url": "https://www.theverge.com/tech/1016116/vibe-coding-tv-os",
+            "source": "The Verge",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "gadgets",
+                "internet",
+                "llm",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-10-23T16:12:48.325545+00:00"
+        },
+        {
+            "id": "c1fe178486987bed375e1cc925cc83643dde8699e8ecb97494f667cca329b61a",
+            "title": "Netflix can’t fire its way out of this downward spiral",
+            "description": "Netflix co-CEOs Ted Sarandos and Greg Peters assured investors this week that they have nothing to be concerned about. Sure, the company was going to lay off 1,000 employees, downsizing its product, tech, and legal departments, and was ousting its chief content officer, film chairman, and film vice president. But it had also hired a […]",
+            "url": "https://www.theverge.com/streaming/1017304/netflix-layoffs-bela-bajaria-peter-rice-dan-lin-doug-belgrad",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-10-23T16:12:48.325605+00:00"
+        },
+        {
+            "id": "f934fe64859bc83c4c7eac5fbe10748b78fa67dbb1baea65bbe6fbaa23644260",
+            "title": "Brick’s new app blocker is designed for bedtime doomscrolling",
+            "description": "Brick, the company behind the $59 gadget that blocks you from using apps on your phone, has launched a new device that's designed to help you cut back on doomscrolling in bed. The $129 Brick Night introduces a location-based element: instead of requiring you to tap your phone against the device, like the OG Brick, […]",
+            "url": "https://www.theverge.com/gadgets/1017383/brick-night-app-blocker-gadget-bluetooth-launch",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-10-23T16:12:48.325660+00:00"
+        },
+        {
+            "id": "4958c298c8376221908566391457d63eb51c090af21e1db79aa61494ddb98cd1",
+            "title": "Retro gaming is being overrun with AI",
+            "description": "Retro video games are everywhere lately - especially in places where they aren't supposed to be. Halo in a web browser, Wind Waker on the iPhone, Super Smash Bros. in mixed reality. Over the past month or so, these kinds of unexpected projects have gone viral with incredible frequency thanks to new AI tools, as […]",
+            "url": "https://www.theverge.com/ai-artificial-intelligence/1015430/ai-retro-games-decomp-recomp-port",
+            "source": "The Verge",
+            "category": "web",
+            "tags": [
+                "gadgets",
+                "internet",
+                "ios",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-10-23T16:12:48.325713+00:00"
         }
     ]
 }
