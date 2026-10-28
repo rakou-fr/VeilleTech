@@ -1,7 +1,744 @@
 {
-    "updated_at": "2026-10-27T21:39:36.051654+00:00",
-    "count": 22584,
+    "updated_at": "2026-10-28T03:21:41.040962+00:00",
+    "count": 22653,
     "articles": [
+        {
+            "id": "534aaa5a21c702c3fbd6406b87addf4b689322ec81d2566e81b7d9698b11d0b2",
+            "title": "Deep Dive: GST Reconciliation Software in GSTBot",
+            "description": "Reconciliation: Turning Bulk Invoices into Accurate ITC Claims GSTBot’s core value lies in automating the reconciliation of a company’s purchase register against the GSTR‑2B data supplied by the tax authority. For Indian SMBs, the manual process—matching each invoice line, calculating input tax credit (ITC), and flagging discrepancies—consumes weeks of effort every month. The tool replaces that with a repeatable, tolerant workflow that runs in seconds. This is where gst reconciliation software pays off in practice. The Problem Exact matching fails – Vendor names, invoice numbers, or tax amounts may differ slightly between the purchase ledger and the GSTR‑2B feed. A strict string match would flag every minor variation as an error, drowning users in false positives. Volume is high – Small businesses can receive hundreds of invoices per month. A batch‑processing solution is required to avoid bottlenecks. Regulatory nuance – Rules 37, 42, and 43 introduce reversals that must be reflected in the reconciliation, otherwise ITC calculations become inaccurate. The Solution GSTBot introduces a tolerance‑aware reconciliation engine that: Normalizes data – Vendor names and HSN codes are lower‑cased and stripped of punctuation before comparison. Applies configurable thresholds – Users set acceptable differences for amounts (e.g., ±1 %) and dates (±2 days). The engine uses these to decide whether two records represent the same transaction. Locks per period – To avoid race conditions when multiple reconciliation jobs run concurrently, a Redis‑based advisory lock (see commit fix(reconciliation): serialise runs per period with an advisory lock ) ensures only one job processes a given tax period at a time. Classifies exceptions – Each mismatch is labeled (e.g., Amount mismatch , Vendor mismatch ) and a recommended action is attached. The UI presents these in a concise table. The engine is built on a stack that keeps the codebase lightweight yet scalable: Layer Tech API FastAPI Background jobs Celery, Redis Persistence PostgreSQL (SQLAlchemy) Frontend React (Vite) Data processing Pandas (Python) How It Works – Behind the Code Below is a simplified view of the reconciliation workflow. The real implementation contains additional error handling and audit logging. Getting gst reconciliation software right early saves rework later. # reconciliation.py import pandas as pd from sqlalchemy.orm import Session from redis import Redis from celery import shared_task from fastapi import APIRouter , Depends router = APIRouter () @shared_task def reconcile_period ( period : str , tolerance : dict ): \"\"\" Run reconciliation for a tax period. \"\"\" lock_key = f \" reconcile: { period } \" with Redis (). lock ( lock_key , blocking_timeout = 30 ): # 1. Pull local ledger ledger = pd . read_sql ( \" SELECT vendor, gstin, inv_no, amount, tax_rate, hsn FROM purchase_register WHERE period=%s \" , con = engine , params = ( period ,) ) # 2. Pull GSTR‑2B feed gstr2b = pd . read_sql ( \" SELECT vendor, gstin, inv_no, amount, tax_rate, hsn FROM gstr2b WHERE period=%s \" , con = engine , params = ( period ,) ) # 3. Normalise and compare ledger [ ' key ' ] = ledger . apply ( normalise_key , axis = 1 ) gstr2b [ ' key ' ] = gstr2b . apply ( normalise_key , axis = 1 ) merged = ledger . merge ( gstr2b , on = ' key ' , suffixes = ( ' _local ' , ' _remote ' )) # 4. Apply tolerance def is_within ( row ): amt_diff = abs ( row [ ' amount_local ' ] - row [ ' amount_remote ' ]) return amt_diff <= tolerance [ ' amount ' ] * row [ ' amount_local ' ] merged [ ' ok ' ] = merged . apply ( is_within , axis = 1 ) # 5. Persist results merged . to_sql ( ' reconciliation ' , engine , if_exists = ' replace ' , index = False ) def normalise_key ( row ): \"\"\" Create a deterministic key for matching. \"\"\" return f \" { row [ ' vendor ' ]. lower (). replace ( ' ' , '' ) } | { row [ ' gstin ' ] } | { row [ ' inv_no ' ] } \" # API endpoint @router.post ( \" /reconcile \" ) async def trigger_reconciliation ( period : str , tolerance : dict = Depends ( get_tolerance ), db : Session = Depends ( get_db ) ): reconcile_period . delay ( period , tolerance ) return { \" status \" : \" queued \" } The normalise_key function demonstrates the simple string normalization that reduces false mismatches. The is_within predicate applies the user‑defined amount tolerance. The background task writes the reconciliation report to a dedicated table. The React UI consumes this table and presents a grid where each row shows the local amount, the GSTR‑2B amount, and the status ( OK or Exception ). Clicking an exception opens a modal with the suggested action—often “Adjust amount” or “Verify vendor”. Using the Feature Upload invoices – Drag a ZIP of PDFs or an Excel file onto the /upload page. The backend runs OCR and a lightweight transformer model to extract fields. Set tolerances – In the settings panel, specify an amount tolerance of 0.5 % and a date tolerance of 1 day. Run reconciliation – Hit “Reconcile” for the current month. The job starts in the background; you receive a toast notification when it completes. Review results – The table shows 98 % of lines as OK . The remaining 2 % are flagged with clear reasons and actions. Because the reconciliation engine runs in a single thread per period, you can safely trigger multiple reconciliations for different periods without interference. The Redis lock guarantees that only one job touches a period’s data at a time, preventing race conditions that could corrupt the report. Impact The tolerance‑aware reconciliation reduces manual effort by eliminating the need to chase every minor discrepancy. By presenting actionable exceptions, it empowers finance staff to correct entries quickly, ensuring accurate ITC claims and compliance with GSTR‑2B rules. For SMBs, this means a reliable, low‑cost alternative to enterprise‑grade reconciliation tools that are priced beyond their reach. Good gst reconciliation software keeps the rest of the workflow predictable. Once the reconciliation table is complete, GSTBot feeds the reconciled amounts into the GSTR‑1 and GSTR‑3B preparation modules. The same tolerance logic ensures that the ITC reported on the portal matches the reconciled ledger, preventing downstream filing errors. The Celery workers can be scaled horizontally; each worker processes a period lock, so adding more workers speeds up multi‑period runs. Related reading GSTR‑2B Reconciliation in GSTBot: Configurable Tolerances GSTR-2B Reconciliation with Configurable Tolerances in GSTBot",
+            "url": "https://dev.to/sumaninster/deep-dive-gst-reconciliation-software-in-gstbot-h0n",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "programmation",
+                "python",
+                "web"
+            ],
+            "published_at": "2026-10-28T03:16:12+00:00",
+            "collected_at": "2026-10-28T03:21:24.075890+00:00"
+        },
+        {
+            "id": "0a5793127da57e1f4598a7af1ecc5df63df566294518a677e84eff014eeb3598",
+            "title": "Crypto Leaders Blast Misleading WSJ Ad on Tokenization Risks",
+            "description": "An anti-tokenization ad by a non-profit civic organization in the Wall Street Journal has drawn criticism from the crypto community, which argues that while concerns about asset tokenization are valid, misleading notions about how it works are not. Anti-Tokenization Ad on WSJ Raises Criticism From Industry Figureheads The issue of tokenizing real-world assets (RWA) and […]",
+            "url": "https://news.bitcoin.com/finance/crypto-leaders-blast-misleading-wsj-ad-on-tokenization-risks/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-10-28T03:15:48+00:00",
+            "collected_at": "2026-10-28T03:21:39.523159+00:00"
+        },
+        {
+            "id": "9000d1fd1be7c8210f43a71b706059058025ed5983437348b3ef79d3d161bd38",
+            "title": "Street Light-Pole LED Screens: Five Decisions That Actually Matter",
+            "description": "Every city has them by now — a vertical LED panel clamped to a lamp post, selling phone plans, car insurance, or a concert next weekend. It looks like a simple product. It is actually a stack of decisions, and most of the expensive mistakes are made long before anyone argues about pixel pitch. We build these cabinets in Shenzhen, and the same questions come up before every order. Here are the ones that decide whether a light-pole screen becomes a revenue asset or a maintenance queue. 1. The pole is the constraint, not the screen A street light pole was engineered to carry a luminaire and its own wind load. It was not engineered for 1.5 m² of steel, glass, and power supply hanging at four metres. Before you look at a single datasheet, collect three numbers: pole diameter and wall thickness at the mounting height the pole's rated wind load, and the local design wind speed whether the pole is hollow enough to pull cable through, or whether you need an external conduit If the pole cannot take the load, no amount of screen specification will save the project. In practice this is where double-sided installations fail first — two faces mean roughly twice the sail area on the same clamps. 2. Height and viewing distance set the pitch Street-side audiences are close. Pedestrians pass at 1–3 m, cars at 4–8 m, and the panel usually starts around 2.2–2.8 m above the pavement so nobody walks into it. That geometry has two consequences. First, content is portrait. A 960 × 1920 cabinet is the standard shape for a reason: the creative already exists in 9:16. Design for the panel, not for a landscape slide squeezed into it. Second, the pitch debate is mostly settled by distance. At 3–6 m, P4 and P5 both read cleanly; P6.67 is fine when the creative is bold type and simple imagery; P2.5 at street level buys density that no passer-by will resolve. If a supplier leads with pitch and never asks where people stand, that is a signal. 3. Double-sided or single-sided A double-sided cabinet is one structure with two faces, usually one controller and one power feed. You sell the same pole twice, which is why media owners like it. The trade-offs are real: more weight, more wind load, more heat inside a sealed box, and a service routine that has to reach both faces. Single-sided cabinets are lighter and cheaper to mount, and on a narrow pavement they are often the only option that keeps the screen out of the pedestrian envelope. The material split matters too: aluminium for city centres, iron for industrial roads. 4. Brightness is a daylight number A screen that faces the sun needs brightness headroom. 5,000–6,000 nits is the working range for street-side advertising in full sun; at 3,500 nits the image goes flat and grey by early afternoon. Two things matter as much as the peak number. The first is dimming: a 6,000-nit panel running at full power at 2 a.m. is a complaint from residents, so the control system needs a proper dimming curve, not an on/off schedule. The second is heat. Brightness is current, current is heat, and a sealed aluminium box in July is an oven. Ask how the cabinet moves air, and ask what the brightness derating looks like at 45 °C ambient. 5. Sealing, wind, and the fixing interface IP65 is a lab rating. The installed reality is decided by details: cable entry direction — a gland facing upward is a water funnel drainage path at the bottom of the cabinet the corrosion behaviour of the clamp where aluminium meets galvanised steel the bracket drawing, which is the part nobody reviews until installation day Ask for the bracket drawing before you sign. If it does not exist yet, the installation is being designed on site by whoever brought the ladder. 6. Content delivery is half the product Forty poles in a district are a network, not forty products. The questions that decide the operating cost are unglamorous: does the player keep playing when the link drops, how are playlists scheduled per pole, how does an operator know which physical pole is \"device 27\", and how is a firmware update pushed without sending a technician to each site. A pre-order checklist Pole diameter, wall thickness, wind rating Audience distance, panel size, portrait or landscape One face or two Daytime brightness target and night dimming curve Cable entry direction and drainage Mounting bracket drawing Content platform: local player, 4G, or scheduled USB Spare modules, and who is allowed to climb the pole Every one of those is cheaper to answer on paper than from a scissor lift at 7 a.m. What we build The DGB5 is our double-sided aluminium light-pole screen: a vertical cabinet designed to clamp onto existing poles, with IP65 sealing, a front service door, and support for 4G/WiFi cluster management so a whole street can be scheduled from one laptop. Specs and drawings live here: https://www.mlxled.com/product/dgb5-double-alu/ If you are specifying a street-side network, spend the first meeting on the pole and the audience. The pixel pitch will sort itself out. I work with MuenLED, a Shenzhen LED manufacturer.",
+            "url": "https://dev.to/angel_huang_a28928d59502a/street-light-pole-led-screens-five-decisions-that-actually-matter-1oh3",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "web",
+                "wifi"
+            ],
+            "published_at": "2026-10-28T03:15:47+00:00",
+            "collected_at": "2026-10-28T03:21:24.076645+00:00"
+        },
+        {
+            "id": "52fc8b15bf80d08b2fe4c0fe46c84b27c3c789f6f080d70cefcc739758dac0ab",
+            "title": "After the Upload: A Results and Re-lodge Workflow for NDIS Bulk Claims (Claim References, Correction Files and Claim Age, 2026)",
+            "description": "Originally based on our step-by-step guide NDIS Bulk Upload 2026: How to Make a Bulk Payment Request in 6 Steps on rostery.com.au. This version is rewritten for the people who look after a claim file once it has left the building. Most advice about NDIS bulk claiming stops at the Upload button. That's understandable, because the upload is where the visible errors happen. But for a finance or operations team, the harder work starts afterwards. A file of 300 rows turns into 300 separate payment requests, each with its own outcome, and the bank deposit that follows is one number. If nobody ties those back together, short payments and rejected rows simply vanish. This post is about that second half: reading the results, re-lodging failed rows without double claiming, and keeping an eye on how old each claim is. We wrote about the pre-upload side last week in a five-gate check workflow on dev.to , so we won't repeat the column rules here. Everything about the portal comes from the NDIA's Bulk payment requests: self-help guide for providers (December 2025) and its payment pages on ndis.gov.au, read on 28 October 2026. When we say \"the guide\", that's the document we mean. General information only, not claiming, financial or legal advice. Check the current NDIA guidance before you change a process. The one idea that makes everything else work: one row, one request The guide is explicit that the number of lines under the header equals the number of payment requests created. So 100 data rows means 100 requests. Each one is checked, paid, capped or rejected on its own. That has a design consequence for whoever builds the file. Your system needs a stable key for every row, one that survives the trip to the NDIA and back. The only field in the template that does that job is ClaimReference . It's optional in the template, but if you leave it empty you lose the thread between what you claimed and what came back. Step 1: design claim references you can match later The guide allows up to 50 characters in ClaimReference, using letters, numbers and a few separators. It also has a rejection code, P05, for when a single claim reference has been used on too many claims. Our explainer for rejection code P04 sits alongside P05 in the same family of payment codes, and both point at the same habit: give every row its own reference. A simple pattern that works well is invoice number plus line number. It's readable by a person, unique per row, and easy to split back apart when you reconcile. import re def claim_reference ( invoice_no : str , line_no : int ) -> str : \"\"\" Invoice number plus line number, letters and digits only, max 50 chars. \"\"\" ref = f \" { invoice_no } L { line_no } \" ref = re . sub ( r \" [^A-Za-z0-9] \" , \"\" , ref ) if len ( ref ) > 50 : raise ValueError ( f \" reference too long: { ref } \" ) return ref def check_unique ( refs : list [ str ]) -> list [ str ]: seen , dupes = set (), [] for r in refs : if r in seen : dupes . append ( r ) seen . add ( r ) return dupes We strip everything except letters and digits on purpose. The template accepts a few symbols, but references often end up in other systems too, such as your accounting package or a remittance spreadsheet, and plain alphanumerics travel more safely. Step 2: generate a file name you have never used The portal remembers every file name it has seen. The guide says a corrected file can't share a name with any earlier upload, whether that earlier upload worked or failed. Names are also capped at 20 characters, counting the dot and the extension, and some characters are banned outright. So the file name is another thing worth generating rather than typing. A date plus a short run counter fits comfortably. from datetime import date BANNED = set ( ' \\\\ ?/:*<>| \"' ) def next_file_name ( used : set [ str ], run_date : date ) -> str : for n in range ( 1 , 100 ): name = f \" BP { run_date : % y % m % d } R { n : 02 d } .CSV \" # e.g. BP261028R01.CSV, 15 chars if name . upper () not in { u . upper () for u in used }: assert len ( name ) <= 20 and not ( BANNED & set ( name )) return name raise RuntimeError ( \" ran out of run numbers for today \" ) Keep the used set somewhere permanent, such as a small table in your database. A spreadsheet tab works too, as long as everyone who uploads writes to it. Step 3: read the outcome of every row After a successful upload, the portal says the file has been submitted and is pending payment validation. The guide warns that processing may not be immediate, so this is a next-day job rather than a same-minute one. To see the outcomes, go to the Payment Request tile, then View Payment Request, set View By to Uploaded Bulk Payment File and select Get Files. Each row shows one of two statuses: SUCCESSFUL : the payment request was created and moves on towards payment. ERROR : it wasn't. Select its Payment Request Number to read the Reject Reason. The Download Results option on the same screen gives you the file back with an outcome against every row. That's the file your script should read. It also carries a Capped column. Where a row asked for more than the maximum catalogue price, the NDIA pays up to the limit and marks Capped as YES. Nothing is rejected, so a capped row looks like a success unless you compare amounts. Here is a minimal reconciler. We haven't hard-coded the results file's column names, because you should read them from your own download. Set the four constants once and the rest follows. import csv REF_COL = \" ClaimReference \" # check these against your own results file STATUS_COL = \" Status \" CAPPED_COL = \" Capped \" REASON_COL = \" RejectReason \" def triage ( results_path : str , invoices : dict [ str , dict ]) -> dict [ str , list ]: out = { \" paid_in_full \" : [], \" capped \" : [], \" rejected \" : [], \" unknown_ref \" : []} with open ( results_path , newline = \"\" , encoding = \" utf-8-sig \" ) as f : for row in csv . DictReader ( f ): ref = row . get ( REF_COL , \"\" ). strip () if ref not in invoices : out [ \" unknown_ref \" ]. append ( row ) elif row . get ( STATUS_COL , \"\" ). upper (). startswith ( \" ERROR \" ): out [ \" rejected \" ]. append (( ref , row . get ( REASON_COL , \"\" ))) elif row . get ( CAPPED_COL , \"\" ). upper () == \" YES \" : out [ \" capped \" ]. append ( ref ) else : out [ \" paid_in_full \" ]. append ( ref ) return out The unknown_ref bucket is the one people forget. A row that comes back with a reference your system doesn't recognise usually means someone edited the file by hand after it was generated. That's worth knowing about early. If several things are wrong on one row, the NDIA may return a single catch-all code instead of a specific one. Our page on MB1, the multiple-fields rejection , explains it: more than one field needs checking, so look at the whole row rather than hunting for one typo. Step 4: build the correction file, and only the correction file This is the step where well-meaning people create duplicates. The guide is firm about three things. A payment request marked Rejected can't be fixed inside the portal. It stays that way permanently, and a fresh request is needed. Don't reload the whole original file. Rows that succeeded the first time would be claimed again, and they'll come back flagged as already existing. The new file holds the header row plus only the rows that failed, corrected. You may keep the same ClaimReference on a corrected row. In code, that's a filter over the original rows using the rejected references from Step 3, plus a new file name from Step 2. def write_correction_file ( original_path , rejected_refs , out_path ): with open ( original_path , newline = \"\" , encoding = \" utf-8-sig \" ) as src , \\ open ( out_path , \" w \" , newline = \"\" , encoding = \" utf-8 \" ) as dst : reader = csv . reader ( src ) writer = csv . writer ( dst ) header = next ( reader ) writer . writerow ( header ) # header always goes in ref_i = header . index ( \" ClaimReference \" ) kept = 0 for row in reader : if row [ ref_i ] in rejected_refs : writer . writerow ( row ) # only the failed rows kept += 1 return kept One caution. The script copies the failed rows, it doesn't fix them. Someone still has to deal with the cause, and many causes live outside the file: not enough funds left in the budget, service dates outside the plan, or the provider not being recorded as one of the participant's my providers. Re-lodging a row without changing anything just earns the same code again. Run the corrected file through our free NDIS bulk claim file checker before it goes back up. It reads the CSV in your browser, so the file stays on your machine, and flags format problems before the portal does. Step 5: watch the age of every unpaid row Timing has become a real part of the workflow, and the rules are moving. Here's what the NDIA says today, on its payment pages: The outer limit is 2 years from the date the support was delivered. It asks for claims within 90 days of a support being delivered in full, and does extra checks on claims made later than that. A claim made more than 90 days after delivery may be held for review for up to 28 days . If it was part of a bulk upload, only that claim waits; the others are paid on the usual terms. Its Securing the NDIS for future generations page lists a change for December 2026 : a 90-day deadline for lodging a claim after the support. For plans still in the old system, there's also C09: a request can only be made until 90 days after the service booking end date. That makes a daily \"claim age\" check worth adding. Anything unclaimed or rejected that's creeping towards 90 days should go to the top of someone's list. from datetime import date def age_flags ( rows , today = None , warn_at = 60 , limit = 90 ): today = today or date . today () for r in rows : # rows not yet paid: (ref, support_end_date) age = ( today - r [ \" support_end \" ]). days if age >= limit : yield r [ \" ref \" ], age , \" over 90 days: expect extra checks \" elif age >= warn_at : yield r [ \" ref \" ], age , \" claim or fix this week \" The thresholds are your choice, not the NDIA's. We'd suggest a warning well before day 90, because a rejected row still needs time to be fixed, re-lodged and paid. Step 6: close the loop when money lands Per the guide, a request sitting at Pending is settled by whichever payment run comes next, and there's at least one run every weekday. Anything created after the final Friday run rolls to the next business day, normally Monday. On turnaround, the NDIA's payment page puts it at 2 to 3 business days for a valid claim when you're a recorded my provider, stretching to around 10 business days when you aren't, or when the NDIA wants to check the claim. The NDIA also says it won't email you while a claim is open or pending. So the only way to know a row is late is to look. For bulk claims, View Payment Request has a search by submission date with a Pending Payment status filter, which is a good weekly query to run. When the deposit does arrive, match it line by line, not as a total. A remittance advice helps you see what a payment covers, but the results file is the line-level truth for NDIA-managed claims. A weekly rhythm that holds it together When Task Upload day Generate references and a new file name, run the checker, upload Next business day Download Results, triage into paid, capped, rejected and unknown Same day Fix causes for rejected rows, build and upload the correction file Weekly Search Pending Payment by submission date, chase anything overdue Daily Run the claim age check on everything not yet paid Where Rostery fits We build Rostery, so here's what it does, in the words of its own pages. For plan managers, Rostery's NDIA claim files feature writes the bulk file from approved, validated invoices and reads the results file back, recording paid, part-paid and rejected against individual invoice lines with the reason code, and lets corrected lines be re-claimed without disturbing the ones already paid. Payment reconciliation then matches the NDIA payment against the claim line by line and raises anything that doesn't match as an exception. If you'd rather build this yourself, the steps above are the core of it. The full portal walkthrough, including all 16 columns and the six steps, is in the original Rostery guide to the NDIS bulk upload . The Rostery team General information only. Portal steps and timeframes checked on 28 October 2026 against ndis.gov.au and the NDIA bulk payment guide dated December 2025. The code samples are illustrations, not a complete claiming system.",
+            "url": "https://dev.to/rostery/after-the-upload-a-results-and-re-lodge-workflow-for-ndis-bulk-claims-claim-references-1e23",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "git",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-10-28T03:15:14+00:00",
+            "collected_at": "2026-10-28T03:21:24.078336+00:00"
+        },
+        {
+            "id": "0fae8421cee6bcf5f8f0b6c85ce67a2627955c8cf277fb9dd76fe3a74b3aa343",
+            "title": "Gemini in Google Workspace: AI in Docs, Sheets and Slides",
+            "description": "If you already write reports in Google Docs, track work in Sheets and present in Slides, Gemini does not ask you to learn a completely new tool. It sits inside the apps you already use, usually in a side panel, and works on the document, spreadsheet or deck you have open. That closeness to your work is the point: instead of copying text into a separate chatbot, you ask for help where the work already lives. For a longer walkthrough of the same ideas, see the Gemini in Google Workspace guide from ExactReads . Docs: getting past the blank page Docs is the most natural place to start, because writing is often where a first draft takes longest. You can give Gemini a short brief and ask for an outline, a project update or a meeting summary, then shape the result into your own voice. The useful habit is to be specific about audience, length and tone: a note for your team needs different wording from a summary for a client, and a vague request will usually produce a vague draft. Gemini is just as helpful on work that already exists. Ask it to summarise a long document, pull out the decisions it asks for, or tighten a paragraph that has grown too wordy. It can also help with proofreading, clarity and structure, such as removing repetition or turning passive sentences into active ones. A summary still needs a quick check against the original, though, because a missing caveat can change what a decision actually means. Sheets: turning messy lists into usable tables In Sheets, Gemini moves from words to structure. Describe the table you need — a task tracker, a reading list or a simple project plan — and it can suggest headings and a layout you can then fill with real information. That starting structure saves the fiddly work of designing a tracker from a blank grid, even though any sample rows it suggests are placeholders, not your data. It can also help you make sense of a spreadsheet someone else built, by summarising or explaining what it contains, and it can suggest a formula from a plain-language description. The sensible rule is the same as in Docs: test a suggested formula on a few rows you already understand before you let it run across a whole report, and correct any suggested categories or values before they inform a decision. Slides: clearer decks, with less manual tidying Slides is where the visual help comes in. From the side panel, you can describe an image you want for a slide and choose a style, using literal, concrete language about the subject, setting and background rather than figurative phrases. That matters because an image generator tends to take your words at face value. The less glamorous help is often more valuable: summarising a long deck, turning a report into one key point per slide, or drafting speaker notes to support what you plan to say. As with any generated visual, check details before you present. A convincing image can still contain a wrong number of items, a misspelt word or a chart that does not match your source data, and once you present it, that error becomes yours. Putting the three apps together The real benefit appears when you chain the apps. Meeting notes can become a structured action list in Docs, that list can become a tracker in Sheets, and the plan can then become a short deck in Slides, with speaker notes and a follow-up email to send it round. At every step, the human work remains: confirming decisions, assigning real owners and deadlines, checking numbers and reviewing the final version before anyone else sees it. Gemini compresses the mechanical work; it does not replace judgement. What to check before you trust it Availability depends on your Workspace plan and your organisation's settings, so a feature a colleague has may not appear in your account. Gemini can also produce confident-sounding mistakes, including invented names, dates or figures in an otherwise polished draft. Avoid putting passwords, private customer data or unreleased financial details into prompts unless your organisation explicitly allows it, and get a qualified person to review anything legal, medical or financial before it is used. A good way to start is one feature at a time: draft something short in Docs, summarise one long document, build one tracker in Sheets, then try one image in Slides, checking each result as you go. Used that way, Gemini becomes a practical assistant for everyday work and study — not a replacement for thinking, but a faster way to get from a rough idea to a document, table or deck you can stand behind.",
+            "url": "https://dev.to/exactreads/gemini-in-google-workspace-ai-in-docs-sheets-and-slides-1gn6",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "gemini",
+                "programmation",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-10-28T03:15:03+00:00",
+            "collected_at": "2026-10-28T03:21:24.079033+00:00"
+        },
+        {
+            "id": "a1f47a86c9603c81db75046089d163bca6d3df4dfc8da51e2bdac58511316e46",
+            "title": "Trier des plans de village Clash of Clans par niveau d'Hôtel de Ville : ce que j'ai appris en SwiftUI",
+            "description": "J'ai créé une petite app iOS gratuite qui regroupe des plans de village Clash of Clans (guerre et farm) classés par niveau d'Hôtel de Ville. Voici trois choix techniques qui m'ont fait gagner du temps. 1. Un seul modèle, filtré côté client Chaque plan a un townHall: Int , un type ( .war , .farm ) et un lien de copie. La liste complète est petite, donc je filtre en mémoire avec un @State plutôt que de refaire une requête à chaque changement de filtre. L'interface reste instantanée. 2. Un sélecteur horizontal plutôt qu'un menu Les joueurs changent souvent de niveau d'HDV pour comparer. Un ScrollView(.horizontal) avec des boutons HDV 10 à 17 marche mieux qu'un Picker caché dans un menu : un seul tap, et on voit tout de suite où on en est. 3. Ouvrir le lien de copie directement dans le jeu Les liens de copie de Clash of Clans s'ouvrent avec openURL . Si le jeu est installé, le plan s'ouvre directement dans l'éditeur de village. Pas besoin de capture d'écran ni de reconstruire le plan à la main. Le plus dur n'a pas été le code mais le tri des plans : vérifier que chaque plan de guerre protège bien l'HDV et que les plans de farm protègent les réserves. Divulgation : c'est mon app. Si vous voulez voir le résultat : https://apps.apple.com/app/apple-store/id6804564319?pt=2720803&ct=devto_fr&mt=8 Des retours sur la structure SwiftUI sont les bienvenus.",
+            "url": "https://dev.to/baselayoutschief/trier-des-plans-de-village-clash-of-clans-par-niveau-dhotel-de-ville-ce-que-jai-appris-en-gh0",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "ios",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-10-28T03:15:00+00:00",
+            "collected_at": "2026-10-28T03:21:24.079284+00:00"
+        },
+        {
+            "id": "db28b7c50e5a7c4ea1aeefcaee0bc854acf9ea4c074914844507b1362cd51ba2",
+            "title": "레이어 2 솔루션: 블록체인의 핵심 확장성 문제와 트릴레마를 해독하다",
+            "description": "탈중앙화되고 안전하며 불변하는 디지털 인프라라는 블록체인 기술의 약속은 10년이 넘는 시간 동안 혁신가들을 사로잡고 여러 산업에 지각 변동을 일으켰다. 개인 간 디지털 현금 거래를 가능하게 한 것부터 복잡한 탈중앙화 애플리케이션(dApp)과 완전히 새로운 금융 생태계(DeFi)를 구동하는 것에 이르기까지, 그 잠재력은 실로 방대하다. 하지만 광범위한 채택과 기업 수준의 유용성을 향한 여정은 늘 근본적인 구조적 난관, 즉 확장성 문제에 부딪혀왔다. 이 문제는 흔히 \"블록체인 트릴레마\"라고 불리는데, 이는 높은 수준의 탈중앙화, 보안, 확장성을 동시에 달성하기 어렵다는 본질적인 난제를 의미한다. 이러한 한계는 레이어 1(L1) 블록체인이 수십억 인구의 전 세계적인 일상 사용에 필요한 처리량을 감당하지 못하게 만들었다. 문제의 핵심은 L1 블록체인에 비할 데 없는 보안과 탈중앙화를 부여하는 바로 그 설계 원칙에서 비롯된다. 모든 트랜잭션은 네트워크의 모든 노드에 의해 처리되고 검증되어야 했고, 이는 수요 증가가 네트워크 혼잡, 엄청나게 높은 트랜잭션 수수료(가스비), 그리고 느린 확정 시간으로 이어지는 병목 현상을 초래했다. 이러한 상황은 사용자 경험을 크게 저해하고, 자원 집약적인 dApp의 혁신을 억압하며, 대규모 채택의 주요 걸림돌로 작용했다. 모든 결제에 수십, 수백 달러가 들고 확정까지 몇 분이 걸리는 글로벌 금융 시스템을 상상해보라. 그런 시스템은 일상적인 상업 활동에는 전혀 실현 가능하지 않다. 레이어 2(L2) 솔루션은 이러한 핵심 병목 현상을 해결하기 위한 선도적인 패러다임으로 등장했으며, 기반 L1 블록체인의 강력한 보안 보장을 계승하면서 트랜잭션 처리량을 극적으로 늘리고 비용을 절감할 수 있는 길을 제시한다. 이 글은 L2가 해결하고자 하는 근본적인 문제, 기술적 메커니즘, 실제 영향, 그리고 내재된 한계에 대해 깊이 파고든다. 이더리움 공동 창립자 비탈릭 부테린이 대중화한 개념인 \"블록체인 트릴레마\"는 블록체인 시스템이 탈중앙화, 보안, 확장성이라는 세 가지 핵심 속성 중 어느 한 시점에 두 가지만 달성할 수 있다고 주장한다. 비트코인과 이더리움 같은 초기 L1 블록체인은 탈중앙화와 보안에 중점을 두고 설계되었다. 견고하고 검열 저항적인 디지털 통화로 설계된 비트코인은 이러한 측면을 최우선으로 삼았고, 그 결과 초당 약 7건(TPS)이라는 낮은 트랜잭션 처리량을 보였다. 스마트 계약 기능으로 더 다재다능한 이더리움 역시 순수한 속도보다는 네트워크 무결성과 광범위한 참여를 선호하는 설계 선택을 했고, 역사적으로 약 15~30 TPS를 달성했다. 블록체인 채택이 증가하면서 이러한 설계의 결과는 명백히 드러났다. 2017년 말 크립토키티 열풍, 2020년 디파이 서머, 2021~2022년 NFT 발행 최고조기와 같은 높은 네트워크 활동 기간 동안 이더리움 네트워크는 심각한 혼잡에 시달렸다. \"가스비\"로 표현되는 트랜잭션 수수료는 폭등하여, 단일 복잡한 작업에도 수백 달러를 초과하는 경우가 잦았다. 이는 많은 사용자와 소액 거래를 배제했을 뿐만 아니라, 특정 dApp을 경제적으로 실행 불가능하게 만들었다. 개발자들은 L1의 제한된 용량에 발목이 잡혀 높은 트랜잭션 볼륨이나 실시간 상호작용을 요구하는 애플리케이션을 구축할 수 없었다. 이러한 확장성 병목 현상의 근본 원인은 L1 블록체인이 전역 합의를 달성하는 방식에 있다. 보안과 탈중앙화를 유지하기 위해 네트워크의 모든 풀 노드는 모든 단일 트랜잭션과 블록체인의 전체 상태를 처리, 검증, 저장해야 한다. 이러한 순차적 처리 모델은 전역 상태 동기화의 필요성과 결합되어 본질적으로 처리량을 제한한다. 단순히 블록 크기를 늘리는 것이 직관적인 해결책처럼 보일 수도 있지만, 일부 비트코인 포크에서 보았듯이 이는 종종 탈중앙화를 희생시킨다. 더 큰 블록은 노드가 더 많은 계산 능력, 대역폭, 저장 공간을 요구하며, 이는 풀 노드를 운영하는 진입 장벽을 효과적으로 높여 참가자를 줄이고 중앙화 위험을 증가시킨다. 따라서 블록체인의 근본 원칙을 훼손하지 않고 확장하기 위한 보다 정교한 접근 방식이 필요했다. 바로 이 지점에서 레이어 2 솔루션이 등장하여, 메인넷에서 트랜잭션 처리의 대부분을 오프로드하면서도 그 보안 우산을 유지하는 우아한 아키텍처 솔루션을 제공한다. 레이어 2 솔루션은 트랜잭션 실행을 메인 블록체인(레이어 1)에서 벗어나게 하면서도, 이러한 오프체인 트랜잭션의 보안과 데이터 무결성이 여전히 L1에 의해 보장되도록 함으로써 근본적으로 확장성 문제를 해결한다. 이 \"오프체인 계산, 온체인 보안\" 패러다임은 L2가 훨씬 낮은 비용으로 수십 배 더 많은 트랜잭션을 처리할 수 있게 하여, 효과적으로 병렬 처리 계층을 생성한다. 오늘날 가장 지배적이고 유망한 L2 기술은 \"롤업(Rollups)\"이며, 이는 옵티미스틱 롤업과 ZK(Zero-Knowledge) 롤업이라는 두 가지 주요 형태로 나뉜다. 롤업은 수백 또는 수천 개의 오프체인 트랜잭션을 단일 배치로 묶어(롤업하여) 확장성을 달성한다. 이 배치는 단일 트랜잭션으로 L1에 제출되어 L1의 처리 부하를 크게 줄인다. 결정적으로, 롤업은 압축된 트랜잭션 데이터(또는 이에 대한 암호화된 커밋먼트)를 다시 L1에 게시한다. 이 \"데이터 가용성\"은 매우 중요하며, 이를 통해 누구든지 L2 상태를 재구성하고 트랜잭션의 무결성을 확인할 수 있어 L1의 강력한 보안을 계승할 수 있다. ### 옵티미스틱 롤업 옵티미스틱 롤업은 \"유죄가 입증될 때까지 무죄\"라는 원칙에 따라 작동한다. 이들은 오프체인에서 처리된 모든 트랜잭션이 기본적으로 유효하다고 가정한다. 트랜잭션 배치가 L1에 제출되면 \"챌린지 기간\"(일반적으로 7일)이 주어지며, 이 기간 동안 누구든지 배치 내에서 무효한 트랜잭션을 감지하면 \"사기 증명(fraud proof)\"을 제출할 수 있다. 사기 증명이 성공하면 무효한 트랜잭션은 되돌려지고, 배치 묶음을 제출한 시퀀서(sequencer)는 페널티를 받는다. 이 메커니즘은 모든 트랜잭션이 L1에서 완전히 검증될 필요 없이 보안을 보장한다. 메커니즘: 트랜잭션은 오프체인에서 실행된다. 배치는 상태 루트와 함께 L1에 제출된다. 챌린지 기간 동안 사기 증명이 가능하다. 보안: 사기 증명을 통해 L1 보안을 계승한다. 확장성: 오프체인 실행으로 높은 처리량을 제공한다. 단점: 자금이 기간 만료까지 잠겨 있어야 하므로 긴 인출 시간(챌린지 기간)이 필요하다. ### ZK(Zero-Knowledge) 롤업 ZK 롤업은 영지식 증명(특히 SNARK 또는 STARK)으로 알려진 고급 암호화를 활용하여 다른 접근 방식을 취한다. 유효성을 가정하는 대신, ZK 롤업은 오프체인 트랜잭션의 유효성을 암호학적으로 증명한다 . 트랜잭션 배치가 오프체인에서 처리될 때, 배치 내의 모든 트랜잭션이 L2 규칙에 따라 유효하다는 것을 입증하는 암호화 증명(\"유효성 증명\")이 생성된다. 이 증명은 L1에 제출되며, L1에서 빠르고 효율적으로 검증될 수 있다. 유효성이 수학적으로 증명되므로 챌린지 기간이 필요 없다. 메커니즘: 트랜잭션은 오프체인에서 실행된다. 각 배치에 대한 암호화된 유효성 증명이 생성되어 L1에 제출된다. 보안: 즉각적인 암호화 검증을 통해 L1 보안을 계승한다. 확장성: 옵티미스틱 롤업보다 잠재적으로 훨씬 높은 처리량을 제공하며, 증명이 검증되면 L1에서 즉각적인 확정성을 가진다. 단점: ZK 증명 생성은 계산 집약적이고 복잡하며, 특수 하드웨어 또는 알고리즘이 필요하다. 이 기술은 더 새롭고 구현하기에 더 복잡하다. ### 기타 L2 접근 방식 롤업이 현재의 표준이지만, 다른 L2 솔루션도 존재한다. 스테이트 채널: 참가자들이 오프체인에서 여러 트랜잭션을 수행하고, L1에는 개시 및 종료 상태만 기록하도록 허용한다. 비트코인의 라이트닝 네트워크가 대표적인 예다. 고정된 참가자 집단 간의 반복적인 상호작용에 가장 적합하다. 플라즈마: 머클 트리를 사용하여 자식 체인을 생성하고, 이 자식 체인은 주기적으로 루트 해시를 L1에 커밋한다. 옵티미스틱 롤업과 유사하지만, 더 복잡한 사기 증명과 데이터 가용성 문제를 가진다. 폴리곤의 초기 반복이 플라즈마를 탐구했다. 사이드체인: 자체 합의 메커니즘을 가진 독립적인 블록체인으로, 양방향 페그를 통해 L1에 연결된다. 확장성을 제공하지만, 보안이 L1과 독립적이므로 L1 보안을 계승하는 L2와는 기술적으로 구별된다. 폴리곤 PoS는 사이드체인의 대표적인 예다. 이러한 L2 솔루션, 특히 롤업 전반에 걸친 핵심 혁신은 실행과 합의를 분리하는 능력이다. 이를 통해 L2는 트랜잭션 처리량을 극적으로 확장하고, 트랜잭션 비용을 절감하며, 트랜잭션 확정성을 개선하는 동시에, 기반 레이어 1 블록체인의 탈중앙화 및 보안 보장을 유지한다. 레이어 2 솔루션의 이론적 약속은 특히 이더리움 생태계 내에서 가시적인 발전으로 이어졌다. 현재 ETH 가격과 유통량 기준 약 2,800억 달러에 달하는 시가총액을 가진 이더리움은 전체 암호화폐 시장의 상당 부분을 차지하며, 방대하고 성장하는 탈중앙화 애플리케이션 환경을 지원하기 위한 강력한 확장 솔루션의 필요성을 강조한다. 이더리움의 로드맵은 L1 자체에서 더 머지(Proof-of-Stake 전환)와 미래의 샤딩 구현(예: 데이터 가용성 개선을 위한 댄크샤딩)과 같은 중요한 업그레이드가 진행되는 중에도 L2를 주요 확장 전략으로 명시적으로 수용하고 있다. 아비트럼(Arbitrum)은 상당한 채택을 이룬 선도적인 옵티미스틱 롤업이다. 2021년 8월 메인넷을 출시한 후 빠르게 이더리움 메인넷보다 낮은 수수료와 빠른 트랜잭션을 찾는 디파이 프로토콜과 dApp의 허브가 되었다. GMX(탈중앙화 거래소)와 아베(Aave, 대출 프로토콜)와 같은 프로젝트들은 아비트럼에 중요한 배포를 진행하며, 고가치, 고빈도 트랜잭션을 지원하는 능력을 보여준다. 사용자들은 L1 이더리움보다 훨씬 낮은 가스비의 혜택을 받으며, 복잡한 디파이 전략과 빈번한 상호작용을 경제적으로 가능하게 한다. 또 다른 저명한 옵티미스틱 롤업인 옵티미즘(Optimism) 역시 2021년 메인넷을 출시하고 견고한 생태계를 구축했다. 옵티미즘은 모듈식 오픈소스 개발 프레임워크인 \"OP 스택\"으로 유명하며, 이를 통해 개발자들은 상호 운용 가능하고 더 큰 \"슈퍼체인\" 비전에 기여하는 자체 L2(\"OP 체인\")를 쉽게 구축할 수 있다. 이러한 모듈성은 L2 생태계의 혁신과 추가 탈중앙화를 촉진한다. 유니스왑과 신세틱스와 같은 주요 dApp들은 옵티미즘에 상당한 존재감을 보이며, 상당한 트랜잭션 볼륨과 사용자 활동을 처리하는 능력을 입증하고 있다. ZK 롤업 분야에서는 zkSync와 StarkNet과 같은 프로젝트들이 가능성의 경계를 확장하고 있다. Matter Labs가 개발한 zkSync는 \"영지식 EVM\"(zkEVM)을 제공하여 기존 이더리움 dApp이 ZK 롤업의 뛰어난 확장성과 즉각적인 확정성 혜택을 받으면서 원활하게 마이그레이션할 수 있도록 하는 것을 목표로 한다. 2023년 초 메인넷 알파를 출시했으며, 빠르게 생태계를 구축하고 있다. StarkWare가 개발한 StarkNet은 STARK 증명을 사용하며, 게임 및 고빈도 거래와 같은 고성능 애플리케이션에 중점을 둔 확장 가능한 dApp 구축을 위한 강력한 플랫폼을 제공한다. 이러한 ZK 롤업은 L2 기술의 최첨단을 대표하며, 완전히 성숙되면 훨씬 더 큰 처리량과 감소된 지연 시간을 약속한다. 이러한 실제 구현 사례들은 트랜잭션 비용을 확실히 줄이고, 트랜잭션 속도를 높이며, 이전에는 L1 한계로 인해 방해받았던 새로운 사용 사례를 가능하게 했다. 이들은 더 활기차고 접근 가능한 웹3 생태계를 구현하며, 전 세계적이고 무허가적이며 효율적인 디지털 인프라라는 블록체인의 약속에 우리를 더 가깝게 데려간다. 변혁적인 잠재력에도 불구하고 레이어 2 솔루션에는 한계와 도전 과제가 없는 것은 아니다. 균형 잡힌 시각을 위해 연구자와 사용자 모두 이러한 미묘한 차이를 이해하는 것이 중요하다고 본다. 한 가지 중요한 우려는 운영자 수준에서의 중앙화 위험 이다. L2는 L1의 보안을 계승하지만, 트랜잭션 시퀀싱 및 증명 생성(시퀀서 및 증명자)을 담당하는 주체는 종종 중앙화된 운영자로 시작한다. 중앙화된 시퀀서는 이론적으로 트랜잭션을 검열하거나, 최대 추출 가능 가치(MEV)를 불공정하게 추출하거나, 단일 실패 지점의 영향을 받을 수 있다. 많은 L2 프로젝트가 이러한 구성 요소를 탈중앙화하기 위한 로드맵을 가지고 있지만, 이는 여전히 지속적인 과제이자 활발한 개발 영역이다. 보안 가정 또한 다양하다. 예를 들어, 옵티미스틱 롤업은 정직한 다수와 사기 증명 시스템에 대한 적극적인 참여에 의존한다. 아무도 사기성 트랜잭션에 대해 L2를 모니터링하지 않거나 챌린지 기간이 너무 짧으면 무효한 상태가 잠재적으로 확정될 수 있다. ZK 롤업은 더 강력한 암호화 보장을 제공하지만, 증명 시스템의 복잡성과 일부 경우 초기 암호화 매개변수를 위한 신뢰할 수 있는 설정이 필요하다는 문제에 직면한다. 물론 많은 새로운 ZK 롤업은 신뢰할 수 없는 설정으로 전환하고 있다. 또한, L1과 L2 간, 또는 다른 L2 간에 자산을 전송하는 데 사용되는 브릿지의 보안은 여전히 중요한 취약점으로 남아 있으며, 최근 몇 년간 여러 고위험 브릿지 해킹 사건에서 입증되었다. 사용자 경험의 복잡성 도 또 다른 난관이다. L1에서 L2로, 또는 다른 L2 간에 자산을 브릿징하는 것은 신규 사용자에게 혼란스럽고 시간이 많이 소요될 수 있다. 여러 L2와 L1에 걸친 이러한 유동성 분열은 단일하고 통합된 체인보다 더 복잡한 환경을 조성한다. 다양한 네트워크 구성을 관리하고, 다양한 인출 시간(특히 옵티미스틱 롤업의 경우)을 이해하며, 별개의 L2 생태계를 탐색하는 것은 벅찰 수 있으며, 원활한 상호작용을 방해한다. 상호 운용성 문제 는 여전히 존재한다. L2가 개별 애플리케이션이나 생태계를 확장하는 동안, 서로 다른 L2 간의 원활한 통신 및 자산 전송(예: 아비트럼에서 옵티미즘으로)은 본질적으로 간단하지 않으며 종종 복잡한 브릿징 솔루션을 요구하는데, 이는 추가적인 실패 지점과 지연 시간을 유발한다. \"멀티 롤업 세계\"의 비전은 강력하고 안전한 크로스-롤업 통신 프로토콜을 필요로 하며, 이는 여전히 활발히 연구 개발 중이다. 마지막으로, L2가 오프체인 계산 비용을 크게 줄이지만, 데이터 가용성 을 위해 여전히 L1에 의존한다. 이는 압축된 트랜잭션 데이터가 여전히 L1에 게시되어야 하며, L1 가스비를 발생시킨다는 의미다. 이는 L1에서 전체 트랜잭션을 실행하는 것보다 훨씬 저렴하지만, L1 혼잡 시에는 여전히 병목 현상이 될 수 있다. 이더리움의 EIP-4844(프로토-댄크샤딩)는 \"블롭(blobs)\" 데이터에 특화된 새로운 트랜잭션 유형을 도입하여 이러한 비용을 더욱 절감하는 것을 목표로 한다. 레이어 2 솔루션이 끊임없이 해결하고자 노력하는 근본적인 문제는 \"블록체인 트릴레마\"의 직접적인 결과인 레이어 1 블록체인의 내재된 확장성 병목 현상이다. 탈중앙화와 보안을 우선시함으로써 이더리움과 같은 L1은 의도치 않게 수요 증가 시 높은 트랜잭션 수수료와 느린 처리량으로 어려움을 겪는 시스템을 만들어냈고, 이는 대규모 채택과 복잡한 탈중앙화 애플리케이션의 잠재력을 심각하게 제한했다. 레이어 2 솔루션, 특히 옵티미스틱 롤업과 ZK 롤업은 이러한 난제를 극복하기 위한 독창적이고 실용적인 아키텍처 패러다임을 제공한다. 이들은 트랜잭션 처리와 상태 계산의 대부분을 오프체인으로 오프로드하여, 트랜잭션 처리량을 수십 배 증가시키고 비용을 크게 절감한다. 결정적으로, 이들은 기반 레이어 1의 강력한 보안 보장과 데이터 가용성을 계승하면서 블록체인 기술의 핵심 원칙을 보존한다. 아비트럼, 옵티미즘, zkSync, StarkNet과 같은 실제 구현 사례들은 이미 그 효능을 입증하며, 새로운 세대의 dApp과 더 접근 가능한 웹3 생태계를 가능하게 한다. 운영자의 중앙화, 브릿징의 보안 가정, 사용자 경험 복잡성 등 여전히 과제가 남아 있지만, L2 개발의 궤적은 압도적으로 긍정적이다. 시퀀서 탈중앙화, ZK 증명 기술 정교화, 크로스-L2 상호 운용성 개선에 대한 지속적인 혁신은 이더리움의 EIP-4844와 같은 보완적인 L1 업그레이드와 결합되어 이러한 한계들을 꾸준히 해결하고 있다. 필자의 전문가적 견해로는, 레이어 2 솔루션은 단순히 일시적인 해결책이 아니라 블록체인 아키텍처의 근본적이고 필수적인 진화를 대표한다. 이들은 탈중앙화 애플리케이션의 진정한 잠재력을 발휘하고, 보안과 탈중앙화라는 근본 원칙을 훼손하지 않으면서 전 세계적 수요에 맞춰 확장할 수 있도록 하는 핵심이다. 웹3의 미래는 의심할 여지없이 다층적이며, L2는 고성능, 비용 효율적이며 사용자 친화적인 탈중앙화 인터넷을 제공하는 데 중추적인 역할을 할 것이다. 면책 조항: 이 글은 정보 및 교육 목적으로만 작성되었으며, 금융 또는 투자 조언을 구성하지 않는다. 암호화폐 시장은 변동성이 매우 크므로, 모든 투자 결정은 본인의 연구와 자격을 갖춘 금융 고문과의 상담을 기반으로 해야 한다. ※ 본 칼럼은 정보 제공을 목적으로 하며, 투자 권유가 아닙니다. 모든 투자 결정은 본인의 판단과 책임 하에 이루어져야 합니다.",
+            "url": "https://dev.to/ice1121/reieo-2-solrusyeon-beulrogceinyi-haegsim-hwagjangseong-munjewa-teurilremareul-haedoghada-2m8i",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-10-28T03:13:45+00:00",
+            "collected_at": "2026-10-28T03:21:24.080176+00:00"
+        },
+        {
+            "id": "24f03fcfa95d0cf10fb7d8a4b8db04dfcbf27ac33f3953a74e1d1d933599e235",
+            "title": "I kept missing my AI coding chats waiting for me, so I built a cat that taps me on the shoulder",
+            "description": "Some time ago my workflow changed without me deciding it. I stopped writing code in one editor and started running several AI coding chats at the same time: one refactoring something, one writing tests, one exploring an idea I wasn't sure about. Each of them works on its own for a few minutes and then stops to ask me something. That is the part that kept going wrong. A chat finishes a step, asks \"can I run this command?\", and then it simply waits. Nothing on screen tells me. I'd look at another window, get absorbed, and come back fifteen minutes later to find that a chat had been idle the whole time, waiting for a single \"yes\". What I tried first The obvious answer is notifications. A sound when something needs attention. It helped a little, but it had two problems. First, a sound doesn't say which chat is calling. When four chats are open, \"something needs you\" is half an answer. Second, it only works while I'm sitting at the computer. If I stood up to get coffee, the chat waited anyway, and I had no way to answer it without walking back. What I actually wanted was something closer to a colleague leaning over and saying \"hey, the second one is stuck on a permission\". So I built that, and I made it a cat. Kodama Kodama is a small hand-animated cat that lives on the Windows desktop, next to the clock. Its pose follows what your chats are doing: it waits, works, writes to you, receives your reply, sleeps or gets stuck. I spent more time on the animation than I expected, because the whole point is that you should understand the state in a glance, without reading anything. It also shows whether a chat is thinking or running a command, a search or a subagent, plus task progress like \"3/7\". When a chat needs you, a small capsule comes out of the cat with the notification and quick replies. There's a list of the chats waiting for you, and each chat has its own name, so you know which one is asking. It works with Claude Code, Codex and Antigravity at the same time, which matters if you mix tools like I do. Answering from the phone The second half of the problem was being away from the desk. Kodama can send the same information to your phone, and you can answer from there: reply to a chat, or approve a permission with Allow, Deny (with a reason), \"Always allow this\" or \"Allow for this task\". There are two ways to connect. One is Telegram, which needs nothing else installed. The other is a phone app, which runs over your own private network using Tailscale. I added a small safety layer too: if a device that isn't your phone signs in to your account, an alarm sounds and the device is not let in, and you can lock the phone from the PC. How it works, briefly Kodama installs hooks in the settings of the tools it watches (with a backup of the original file) and a Windows scheduled task. The hooks report the state of each chat, and the cat and the phone app render it. I tried to keep it light: when nothing changes, the cat goes into a deep sleep and uses much less CPU, and it wakes up with the mouse or a notification. Installing is either one line in PowerShell, or you can tell your own Claude \"Install Kodama from github.com/LShinox/kodama\" and it follows the instructions in the README, asking you questions before touching anything. Updates are signed, and a file that doesn't match is not installed. What it isn't I'd rather be clear about the limits. It's Windows only for now. Mac and Linux are planned, but they're not there yet. The installer isn't code-signed yet, so Windows may show an \"unknown publisher\" warning. Getting a certificate is the first item on the project's wish list. It's free, but not open source. The code is source-available under the PolyForm Noncommercial 1.0.0 license, which allows noncommercial use. The cat art and the name are reserved. It's made by one person, so some edges are rough. There's a \"Report a problem\" option in the cat's menu that builds a file with what's needed to find the bug, without your messages or keys. What I'd like to know If you juggle several AI chats too, I'm curious whether the same thing happens to you, and which states you'd want the cat to show that it doesn't today. There's a label for ideas in the issue tracker, and a \"wish\" label for bigger things. Repo: https://github.com/LShinox/kodama Site: https://lshinox.github.io/kodama/",
+            "url": "https://dev.to/lshinox/i-kept-missing-my-ai-coding-chats-waiting-for-me-so-i-built-a-cat-that-taps-me-on-the-shoulder-577j",
+            "source": "DEV Community",
+            "category": "hardware",
+            "tags": [
+                "anthropic",
+                "developpement",
+                "git",
+                "linux",
+                "programmation",
+                "web",
+                "windows"
+            ],
+            "published_at": "2026-10-28T03:13:07+00:00",
+            "collected_at": "2026-10-28T03:21:24.080637+00:00"
+        },
+        {
+            "id": "89e624e98911b8731fc032b12b6c4e246ef39a10b7e628979e3b5c15f9fffe48",
+            "title": "Building a skill tree planner for Enshrouded 1.0 with plain JavaScript and SVG",
+            "description": "When Enshrouded hit 1.0, the game reset every player's skill tree. Players suddenly needed to re-plan 212 skill points on a tree that costs 675 to fill, and most planners online were built for the old tree. So I built one: a free Enshrouded skill planner that runs entirely in the browser. No framework, no build step for the JS, a few hundred lines of vanilla JavaScript drawing into an SVG. I built it with help from an AI coding assistant, and the interesting part was getting the game's rules right. The data: a graph, not a tree The skill tree data comes from the open-source rossicler/enshrouded-skill-tree project (GPL-3.0), which exports it from the 1.0 game files. It looks like this, simplified: { \"nodes\" : { \"123\" : { \"type\" : \"WAND_MASTERY\" , \"position\" : { \"x\" : 410 , \"y\" : -88 } } }, \"edges\" : [[ \"123\" , \"456\" ], [ \"456\" , \"789\" ]], \"types\" : { \"WAND_MASTERY\" : { \"name\" : \"Wand Mastery\" , \"cost\" : 1 , \"maxLevel\" : 3 } } } The first lesson: despite the name, a \"skill tree\" is a graph. It has 231 nodes and 291 edges, with cycles, and 21 base nodes you can start from without a neighbour. So the first thing the planner does is build an adjacency list: var ADJ = {}; D . nodes . forEach ( function ( n ) { ADJ [ n . id ] = []; }); D . edges . forEach ( function ( e ) { ADJ [ e [ 0 ]]. push ( e [ 1 ]); ADJ [ e [ 1 ]]. push ( e [ 0 ]); }); Rule 1: you can only learn what touches what you have A node is learnable if it's a base node, or if any neighbour is already selected: function selectable ( id ) { if ( sel [ id ]) return false ; // already learned: use +rank instead if ( N [ id ]. base ) return true ; // starting nodes are always open return ADJ [ id ]. some ( function ( o ) { return sel [ o ]; }); } sel is just an object of { nodeId: rank } . Adding a rank checks three things in order: is it connected, is it below max rank, and does it fit the budget: function add ( id ) { var t = type ( id ); if ( ! sel [ id ] && ! selectable ( id )) return notice ( ' Locked: connect ' + t . n + ' first. ' ); if (( sel [ id ] || 0 ) >= t . m ) return notice ( t . n + ' is already at max rank. ' ); if ( spent () + t . c > budget ()) return notice ( ' Not enough points for ' + t . n + ' . ' ); sel [ id ] = ( sel [ id ] || 0 ) + 1 ; render (); } Rule 2: refunds must cascade This is the bug every quick planner has. If you refund a node in the middle of a path, everything beyond it is now floating, disconnected from any base node. The game won't allow that, so the planner can't either. The fix is a flood fill from the selected base nodes that pretends the removed node doesn't exist. Anything it can't reach gets refunded too: function reachable ( without ) { var seen = {}, stack = []; for ( var id in sel ) if ( id !== without && N [ id ]. base ) { seen [ id ] = 1 ; stack . push ( id ); } while ( stack . length ) { var u = stack . pop (); ADJ [ u ]. forEach ( function ( v ) { if ( sel [ v ] && v !== without && ! seen [ v ]) { seen [ v ] = 1 ; stack . push ( v ); } }); } return seen ; } function remove ( id ) { if ( sel [ id ] > 1 ) { sel [ id ] -- ; return render (); } // lower a rank first var keep = reachable ( id ); var lost = Object . keys ( sel ). filter ( function ( x ) { return x !== id && ! keep [ x ]; }); if ( lost . length && ! confirm ( ' This also refunds ' + lost . length + ' connected skills. Continue? ' )) return ; delete sel [ id ]; lost . forEach ( function ( x ) { delete sel [ x ]; }); render (); } Because the graph has cycles, this is strictly better than \"remove the subtree\": a node with a second path back to a base survives. Rule 3: the budget isn't just your level In Enshrouded you get 2 points per level after level 1, plus 1 per Shroud Root and 3 per Elixir Well you find while exploring. Exploration is actually the bigger half: 114 of the 212 points at level 50. So the budget comes from the level input and a checkbox per biome: function budget () { var level = Math . max ( 1 , Math . min ( 50 , + lv . value || 1 )); var b = 2 * ( level - 1 ); document . querySelectorAll ( ' [data-biome] ' ). forEach ( function ( c ) { if ( c . checked ) b += + c . dataset . points ; }); return b ; } That model had a bug I only found when a Reddit user posted three builds that all had \"extra points\". The math was right; my assumption that players find every Root and Well was not. Now an optional \"my total skill points\" field overrides the computed budget, because the in-game number always wins. Shareable builds in a URL hash Builds had to be shareable on Reddit and Discord without accounts or a backend, so the whole build lives in the URL fragment. The first version wrote one base-36 character per node, which worked but produced ~280-character links. The current version treats the build as one big mixed-radix number: one bit per node for \"taken\", plus the rank only for taken multi-rank nodes, then the level, Flame level and a 7-bit explored-biome mask. The number is written in base62, so links are at most ~98 characters and contain only letters and digits: var n = 0 n , mul = 1 n ; function put ( d , r ) { n += BigInt ( d ) * mul ; mul *= BigInt ( r ); } ORDER . forEach ( function ( id ) { var r = sel [ id ] || 0 , m = type ( id ). m ; put ( r ? 1 : 0 , 2 ); if ( r && m > 1 ) put ( r - 1 , m ); }); Old long links are still decoded and rewritten in place. On load, the decoder runs reachable() once more and drops anything disconnected, so a hand-edited or outdated link can never produce an impossible build. Pan, zoom and the click that didn't register The tree is one SVG <g> with a transform. Wheel zooms around the cursor, one pointer pans, two pointers pinch-zoom. My first version called setPointerCapture on pointerdown , and node clicks randomly stopped working. With capture on, pointerup targets the SVG, not the node you pressed. The fix: remember which node was under the pointer at pointerdown , and only capture once the pointer has moved more than 5 px, when it's clearly a drag: svg . addEventListener ( ' pointerdown ' , function ( ev ) { var g = ev . target . closest ( ' [data-node] ' ); downNode = g ? g . getAttribute ( ' data-node ' ) : null ; drag = { x : ev . clientX , y : ev . clientY , vx : vt . x , vy : vt . y }; moved = false ; }); svg . addEventListener ( ' pointermove ' , function ( ev ) { if ( ! drag ) return ; if ( ! moved && Math . hypot ( ev . clientX - drag . x , ev . clientY - drag . y ) > 5 ) { moved = true ; svg . setPointerCapture ( ev . pointerId ); } // ...pan }); On pointerup , a click is \"no drag happened and we have a downNode \". On touch, the first tap only selects the node so you can read its tooltip, and a second tap learns it. Presets from a shortest path The site also has build guides, and each one opens a preset in the planner. Hand-placing ~100 nodes per build would be miserable, so presets are generated at build time in Python. Each guide lists its core skills, and a small Dijkstra finds the cheapest connected path to each one from what's already selected, where an edge's weight is the point cost of the node it enters. The leftover points then go greedily to the cheapest reachable skills in the build's own area. All nine level 50 presets land at 211 or 212 of 212 points. What I'd do differently Generate the client data, don't hand-write it. All costs, ranks and in-game text come from the export, so a game patch means re-running one script. Validate links on load. Treat the URL as untrusted input and re-check connectivity, as above. Keep it framework-free if the state is tiny. The whole state is one object and two inputs. Re-rendering everything on each change is fast enough at 231 nodes. The planner is live at enshroudedbuilds.org/skill-planner , and the code is GPL-3.0 like the data it's built on. Feedback welcome, especially if you've solved cascade refunds or pinch-zoom more elegantly. Source: https://github.com/AZwang067260/enshroudedbuilds",
+            "url": "https://dev.to/azwang067260/building-a-skill-tree-planner-for-enshrouded-10-with-plain-javascript-and-svg-2319",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "git",
+                "java",
+                "javascript",
+                "programmation",
+                "python",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-10-28T03:12:40+00:00",
+            "collected_at": "2026-10-28T03:21:24.081714+00:00"
+        },
+        {
+            "id": "43becec0490131b72fc91ed30bdd5bf9609e3a7e2c49d7e945fc54dd0bec0f82",
+            "title": "Las 8 dimensiones de la IA responsable de AWS, con ejemplos prácticos",
+            "description": "Es fácil poner un chatbot o un modelo de IA en producción. Es más difícil saber si trata igual a todos los usuarios, si puedes explicar sus respuestas y si alguien puede frenarlo cuando se equivoca. Esas preguntas no son un tema de ética abstracta. Son decisiones de diseño, como elegir una base de datos o un esquema de red. AWS ordena esas preguntas en un conjunto de dimensiones de la IA responsable. En este artículo las repaso una por una, con un ejemplo cotidiano y con las herramientas de AWS que ayudan a aplicarlas. El marco sale de la página oficial de IA responsable de AWS. Los ejemplos son míos. Las 8 dimensiones de la IA responsable según AWS AWS define la IA responsable con un conjunto básico de dimensiones que evalúa y actualiza a medida que evoluciona la tecnología. Hoy son ocho. Para los ejemplos imagina un asistente de soporte de una tienda online que usa IA generativa. Equidad : considerar las repercusiones en los distintos grupos de partes interesadas. Ejemplo: revisar si el asistente responde con la misma calidad en distintos idiomas o perfiles de cliente. Capacidad de explicación : comprender y evaluar los resultados del sistema. Ejemplo: si el modelo recomienda rechazar un reembolso, el equipo puede ver qué factores influyeron. Privacidad y seguridad : obtener, utilizar y proteger los datos y los modelos de manera adecuada. Ejemplo: no enviar datos personales al prompt si no hacen falta, y cifrar los datos de entrenamiento y los registros. Seguridad : evitar resultados dañinos del sistema y el uso indebido. Aquí se trata de los daños que puede causar la salida del modelo, no de la protección de los datos de la dimensión anterior. Ejemplo: que el asistente no genere contenido ofensivo ni dé consejos fuera de su ámbito. Capacidad de control : disponer de mecanismos para supervisar y dirigir el comportamiento del sistema de IA. Ejemplo: un interruptor para desactivar una función y una persona que apruebe los reembolsos de importe alto. Veracidad y solidez : lograr resultados correctos, incluso con información inesperada o contradictoria. Ejemplo: que el asistente no invente una política de devoluciones cuando el cliente escribe con errores o hace preguntas ambiguas. Gobernanza : incorporar las prácticas recomendadas en la cadena de suministro de IA, como los proveedores y los implementadores. Ejemplo: documentar qué modelo usas, quién lo aprobó y qué limitaciones declara su proveedor. Transparencia : permitir a las partes interesadas tomar decisiones informadas sobre su interacción con un sistema de IA. Ejemplo: avisar al usuario de que habla con una IA y de qué puede y qué no puede hacer. AWS plantea estas dimensiones como propiedades técnicas presentes en todo sistema de IA. A ti te toca tomar decisiones de diseño deliberadas según tu caso de uso. Un asistente de recomendaciones de películas y un sistema que apoya decisiones médicas no necesitan el mismo nivel de control en cada dimensión. Herramientas de AWS que ayudan a aplicarlas La página de AWS agrupa sus herramientas en cinco áreas: medidas de protección, evaluación del modelo, sesgo y capacidad de explicación, intervención humana y gobernanza. La columna \"Dimensiones relacionadas\" es mi propia lectura para orientarte. No forma parte del marco oficial. Herramienta Qué hace según AWS Dimensiones relacionadas Barreras de protección de Amazon Bedrock (Guardrails) Permiten configurar medidas de seguridad para filtrar contenido dañino de texto e imagen, ocultar información confidencial y detectar alucinaciones Seguridad, privacidad y seguridad, veracidad y solidez Evaluación de modelos en Amazon Bedrock, SageMaker Clarify y fmeval Sirven para evaluar, comparar y elegir modelos con métricas como precisión, solidez y toxicidad Veracidad y solidez, seguridad Amazon SageMaker Clarify Detecta posibles sesgos al preparar los datos, tras entrenar el modelo y en el modelo desplegado, y ayuda a entender su comportamiento Equidad, capacidad de explicación, transparencia Amazon SageMaker Model Monitor y SageMaker Ground Truth El primero avisa de predicciones inexactas en modelos desplegados. El segundo incorpora comentarios humanos durante el ciclo de vida del ML Capacidad de control, veracidad y solidez Gobernanza de ML de Amazon SageMaker Da más control y visibilidad sobre los modelos, y reúne en un solo lugar su información y comportamiento, como el sesgo Gobernanza, transparencia Fichas de servicio de IA de AWS Reúnen casos de uso y limitaciones previstos, opciones de diseño de IA responsable y prácticas de optimización de rendimiento de los servicios y modelos de AWS Transparencia, gobernanza Cómo empezar sin frenar al equipo AWS recomienda integrar la IA responsable desde el primer día y en todo el ciclo de vida. Además, la perspectiva de IA responsable de AWS Well-Architected ofrece prácticas recomendadas para diseño, desarrollo y operación. Un recorrido sencillo, que es una propuesta mía, podría ser este: Describe el caso de uso y quiénes pueden verse afectados por sus resultados. Recorre las 8 dimensiones y anota para cada una el riesgo principal y la decisión de diseño que tomas. Evalúa los modelos candidatos con tus propios casos de prueba antes de elegir uno. Añade protecciones configurables y define dónde interviene una persona. Monitorea en producción y revisa la tabla cuando cambie el modelo, los datos o el caso de uso. Esta semana, elige un sistema de IA que ya tengas en marcha y completa una tabla de 8 filas, una por dimensión, con el riesgo, la medida actual y el responsable. Las filas vacías te dirán por dónde empezar.",
+            "url": "https://dev.to/8infinitecloud/las-8-dimensiones-de-la-ia-responsable-de-aws-con-ejemplos-practicos-4f3e",
+            "source": "DEV Community",
+            "category": "cloud",
+            "tags": [
+                "aws",
+                "developpement",
+                "ios",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-10-28T03:12:19+00:00",
+            "collected_at": "2026-10-28T03:21:24.082381+00:00"
+        },
+        {
+            "id": "e9f89f2d239aa0e5e9ada7b106370d5b90bba15986be038eab925e86062189ce",
+            "title": "I Tried 15+ AI Tools in 2026. I Deleted 12. Here Are The Only 3 I Pay For Now",
+            "description": "As a CS graduate in 2026, I did what every developer does. I subscribed to everything. ChatGPT, Claude, Midjourney, Runway, Perplexity, Notion AI, Grammarly, Copy.ai, Jasper, Canva Pro, Leonardo... My monthly bill? $187. My productivity? Worse than before. I was spending 2 hours a day just switching between tools. Last month, I did an experiment. I cancelled everything and asked one simple question: Which 3 tools actually help me make money or save real time? Only 3 survived. 1.One Tool for Building & Writing - Meta AI + VS Code I write code, LinkedIn posts, Medium articles, and documentation daily. Instead of 5 different writing tools, I now use Meta AI inside WhatsApp and VS Code. Why? It lives where I work. No tab switching. I can ask it to explain a complex bug while I'm in VS Code, and 5 minutes later ask it to write a LinkedIn caption while I'm on WhatsApp. It remembers my style. I hate formal language. It now writes like me - simple, direct. Tools it replaced: ChatGPT Plus, Claude Pro, Grammarly Premium Money saved: $60/month 2.One Tool for Visuals - Canva AI I am not a designer. But clients judge you by your thumbnails and portfolio. I tried Midjourney, Leonardo, Adobe Firefly. Too complex. Canva AI is simple: I type \"portfolio banner for a backend developer, dark mode, minimal\" and it gives me 4 ready options in 20 seconds. For a developer who hates design, this is freedom. Tools it replaced: Midjourney, Leonardo AI, Photoshop AI Money saved: $45/month 3.One Tool for Memory - Notion AI This was my biggest leak. My life was scattered. Client requirements: WhatsApp Bug fixes: Notes app Article ideas: Google Keep Tasks: Paper I was searching more than working. Now I have one Notion dashboard: Content Calendar, Client CRM, Bug Tracker, Learning Roadmap. Every night I type \"/AI summarize my tasks today\" and it gives me a clear report. No more anxiety. Tools it replaced: Todoist, Evernote, Trello AI Money saved: $30/month The Rule That Changed Everything Here is my new rule for 2026: If a new AI tool doesn't replace an old one, I don't buy it. We don't need more tools. We need a system. My system: Build -> Design -> Remember. 3 tools. That's it. I now save 10-12 hours weekly and $135/month. I work 5 hours a day instead of 8, but my output on GitHub and Dev.to has doubled. If you are a student or junior developer reading this, do this today: List all your paid AI tools Mark which ones directly helped you get a client, a job, or finish a project last month Keep only those 3. Cancel the rest for 30 days. You will feel lighter, richer, and more focused. What are your 3 non-negotiable AI tools? Comment below - I want to steal your stack. Fateh Muhammad | CS Graduate | Building in Public on Dev.to, Hashnode and Medium",
+            "url": "https://dev.to/fateh_muhammad_1f23886cc0/i-tried-15-ai-tools-in-2026-i-deleted-12-here-are-the-only-3-i-pay-for-now-243o",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "anthropic",
+                "developpement",
+                "git",
+                "openai",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-10-28T03:12:15+00:00",
+            "collected_at": "2026-10-28T03:21:24.082767+00:00"
+        },
+        {
+            "id": "5d99e6bd37202679491b0d630b6263b174fc5de645cc0a3241679773489f3df4",
+            "title": "AWS Context Explained: Architecture, Components, Open-Source Alternatives, and Use Cases",
+            "description": "Before talking about AWS Context, let's first understand what context means in the AI world. An AI agent can access data and process it, but does that mean it understands the data? Consider an organization where information is spread across databases, documents, and different applications. An AI agent might be able to retrieve records from these sources. But without knowing how the information is connected or which business rules apply, it may struggle to give the right answer. Think about attending a presentation. Before it starts, you might receive a brief explaining the background and the agenda. This helps you understand what will be discussed and why it matters. Context plays a similar role for AI agents. It provides relevant information that helps them understand what they're working with and how different pieces of information relate to the task. For example, retrieving a cloud resource record tells an agent that a resource exists. Knowing which application uses that resource, which environment it belongs to, and how its cost is attributed gives the agent a better basis for answering questions about it. Context doesn't guarantee a correct answer, but relevant and reliable context can help an agent interpret information more effectively. What is AWS Context? AWS Context focuses on discovering relationships across existing enterprise data and representing them in a knowledge graph. This helps AI agents access relationships, business rules, and domain knowledge at runtime. Rather than treating every record as an isolated piece of information, the idea is to make the connections between different pieces of data available to the agent. AWS announced the service at AWS Summit New York City on June 17, 2026. In the official AWS announcement, Mai-Lan Tomsen Bukovec describes context as the data lake for AI agents, highlighting its role in making enterprise knowledge available to AI systems. Read the official AWS announcement . 2. Understanding the Components of AWS Context To understand AWS Context, let's look at the main concepts behind making enterprise data useful to AI agents. 2.1 Relationship discovery Organizations store information across databases, documents, and applications. Relationship discovery helps identify how entities and information from these different sources are connected. Some relationships may be available directly from the source, while others may need to be inferred. 2.2 Knowledge graph A knowledge graph represents entities as nodes and their relationships as connections between them. For example, in a cloud environment, an application may depend on a compute instance, which is connected to storage and networking resources. Representing these relationships helps applications understand how resources are connected rather than viewing each resource in isolation. 2.3 Business rules and domain knowledge Relationships alone don't always explain what the data means. Business rules and domain knowledge provide additional information that helps an AI agent interpret those relationships in the right context. 2.4 Human review and curation Automatically identified relationships may be incomplete or incorrect. Review and curation can help validate relationships, correct mistakes, and improve the quality of the information. 2.5 Context retrieval An AI agent needs a way to retrieve relevant information when a question is asked. Context retrieval brings together the entities, relationships, and rules needed for a particular task. 2.6 Governance Not every user or AI agent should have access to all enterprise information. Governance helps enforce access permissions and maintain appropriate control over how data is used. 2.7 Feedback and refinement Context needs to remain useful as data and business requirements change. Evaluating retrieval results, correcting errors, and reviewing feedback can help improve context quality over time. These concepts form a useful way to think about a context layer. The exact implementation and responsibilities of individual components depend on the system being built. 3. How Do These Components Work Together? Let's take a simple example. A user asks an AI agent: \"Why is this cloud resource costing more than expected?\" The resource record alone might not explain the increase. The agent may also need information about the resource's workload, dependencies, environment, usage, and cost allocation. A context layer helps connect these pieces of information. Architecture overview The following diagram illustrates a conceptual context-layer architecture. It is intended to explain the flow, not to represent AWS's official internal implementation. Following the data flow 1. Collect information and discover relationships The system works with existing data sources and identifies relevant entities and relationships. Depending on the source, relationships may be explicitly available or need to be inferred. 2. Build and enrich the knowledge graph Entities and their relationships are represented in a graph. Business rules and domain knowledge add meaning to those relationships. 3. Retrieve relevant context When a question arrives, the system retrieves the relevant entities, relationships, and rules. Access controls determine which information the requesting agent can use. 4. Generate an answer or recommendation The AI agent uses the retrieved context to formulate its response. For a cloud cost question, this might mean examining resource usage alongside dependencies and cost information. The quality of the answer still depends on the accuracy of the underlying data and the agent's reasoning. A knowledge graph helps provide context; it doesn't guarantee a correct answer. The key idea: Instead of treating each record in isolation, a context layer makes relevant relationships available to applications when they need them. 4. Which Technologies Can We Use? The technology depends on the type of data, relationships, and queries the application needs to support. Component Possible technologies Data integration APIs, AWS SDKs, ETL pipelines Knowledge graph Neo4j, Apache Jena, Amazon Neptune Business rules and ontology OWL, RDF, SHACL Context retrieval REST APIs, SPARQL, Cypher AI agent integration MCP or custom tool APIs Access control IAM, application-level authorization, audit logs Do we always need a graph database? No. PostgreSQL may be sufficient when relationships are simple and the data model is already relational. A dedicated graph solution becomes worth considering when complex, multi-hop relationship queries are central to the application. 5. Open-Source Alternatives You don't need to start with a fully managed service to experiment with a context layer. Neo4j Community Edition : A graph database for storing entities and querying their relationships. Check its licensing and feature limitations before choosing it. Apache Jena : A Java framework for RDF data, SPARQL queries, ontologies, and inference. AWS Context Ontology Accelerator : An AWS-published, open-source project for building ontology-based context for AI agents. It uses AWS infrastructure, so open-source software does not mean the entire deployment is free. Which should you choose? Start with PostgreSQL if you want to validate the idea using an existing relational data model. Explore Neo4j or Apache Jena when graph traversal or formal ontology modelling becomes important. If you want a working reference implementation on AWS, explore the Context Ontology Accelerator before building everything from scratch. 6. Where Can We Use This Architecture? A context layer is useful when applications need to understand relationships across multiple data sources. AI assistants: Connect information from documents, databases, and internal applications. Cloud operations: Understand dependencies between cloud resources when investigating incidents. Enterprise search: Retrieve information based on relationships and business context, not just keywords. Security analysis: Connect identities, resources, and permissions to investigate potential risks. The architecture should solve a real information problem. Adding a knowledge graph without a clear use case may introduce unnecessary complexity. 7. Applying These Ideas to Cloud Intelligence This architecture also has potential applications in cloud intelligence platforms. For example, understanding why a cloud resource is expensive may require more than looking at its monthly cost. You may need to consider: Resource configuration and utilization. Relationships with other resources. Workload and environment. Cost attribution and ownership. Potential optimization opportunities. At TattvaLens, we're exploring cloud intelligence around resource discovery, relationships, and optimization insights. The broader engineering challenge is connecting these pieces of information so that recommendations have useful context behind them. 8. Trade-offs and Limitations A context layer introduces its own engineering challenges. Data quality: Incorrect or outdated source data can lead to misleading conclusions. Relationship accuracy: Inferred relationships need validation and provenance. Operational complexity: A separate graph database adds infrastructure and maintenance overhead. Access control: Retrieved context must respect existing permissions. Cost attribution: Resource relationships alone don't determine how shared costs should be allocated. Evaluation: AI-generated answers and recommendations need testing against reliable evidence. Start with the simplest architecture that meets your requirements. Introduce additional components only when their benefits justify the complexity. Conclusion AI agents need more than access to data. They also need relevant relationships and business context to interpret that data. AWS Context highlights this problem at the enterprise level. The same architectural idea can be applied to other domains, including cloud operations and cost intelligence. The interesting engineering question isn't simply how to store more data. It's how to make the right information and relationships available when an application needs them.",
+            "url": "https://dev.to/sreekant007/aws-context-explained-architecture-components-open-source-alternatives-and-use-cases-3a66",
+            "source": "DEV Community",
+            "category": "cloud",
+            "tags": [
+                "aws",
+                "developpement",
+                "intel",
+                "java",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-10-28T03:11:46+00:00",
+            "collected_at": "2026-10-28T03:21:24.083758+00:00"
+        },
+        {
+            "id": "a16e3e891ea482ce5d7135bbd088d8af0653b82c9f4762f2914ebeb13e130434",
+            "title": "Coinbase says user funds are safe after third-party vendor exposes customer contact info",
+            "description": "",
+            "url": "https://www.coindesk.com/tech/2026/10/28/coinbase-says-customer-funds-are-safe-after-third-party-vendor-exposes-customer-contact-info",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-10-28T03:11:14+00:00",
+            "collected_at": "2026-10-28T03:21:39.345138+00:00"
+        },
+        {
+            "id": "49ed0eb433be681f6ff4a6adef43db4e9e16ac3d409eff3de9d22649b311d184",
+            "title": "Ghost in the Machine: Integrating Live Web Search into Autonomous AI Agents via Low-Code Architecture",
+            "description": "Architecture Overview When building autonomous AI agents for technical research, static model weights are insufficient. Real-time engineering tasks demand live data retrieval. This architecture breakdown details how to hook up dynamic web search capabilities to an autonomous agent hosted on Relevance AI, leveraging SerpApi as the live data orchestration layer entirely through a visual, low-code interface. System Components & Flow Relevance AI Agent Workspace: Acts as the central execution engine (\"Ghost in the Machine\") housing system instructions, persona constraints, and automated triggers. Secure Credential Vault: Stores the authentication token (SERPAPI_API_KEY) securely at the project level to prevent credential exposure in transit or storage. Visual Tool Builder: Leverages a pre-built SerpApi integration action block mapped directly to the agent's runtime toolset, passing query parameters programmatically (engine=google, q={{input_query}}). Execution & Synthesis Layer: When a prompt requires current technical documentation or recent trends, the agent evaluates the requirement, triggers the search tool, and synthesizes the returned JSON payload into structured markdown insights. Implementation Steps (Zero Terminal Required) Secret Registration: Navigate to the platform's Integrations & API Keys menu and store the SerpApi key securely as a custom project key. Tool Provisioning: Within the agent builder, utilize the visual wizard or custom tool action to draft and validate the SerpApi endpoint ( https://serpapi.com ). Agent Linking: Attach the newly minted search tool to the agent's active profile and set up execution permissions (manual approval or autonomous triggering). Validation Test: Run a baseline diagnostic query (e.g., querying recent multi-agent workflow patterns) to verify HTTP response codes and payload parsing. Engineering Takeaways By keeping this pipeline strictly within a low-code architecture, we eliminate dependency management overhead, local environment discrepancies, and complex CLI scripts. The result is a robust, production-ready research agent capable of fetching real-time technical intelligence on demand.",
+            "url": "https://dev.to/rcortez056/ghost-in-the-machine-integrating-live-web-search-into-autonomous-ai-agents-via-low-code-emm",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "intel",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-10-28T03:10:44+00:00",
+            "collected_at": "2026-10-28T03:21:24.084064+00:00"
+        },
+        {
+            "id": "65273a94e5a8771a6f4b96ac8937a1927997112cc3dd13b625dc7d143baade8c",
+            "title": "PSA: Call Of Duty: Modern Warfare 4 Adds Shipment To Its Map Rotation",
+            "description": "The first post-launch map goes live. Just days after the launch of Call of Duty: Modern Warfare 4 , Activision has expanded the game's map rotation with Shipment. Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/news/2026/10/psa-call-of-duty-modern-warfare-4-adds-shipment-to-its-map-rotation",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-10-28T03:00:00+00:00",
+            "collected_at": "2026-10-28T03:21:37.889895+00:00"
+        },
+        {
+            "id": "6496adb6a10c68b7bcf2b853830aff8c9c73519d7cee5019660d41d992e4cf73",
+            "title": "Zcash Turns 10 as Grayscale Highlights Its 20% Developer Fund",
+            "description": "Zcash will mark its 10th anniversary on Oct. 28 with a decade of protocol upgrades behind it. Grayscale says one reason the privacy-focused crypto network has kept evolving is its unusual decision to direct 20% of block rewards toward developer and ecosystem funding. Zcash’s 20% Dev Fund Sets It Apart From Bitcoin Zcash is turning […]",
+            "url": "https://news.bitcoin.com/blockchain/zcash-turns-10-as-grayscale-highlights-its-20-developer-fund/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-10-28T02:30:49+00:00",
+            "collected_at": "2026-10-28T03:21:39.523280+00:00"
+        },
+        {
+            "id": "001b60c8250b041f8f6baaaa0f4846fe42de182495ae6af26eaac2c27b3b612d",
+            "title": "Git for US Legislation",
+            "description": "Comments",
+            "url": "https://lexifina.com/blog/git-for-the-us-code",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "git",
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-28T01:47:50+00:00",
+            "collected_at": "2026-10-28T03:21:23.743118+00:00"
+        },
+        {
+            "id": "0da1b06ba5d32cd7d071f376e3830b2738de04182549535596425050e2e357bf",
+            "title": "OG.com and Crypto.com Launch 24/7 Crypto Perpetuals for US Traders",
+            "description": "Crypto.com and OG.com have opened the door to perpetual crypto derivatives for eligible U.S. traders, introducing contracts that never expire and offer up to five times leverage through a federally regulated trading structure accessible to retail and institutional customers. Crypto.com Expands U.S. Derivatives Access With 24/7 Trading On Tuesday, OG.com and Crypto.com announced the launch […]",
+            "url": "https://news.bitcoin.com/featured/og-com-and-crypto-com-launch-24-7-crypto-perpetuals-for-us-traders/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-10-28T01:30:26+00:00",
+            "collected_at": "2026-10-28T03:21:39.523396+00:00"
+        },
+        {
+            "id": "576891ae53193334d6ef1f6c9cd5e3949af1e709e077c557c936d8e0de233ae2",
+            "title": "Reminder: Lobsters NYC Meetup Tomorrow 5:30 at Walker's",
+            "description": "Follow up on: https://lobste.rs/s/73ozwc/lobsters_nyc_meetup_on_28th_october Under \"Alex\". Feel free to come a bit later or earlier. I'll write here updating if we move etc. Walker's is by the Canal St. metro stop: https://maps.app.goo.gl/mdEgSkBV2H1NSXAdA and has food and drinks.",
+            "url": "https://lobste.rs/s/87iesc/reminder_lobsters_nyc_meetup_tomorrow_5",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-10-28T01:27:50+00:00",
+            "collected_at": "2026-10-28T03:21:23.935222+00:00"
+        },
+        {
+            "id": "4ba4897dde9b2c1a6b325a71c1aab747a1201ce8c6cd1284d04e1c73a7ba2361",
+            "title": "VCs will make billions on Anthropic’s IPO, but Amazon is set to make much (much) more",
+            "description": "Massive note conversions reveal the true extent of Amazon's ownership in Anthropic.",
+            "url": "https://techcrunch.com/2026/10/27/vcs-will-make-billions-on-anthropics-ipo-but-amazon-is-set-to-make-much-much-more/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "anthropic",
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-10-28T01:15:28+00:00",
+            "collected_at": "2026-10-28T03:21:21.501541+00:00"
+        },
+        {
+            "id": "dfb7d1d6a093f382d44c9651e86050e16e6ba79ce2258c937e26317ca111c83e",
+            "title": "Cyberpunk's Edgerunners 2 Update Isn't In The Best State On Switch 2",
+            "description": "Not so preem. Last week, Cyberpunk 2077 celebrated the release of the new season of Edgerunners on Netflix with the reveal of a brand new game update. The Edgerunners 2 update is now officially live on the Switch 2, but unfortunately, it's not got off to the best start. Players are reporting all sorts of problems, including game crashes, loading bugs, performance issues, and profile & save glitches. Some Night City residents are even claiming the Nintendo version is \"unplayable\" after the 2.5 update . Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/news/2026/10/cyberpunks-edgerunners-2-update-isnt-in-the-best-state-on-switch-2",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-10-28T01:00:00+00:00",
+            "collected_at": "2026-10-28T03:21:37.890031+00:00"
+        },
+        {
+            "id": "e293edae5118d7f5f7826694a491b2a52aae076b276288f58444d87a3b787bf7",
+            "title": "Bitcoin Eyes $125K as Galaxy Says Bear Market Has Ended",
+            "description": "Galaxy sees favorable conditions for bitcoin to retake $125,000, arguing that its bear market ended in June and selling pressure has diminished. Its analysis also cited fiscal pressures and weak investor attention to support its bullish outlook. Galaxy Sees Favorable Setup for $125K Bitcoin Bitcoin had a favorable setup for retaking $125,000, Galaxy argued in […]",
+            "url": "https://news.bitcoin.com/market-updates/bitcoin-eyes-125k-as-galaxy-says-bear-market-has-ended/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-10-28T00:40:36+00:00",
+            "collected_at": "2026-10-28T03:21:39.523502+00:00"
+        },
+        {
+            "id": "243ce005e4733637d97ea68709630b0cf9ad79870f7b2734bf2ab3672398f9ac",
+            "title": "'Forced out': HOA fees to rise to $2,500 a month",
+            "description": "Comments",
+            "url": "https://www.wsoctv.com/news/local/forced-out-hoa-fees-rise-7500-month/XCW2HIHUKNBMTNWVQSYXQZJCY4/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-28T00:35:33+00:00",
+            "collected_at": "2026-10-28T03:21:23.744172+00:00"
+        },
+        {
+            "id": "7404fa9cf1dae1b1c977d10df6e284953c3757c684eb36d81be2a06273e0a966",
+            "title": "AI Stocks Boom as MEXC Tokenized Trading Volume Jumps 88%",
+            "description": "MEXC experienced significant growth across its traditional finance offerings, with trading volume for AI-related assets rising 88% month-over-month. AI Trading Volume Expands Across Peripheral Sectors Cryptocurrency exchange MEXC reported significant growth across its traditional finance product suite for September, driven by heightened demand for artificial intelligence (AI) assets and semiconductor-focused derivatives. Trading volume for tokenized […]",
+            "url": "https://news.bitcoin.com/finance/ai-stocks-boom-as-mexc-tokenized-trading-volume-jumps-88/",
+            "source": "Bitcoin.com News",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto",
+                "intel"
+            ],
+            "published_at": "2026-10-28T00:05:48+00:00",
+            "collected_at": "2026-10-28T03:21:39.523604+00:00"
+        },
+        {
+            "id": "502dada27e2c7cbfbe552a64b00c433aca5827f383a7f6d9333e075fefd4b0a4",
+            "title": "Multiple Capcom Console Classics Have Been Rated In Korea",
+            "description": "Is it a sign? Capcom has a huge retro library, and it looks like it could be reviving even more classic games in the near future, based on new ratings from The Game Rating and Administration Committee of Korea . As noted by our colleagues at Time Extension , all of the games featured on this list are titles that received home console releases, with some even exclusive to this format. Unsurprisingly, it's led to speculation Capcom might be planning a collection made up of 8-bit and 16-bit home releases. Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/news/2026/10/multiple-capcom-console-classics-have-been-rated-in-korea",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-10-28T00:00:00+00:00",
+            "collected_at": "2026-10-28T03:21:37.890151+00:00"
+        },
+        {
+            "id": "3b3368b877e0c1e56616292b34f969bfe7dca5bcd47482d0b424bfcfbb68429f",
+            "title": "Moxnox 1.0: NT-Like, POSIX-Compatible OS Running Atop Btrfs",
+            "description": "Comments",
+            "url": "https://github.com/maharmstone/moxnox",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-27T23:53:41+00:00",
+            "collected_at": "2026-10-28T03:21:23.744131+00:00"
+        },
+        {
+            "id": "ebe6130a3b49d0f809dafaeff49d5c0dc17771ac9f9236bb74a7ff2b1ab136f1",
+            "title": "Japan's GMO urges customers to shut down PCs amid ransomware threat",
+            "description": "The GMO Group has urged customers to disconnect their systems from the internet and shut down computers after a threat actor who breached the company's Onamae Desktop Cloud threatened to launch a ransomware attack today. [...]",
+            "url": "https://www.bleepingcomputer.com/news/security/japans-gmo-urges-customers-to-shut-down-pcs-amid-ransomware-threat/",
+            "source": "BleepingComputer",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "malware",
+                "ransomware"
+            ],
+            "published_at": "2026-10-27T23:35:51+00:00",
+            "collected_at": "2026-10-28T03:21:20.046816+00:00"
+        },
+        {
+            "id": "4c5627bb695205d19ffc196f857258f7574dba6bc253254bdc5c3492d27df5d9",
+            "title": "Parents sue OpenAI, alleging GPT-4o coached their daughter off seizure medication",
+            "description": "A family is suing OpenAI, saying ChatGPT coached their daughter to quietly taper off her seizure medication and keep it from her doctors before she died in February.",
+            "url": "https://techcrunch.com/2026/10/27/parents-sue-openai-alleging-gpt-4o-coached-their-daughter-off-seizure-medication/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "openai",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-10-27T23:34:27+00:00",
+            "collected_at": "2026-10-28T03:21:21.501623+00:00"
+        },
+        {
+            "id": "60560e6b53c510509b25eadd94646341212f3762c68f66bd3bbfd69ea486adfa",
+            "title": "Amazon ECS now supports GPU sharing with NVIDIA Multi-Process Service (MPS)",
+            "description": "Amazon Elastic Container Service (Amazon ECS) now supports GPU sharing with NVIDIA Multi-Process Service (MPS), enabling you to run multiple Amazon ECS tasks concurrently on a single NVIDIA GPU. GPU sharing helps you increase GPU utilization and reduce infrastructure costs for workloads that use only part of a GPU's capacity, such as small-model inference, AV/ADAS simulations, embedding generation, and multi-model serving. With GPU sharing, you can pack more workloads onto each GPU instance without changing your application code. You define the GPU memory each container needs and can optionally set a maximum share of GPU compute, and Amazon ECS places tasks on GPUs with available capacity as your services scale and deploy. GPU sharing is supported on Amazon ECS Managed Instances and Amazon ECS on Amazon EC2. On Amazon ECS Managed Instances, Amazon ECS also monitors the MPS control daemon that enables sharing on each instance. If the daemon stops or becomes unhealthy, Amazon ECS automatically replaces the instance and moves your tasks to healthy capacity, so your GPU workloads keep running without manual intervention. To get started, use the AWS Management Console, AWS CLI, AWS SDKs, AWS CloudFormation, or other infrastructure-as-code tools to create a capacity provider with NVIDIA GPU instances, set the GPU sharing strategy and memory in the container definition of your task definition, and create a service on that capacity provider. This capability is available in all AWS commercial and AWS GovCloud (US) Regions . To learn more, visit the Amazon ECS GPU sharing documentation .",
+            "url": "https://aws.amazon.com/about-aws/whats-new/2026/10/amazon-ecs-gpu-sharing-nvidia-mps/",
+            "source": "AWS What's New",
+            "category": "cloud",
+            "tags": [
+                "amazon",
+                "aws",
+                "cloud",
+                "nvidia"
+            ],
+            "published_at": "2026-10-27T23:31:00+00:00",
+            "collected_at": "2026-10-28T03:21:27.349919+00:00"
+        },
+        {
+            "id": "c905ca67fa9f9fde2329b0480c990541d2ca6895f702bc8e645f76df32ec9891",
+            "title": "Galaxy Digital Shares Rise Following $323M Q3 Profit, New $200M Buyback Plan",
+            "description": "Galaxy Digital returned to profitability in the third quarter of 2026, reporting $323 million in net income as gains from its investment portfolio and rapid growth in its AI data center business helped offset continued losses in its core digital assets division. Shares were up on Tuesday following the announcement. The Mike Novogratz-led cryptocurrency investment […]",
+            "url": "https://news.bitcoin.com/crypto-news/galaxy-digital-shares-rise-323m-q3-profit-new-200m-buyback/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto",
+                "git"
+            ],
+            "published_at": "2026-10-27T23:25:50+00:00",
+            "collected_at": "2026-10-28T03:21:39.523712+00:00"
+        },
+        {
+            "id": "4fda06b1f7245e6750df53762eac118a1f92f2f450cef4298227b47cbbb8d36e",
+            "title": "Ubuntu firmware HWE will prevent issues on older kernel",
+            "description": "Ubuntu is planning a new linux-firmware-hwe package, in an effort to reduce the risk of firmware updates for newer kernels causing problems for users running older ones. On Ubuntu long-term support (LTS) releases, you can stick with the standard (GA) kernel it was released with for the duration of its support period, or you can install the HWE update, which brings newer Linux kernel versions to existing Ubuntu LTS releases. Right now, both kernels share the same firmware package, which means firmware updates designed to work with HWE kernels can cause problems for users who stick with the GA kernel. Ubuntu developer Juerg Haefliger noted that a firmware backport for Ubuntu 24.04 LTS, intended for its Linux 7.0 […] You're reading Ubuntu firmware HWE will prevent issues on older kernel , a blog post from OMG! Ubuntu . Do not reproduce elsewhere without permission.",
+            "url": "https://www.omgubuntu.co.uk/2026/10/ubuntu-firmware-hwe-effort-moving-forward",
+            "source": "OMG! Ubuntu",
+            "category": "linux",
+            "tags": [
+                "desktop",
+                "linux",
+                "ubuntu"
+            ],
+            "published_at": "2026-10-27T23:15:24+00:00",
+            "collected_at": "2026-10-28T03:21:28.638493+00:00"
+        },
+        {
+            "id": "5b8f2377809f90dcf69cfe609d09e9a3609d17ed8a5fac9c842774a6ebd18394",
+            "title": "The data center boom has an upside: innovation for the US grid",
+            "description": "As the AI boom stresses the existing power grid, all sorts of new opportunities for grid modernization are also emerging as a result, industry insiders say.",
+            "url": "https://techcrunch.com/2026/10/27/the-data-center-boom-has-an-upside-innovation-for-the-us-grid/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-10-27T22:55:41+00:00",
+            "collected_at": "2026-10-28T03:21:21.501692+00:00"
+        },
+        {
+            "id": "d83b4c5c9da5d4b433f02e7d9e5c5f1186d027fc756335a27f2c16fb1044d73c",
+            "title": "Bitcoin Mining Firm Luxor Raises $16 Million to Accelerate AI Expansion",
+            "description": "Bitcoin mining technology company Luxor has raised $16 million in a strategic funding round led by CMT Digital, accelerating its expansion into artificial intelligence infrastructure as cryptocurrency mining businesses increasingly pursue opportunities in the rapidly growing AI computing market. Luxor Raises $16 Million The Seattle-based company announced the investment Tuesday, with participation from bitcoin mining […]",
+            "url": "https://news.bitcoin.com/crypto-news/bitcoin-mining-firm-luxor-raises-16-million-accelerate-ai-expansion/",
+            "source": "Bitcoin.com News",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto",
+                "git",
+                "intel"
+            ],
+            "published_at": "2026-10-27T22:45:30+00:00",
+            "collected_at": "2026-10-28T03:21:39.523843+00:00"
+        },
+        {
+            "id": "0c53a2da68d75c11e417b2fcf88706f15d8f427c2a202741998534da62be5080",
+            "title": "OpenAI's GPT-6.1 Terra is safer overall, but shows more destructive-action flags in tests",
+            "description": "OpenAI confirmed GPT-6.1 Terra is safer overall than some of its older models, but its safety testing also found other problems. [...]",
+            "url": "https://www.bleepingcomputer.com/news/artificial-intelligence/openais-gpt-61-terra-is-safer-overall-but-shows-more-destructive-action-flags-in-tests/",
+            "source": "BleepingComputer",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "malware",
+                "openai",
+                "ransomware"
+            ],
+            "published_at": "2026-10-27T22:43:27+00:00",
+            "collected_at": "2026-10-28T03:21:20.046913+00:00"
+        },
+        {
+            "id": "c56458dd612a89c1fddd7137a57c8287fb0e77775f8d1da0f3650e23f09c9258",
+            "title": "Apple refreshes the iMac, entry-level MacBook Pro with the M6 chip",
+            "description": "Additionally, the N1 chip brings Wi-Fi 7 and Bluetooth 6.",
+            "url": "https://arstechnica.com/apple/2026/10/apple-refreshes-the-imac-entry-level-macbook-pro-with-the-m6-chip/",
+            "source": "Ars Technica",
+            "category": "technologie",
+            "tags": [
+                "bluetooth",
+                "informatique",
+                "innovation",
+                "technologie",
+                "wifi"
+            ],
+            "published_at": "2026-10-27T22:37:30+00:00",
+            "collected_at": "2026-10-28T03:21:21.353662+00:00"
+        },
+        {
+            "id": "1d470e86547e8f6f5b9654de92da60edf19ee4632c72e4067c3575afc1d48fc5",
+            "title": "Reviewers rarely talk about reliability. Owners bring it up twice as often",
+            "description": "Comments",
+            "url": "https://www.bettascore.ai/research/reliability-reviewers-vs-owners",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-27T22:31:15+00:00",
+            "collected_at": "2026-10-28T03:21:23.743883+00:00"
+        },
+        {
+            "id": "37efa235a68b9fc9c5484c89023d98c155b2eae6562ec38422dc46ebdf71e2a5",
+            "title": "Guidewire buys Hyperexponential for $1.7B in cash",
+            "description": "The deal, expected to close sometime next year, is to help bring AI agents to work alongside humans to underwrite, analyze, and price decisions.",
+            "url": "https://techcrunch.com/2026/10/27/guidewire-buys-hyperexponential-for-1-7b-in-cash/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-10-27T22:26:03+00:00",
+            "collected_at": "2026-10-28T03:21:21.501776+00:00"
+        },
+        {
+            "id": "550f4d88633d42452645fe28be1f95c7b820136518ea7942332ddf189b2d73b8",
+            "title": "Expanding our partnership with GSA to bring Claude to all levels of government",
+            "description": "Comments",
+            "url": "https://www.anthropic.com/news/expanding-partnership-gsa",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "anthropic",
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-27T22:23:37+00:00",
+            "collected_at": "2026-10-28T03:21:23.744307+00:00"
+        },
+        {
+            "id": "8c13645a5495df2dbe0b018fd8c4c77f57a0192c7c15f53a878ccd507e059e7b",
+            "title": "South Carolina's measles outbreak jumped to Washington state 5 times in 2 weeks",
+            "description": "International travel used to be the main risk of measles cases in the US—not anymore.",
+            "url": "https://arstechnica.com/health/2026/10/domestic-travel-poses-growing-risk-for-measles-and-a-new-challenge-for-states/",
+            "source": "Ars Technica",
+            "category": "technologie",
+            "tags": [
+                "informatique",
+                "innovation",
+                "technologie"
+            ],
+            "published_at": "2026-10-27T22:22:32+00:00",
+            "collected_at": "2026-10-28T03:21:21.353763+00:00"
+        },
+        {
+            "id": "1895f4fa2be506f299eeaef203939cafc0c1254580883f77d70199000e0fb271",
+            "title": "From 8VC to Benchmark, here’s what’s hiding in October SEC filings",
+            "description": "A whole crop of venture capital firms are raising significant new funds.",
+            "url": "https://techcrunch.com/2026/10/27/from-8vc-to-benchmark-heres-whats-hiding-in-october-sec-filings/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-10-27T22:17:18+00:00",
+            "collected_at": "2026-10-28T03:21:21.501843+00:00"
+        },
+        {
+            "id": "7858f058b71eba12f481765770ec29ff274363e03024b0794c5f0a8f11b539ea",
+            "title": "UNM Health ransomware attack disrupts patient care, surgeries",
+            "description": "The University of New Mexico Health Sciences Center disclosed a cyberattack that caused system outages and disrupted patient care and academic activities. [...]",
+            "url": "https://www.bleepingcomputer.com/news/security/unm-health-ransomware-attack-disrupts-patient-care-surgeries/",
+            "source": "BleepingComputer",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "malware",
+                "ransomware"
+            ],
+            "published_at": "2026-10-27T22:07:34+00:00",
+            "collected_at": "2026-10-28T03:21:20.046979+00:00"
+        },
+        {
+            "id": "19958cadfbf558445c0b580296f38e16b3d5da476be4ab5fb86df345cd17ed96",
+            "title": "Ripple and C2FO Tap XRP Ledger to Turn Payment Delays Into Seconds",
+            "description": "Ripple and C2FO are bringing invoice financing and settlement to the XRP Ledger, using Ripple’s dollar-backed stablecoin, RLUSD. The initiative targets bank transfer delays that leave suppliers waiting days for approved early payments. XRP Ledger Targets Settlement Delays Suppliers could gain faster access to cash from approved invoices through an initiative announced Oct. 27 at […]",
+            "url": "https://news.bitcoin.com/featured/ripple-c2fo-tap-xrp-ledger-turn-payment-delays-seconds/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-10-27T22:05:00+00:00",
+            "collected_at": "2026-10-28T03:21:39.523957+00:00"
+        },
+        {
+            "id": "ca4603f34f23831e3ca71ca2a124c66b19c99f8c34a06bb58d252e26cdbe444f",
+            "title": "China's top-secret spaceplane can't hide in low-Earth orbit",
+            "description": "The DIA's threat assessment suggests China may soon place directed energy weapons in space.",
+            "url": "https://arstechnica.com/space/2026/10/chinas-top-secret-spaceplane-cant-hide-in-low-earth-orbit/",
+            "source": "Ars Technica",
+            "category": "technologie",
+            "tags": [
+                "informatique",
+                "innovation",
+                "technologie"
+            ],
+            "published_at": "2026-10-27T22:04:50+00:00",
+            "collected_at": "2026-10-28T03:21:21.353832+00:00"
+        },
+        {
+            "id": "01b0d7d9af62f836082c2744d877cbcdb2f11ac14e3916baf45b8704fcb76ea0",
+            "title": "TCL TAB A1 deal drops the 11-inch Android tablet under $180",
+            "description": "Save $40 on the TCL TAB A1 and get an 11-inch Android tablet with a 2.1K 90Hz screen and 8,000mAh battery.",
+            "url": "https://www.androidauthority.com/tcl-tab-a1-deal-amazon-3728754/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-10-27T21:57:09+00:00",
+            "collected_at": "2026-10-28T03:21:31.666111+00:00"
+        },
+        {
+            "id": "f45c7980de26dbce15c08b61fc46110a5fdee16909d303cf68ba409ca42cf9b3",
+            "title": "\"No human at the helm\": Delaware plan would let AI agents run entire businesses",
+            "description": "Owners of AI-run firms would evade liability for \"reckless\" AI, US Rep. Comer says.",
+            "url": "https://arstechnica.com/tech-policy/2026/10/no-human-at-the-helm-delaware-plan-would-let-ai-agents-run-entire-businesses/",
+            "source": "Ars Technica",
+            "category": "technologie",
+            "tags": [
+                "informatique",
+                "innovation",
+                "technologie"
+            ],
+            "published_at": "2026-10-27T21:50:04+00:00",
+            "collected_at": "2026-10-28T03:21:21.353892+00:00"
+        },
+        {
+            "id": "f56ec033cdd3d309eb142ab3c667fa4eab902dd5d9f47b706b5af8079cbcf5c2",
+            "title": "GM is embracing hybrids now",
+            "description": "GM eschewed hybrids in favor of battery-electric vehicles. Now it's gearing up to offer hybrid versions of its SUVs.",
+            "url": "https://techcrunch.com/2026/10/27/gm-is-embracing-hybrids-now/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-10-27T21:47:02+00:00",
+            "collected_at": "2026-10-28T03:21:21.501899+00:00"
+        },
+        {
+            "id": "22c376eb4e78466379a2f976493a51e772e50035455b9fa1077d91e38a7486cc",
+            "title": "Bank of America kindly asks that you don’t share your banking password with your AI assistant",
+            "description": "The banking giant reminds customers that \"you're responsible for activity\" resulting from your AI agents' access.",
+            "url": "https://techcrunch.com/2026/10/27/bank-of-america-kindly-asks-that-you-dont-share-your-banking-password-with-your-ai-assistant/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-10-27T21:44:34+00:00",
+            "collected_at": "2026-10-28T03:21:21.501969+00:00"
+        },
         {
             "id": "4f33acf6a2b5045b42df119c2d86591be52c9a6b5c62bcfc9c8e0491d370b1fc",
             "title": "Who’s really in charge at Anthropic after the IPO?",
@@ -86,6 +823,22 @@
             ],
             "published_at": "2026-10-27T21:31:22+00:00",
             "collected_at": "2026-10-27T21:39:21.490736+00:00"
+        },
+        {
+            "id": "8b2d32a128d5af0502cf386c6086b472982273f8ca7bbae2a10104f41987381a",
+            "title": "Anthropic IPO warns its AI could blackmail people, become sentient, end humanity",
+            "description": "Seven potential AI nightmares pulled from Anthropic's 93-page \"Risk Factor\" tome.",
+            "url": "https://arstechnica.com/ai/2026/10/anthropic-ipo-warns-its-ai-could-blackmail-people-become-sentient-end-humanity/",
+            "source": "Ars Technica",
+            "category": "technologie",
+            "tags": [
+                "anthropic",
+                "informatique",
+                "innovation",
+                "technologie"
+            ],
+            "published_at": "2026-10-27T21:31:14+00:00",
+            "collected_at": "2026-10-28T03:21:21.353950+00:00"
         },
         {
             "id": "3c3663ca5653068a1c12d490842c7eeb85191a56c02ee438df78ef7e99742f5d",
@@ -340,6 +1093,20 @@
             "collected_at": "2026-10-27T21:39:21.133775+00:00"
         },
         {
+            "id": "cbf7bab928a0c447f4c62370768c157d95513c79a2bb40f88169f17ac983c8dd",
+            "title": "3 Frameworks to Protect CISOs & Orgs Against AI Liability",
+            "description": "Cyber leaders can get ahead of AI liability with rigorous documentation, transparency, and smart contract negotiations with AI vendors.",
+            "url": "https://www.darkreading.com/cyber-risk/3-frameworks-cisos-ai-liability",
+            "source": "Dark Reading",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "enterprise-security"
+            ],
+            "published_at": "2026-10-27T21:15:03+00:00",
+            "collected_at": "2026-10-28T03:21:20.910437+00:00"
+        },
+        {
             "id": "d048b5210d051a72a0220cd6b25c05ee3dd600ef48363b960ed3e2f3771b4f6e",
             "title": "Pixel phones are still missing alarms, turning anxiety dreams into reality",
             "description": "Users report missed morning wake-ups, Google steps in to investigate.",
@@ -366,6 +1133,21 @@
             ],
             "published_at": "2026-10-27T21:06:10+00:00",
             "collected_at": "2026-10-27T21:39:28.055133+00:00"
+        },
+        {
+            "id": "f187d308593d741e47608dec8704c07c24f2457dca7a7cf096d96c6cb86804f0",
+            "title": "Coders’ Rights Project Reverse Engineering FAQ (2017)",
+            "description": "Comments",
+            "url": "https://www.eff.org/issues/coders/reverse-engineering-faq",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-10-27T21:02:51+00:00",
+            "collected_at": "2026-10-28T03:21:23.935790+00:00"
         },
         {
             "id": "4c2a575419a665a7aaca7158d266317a375a77ae76bce419744fd0e6d3adb4c6",
@@ -489,6 +1271,22 @@
             "collected_at": "2026-10-27T21:39:34.568389+00:00"
         },
         {
+            "id": "2f3d201d50bf54308f89d4d9fd70f1fd41278877ac905ce15d179e4069b94a7c",
+            "title": "SageMaker MLflow Apps now support MLflow 3.16",
+            "description": "Amazon SageMaker AI MLflow Apps now support MLflow 3.16, bringing a redesigned tracing experience and faster experiment tracking to your generative AI and machine learning workflows. MLflow 3.16 improves debugging and analysis of generative AI applications and agents. The redesigned trace explorer is now the default, with adjustable row height, reorderable columns, custom columns from any trace tag or metadata field. This release also accelerates metric charts for experiments with large metric histories. New MLflow Apps are created on MLflow 3.16 by default. Existing MLflow Apps will be upgraded to MLflow 3.16 during an upcoming maintenance window, with no action required. MLflow 3.16 is available in all AWS Regions where MLflow Apps are available. To learn more, visit the SageMaker AI MLflow developer guide .",
+            "url": "https://aws.amazon.com/about-aws/whats-new/2026/10/mflow-version-3-16/",
+            "source": "AWS What's New",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "amazon",
+                "aws",
+                "cloud",
+                "machine_learning"
+            ],
+            "published_at": "2026-10-27T20:40:00+00:00",
+            "collected_at": "2026-10-28T03:21:27.350047+00:00"
+        },
+        {
             "id": "83c70cef683a7d1c089a7a11320270dd6f9af12a1f5ecbccc466d7b064af3336",
             "title": "Is Duolingo down for you? Here’s what’s going on (Update: Back)",
             "description": "Let's just hope Duolingo sorts this out before you break your streak.",
@@ -501,6 +1299,21 @@
             ],
             "published_at": "2026-10-27T20:37:19+00:00",
             "collected_at": "2026-10-27T21:39:28.055299+00:00"
+        },
+        {
+            "id": "c917ea3babb2adcfaf68d63be61ed309f05152fa57b50f9e9b730e1962c07984",
+            "title": "Hex Raises $100M",
+            "description": "Comments",
+            "url": "https://hex.tech/blog/hex-new-era/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-27T20:36:38+00:00",
+            "collected_at": "2026-10-28T03:21:23.744043+00:00"
         },
         {
             "id": "60da8a832a56f37a83ee801444f25d3401142b69f2e78fb1ef6b10159e0128d9",
@@ -560,6 +1373,23 @@
             ],
             "published_at": "2026-10-27T20:25:55+00:00",
             "collected_at": "2026-10-27T21:39:19.142701+00:00"
+        },
+        {
+            "id": "1037573297b5a9dbb326ad7503afa9ee42aa112fd6402a9aeadddca9a1897ea3",
+            "title": "Big Red gets cozy with Google to offer TPUs to AI customers",
+            "description": "Oracle plans to add those chips alongside new Nvidia hardware and OpenAI services as businesses await AI payoffs",
+            "url": "https://www.theregister.com/ai-and-ml/2026/10/27/big-red-gets-cozy-with-google-to-offer-tpus-to-ai-customers/5305846",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "nvidia",
+                "openai",
+                "technologie"
+            ],
+            "published_at": "2026-10-27T20:20:27+00:00",
+            "collected_at": "2026-10-28T03:21:22.829124+00:00"
         },
         {
             "id": "9983f681876dcb0b0521bb2b7f759ff20637c1bc3c21a869dd7cdebd0b9117c9",
@@ -636,6 +1466,20 @@
             ],
             "published_at": "2026-10-27T20:09:05+00:00",
             "collected_at": "2026-10-27T21:39:23.372662+00:00"
+        },
+        {
+            "id": "6d6915cc374791a2d4d87353b816e5204ef20e69292ddbc1265eb49e40e58653",
+            "title": "SBOMs Alone Can't Reveal the Scope of a Supply Chain Attack",
+            "description": "A recent Shai-Hulud attack shows defenders need real-time visibility into production code and affected services to respond to supply chain compromises.",
+            "url": "https://www.darkreading.com/cyber-risk/sboms-alone-scope-supply-chain-attack",
+            "source": "Dark Reading",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "enterprise-security"
+            ],
+            "published_at": "2026-10-27T19:58:06+00:00",
+            "collected_at": "2026-10-28T03:21:20.910574+00:00"
         },
         {
             "id": "ebfe71ec9852c66d306e05a10c79e54a53f7cea64390fbbdf2cd86e996669b2a",
@@ -729,6 +1573,22 @@
             "collected_at": "2026-10-27T21:39:19.142768+00:00"
         },
         {
+            "id": "8d1f583c06df9a3e46bbe2189e231c3e88ced4ecfc949690376b0bfc809d3d4c",
+            "title": "Anthropic now lets Claude users jump out of plane without parachute",
+            "description": "Meet CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS",
+            "url": "https://www.theregister.com/ai-and-ml/2026/10/27/anthropic-now-lets-claude-users-jump-out-of-plane-without-parachute/5305807",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "anthropic",
+                "entreprise",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-10-27T19:29:00+00:00",
+            "collected_at": "2026-10-28T03:21:22.829189+00:00"
+        },
+        {
             "id": "908afbb1880b855221e4d6f00728837dd1ed5a8c758df0da173bf45581b019ec",
             "title": "This Amazon Basics 68W 2-port GaN charger is just $21 right now",
             "description": "Save 28% on the Amazon Basics 68W GaN wall charger, a compact two-port pick for charging a laptop and phone.",
@@ -741,6 +1601,21 @@
             ],
             "published_at": "2026-10-27T19:18:17+00:00",
             "collected_at": "2026-10-27T21:39:28.055571+00:00"
+        },
+        {
+            "id": "a07e98d7d0796172124c9f8214fd631233e5de13e47f6e1b67ede354d4f293ec",
+            "title": "AI 'hacker' finds 4 severe bugs in popular industrial control software in under 4 hours",
+            "description": "One critical, three high-severity EPICS bugs could disrupt research experiments",
+            "url": "https://www.theregister.com/security/2026/10/27/ai-hacker-finds-4-severe-bugs-in-popular-industrial-control-software-in-under-4-hours/5305811",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-10-27T19:11:02+00:00",
+            "collected_at": "2026-10-28T03:21:22.829250+00:00"
         },
         {
             "id": "4b134cedffabe49d240ee681da3a506b8cd5c4ac96e1c0d275b5c44f280c5953",
@@ -1078,6 +1953,36 @@
             "collected_at": "2026-10-27T21:39:21.253184+00:00"
         },
         {
+            "id": "6cf4dddb431db015f51987af20cabd8c87bca698b46d88118be81b83c1d0d2f3",
+            "title": "Radio-tagged Monarch butterflies",
+            "description": "Comments",
+            "url": "https://news.vt.edu/articles/2026/10/cmi-monarchs.html",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-27T17:48:15+00:00",
+            "collected_at": "2026-10-28T03:21:23.743962+00:00"
+        },
+        {
+            "id": "60101fbffa3acda7b53d950da1299ec47b33b9d4d35821b540fd94f802751dd3",
+            "title": "Apple takes powerful M6 chip to the MacBook Pro, iMac",
+            "description": "6th-gen M-series silicon promises more cores, faster memory, a fatter NPU, and better connectivity, now in more form factors",
+            "url": "https://www.theregister.com/personal-tech/2026/10/27/apple-takes-powerful-m6-chip-to-the-macbook-pro-imac/5305797",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-10-27T17:47:07+00:00",
+            "collected_at": "2026-10-28T03:21:22.829311+00:00"
+        },
+        {
             "id": "74bf1086544500535fb7c466d7ac15bbce6407dfc43eb5aaf0c9ca9c6eeabb74",
             "title": "Beware the Slasher: AI Could Kill Off Cybersecurity Pros' Skills",
             "description": "Nathan Hamiel outlines potential SecOps horror in the AI midst, as core technical capabilities go the way of reading an atlas or remembering phone numbers.",
@@ -1138,6 +2043,21 @@
             ],
             "published_at": "2026-10-27T17:35:14+00:00",
             "collected_at": "2026-10-27T21:39:34.758406+00:00"
+        },
+        {
+            "id": "caa4180ecbe7619964e8e0da862962009910dd34b3a8ab935b13e244e89e5ec7",
+            "title": "EU privacy advocates accuse US data annotation firm of snooping on contractors",
+            "description": "Noyb files five complaints in four member states over alleged tracking of workers on Scale AI's Outlier platform",
+            "url": "https://www.theregister.com/legal/2026/10/27/eu-privacy-advocates-accuse-us-data-annotation-firm-of-snooping-on-contractors/5305757",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-10-27T17:29:00+00:00",
+            "collected_at": "2026-10-28T03:21:22.829370+00:00"
         },
         {
             "id": "1c5b51464767c2ad29498f22c3230eb67bc2e05dfccf5184d942345b7a68fe50",
@@ -2017,6 +2937,22 @@
             ],
             "published_at": "2026-10-27T15:26:12+00:00",
             "collected_at": "2026-10-27T17:08:37.112171+00:00"
+        },
+        {
+            "id": "ec4053628a648a224cf60a5adfaf934d5a67ba1c3141ae0fa17558d4d4b2f244",
+            "title": "Amazon ElastiCache for Valkey now supports changing durability on existing clusters",
+            "description": "Amazon ElastiCache for Valkey now lets you enable or disable durability on your existing node-based clusters without creating a new cluster. Previously, you couldn't change the durability configuration of an existing cluster in place. This made it harder to move from caching to persistent data store use cases, or to adapt as your application requirements change. Now you can change durability at any point in your application's lifecycle. You can choose between two durability options: synchronous and asynchronous writes. Synchronous writes persist data across at least two AZs before responding to the client, designed for zero data loss at single-digit millisecond write latency. Asynchronous writes persist data after responding to the client, maintaining microsecond write latency at no additional cost. However, up to 10 seconds of uncommitted data could be lost in the rare event of a failure. Both options maintain microsecond read latency. You can now use ElastiCache for a broader set of use cases beyond caching where data loss is unacceptable such as AI agent long-term memory, AI agent workflow state, knowledge bases for RAG applications, payment tokenization, and real-time inventory management. This feature is available in all AWS Regions where ElastiCache for Valkey 9.0 and later is available. To get started, use the AWS Management Console, AWS SDK, or AWS CLI. For pricing, see the Amazon ElastiCache pricing page . To learn more, see Durability in the ElastiCache documentation.",
+            "url": "https://aws.amazon.com/about-aws/whats-new/2026/10/elasticache-changing-durability/",
+            "source": "AWS What's New",
+            "category": "cloud",
+            "tags": [
+                "amazon",
+                "aws",
+                "cloud",
+                "git"
+            ],
+            "published_at": "2026-10-27T15:21:00+00:00",
+            "collected_at": "2026-10-28T03:21:27.350476+00:00"
         },
         {
             "id": "1493b28e25b2fcc454451279825b04e758d198bf7bea68787c8636dd9f7cb5b6",
@@ -4203,6 +5139,21 @@
             ],
             "published_at": "2026-10-27T08:10:01+00:00",
             "collected_at": "2026-10-27T11:20:57.517779+00:00"
+        },
+        {
+            "id": "04a65119b46ef4b0f618cff957db80a7a449b18d7d34a83a8986759270d0239b",
+            "title": "Amazon Neptune now supports online index rebuild to reclaim storage",
+            "description": "Amazon Neptune Database now supports online index rebuild, a new capability that helps database administrators and application teams defragment Neptune indexes and reclaim unused storage space without taking their database offline. Over time, insert, update, and delete operations create gaps of unused space within data pages, keeping the VolumeBytesUsed metric artificially elevated even after data is deleted. This fragmentation increases I/O costs and degrades query performance for teams running Gremlin, openCypher, or SPARQL workloads at scale. With online index rebuild, read and write queries continue uninterrupted on both the writer instance and read replicas throughout the entire rebuild process. You can target all indexes, only quad indexes, or only dictionary indexes, making this feature well-suited for post-deletion cleanup, periodic maintenance, storage limit management, and performance tuning on heavily fragmented databases. Tunable concurrency and write buffer size settings let you balance rebuild speed against workload impact, while built-in storage safety mechanisms protect against storage exhaustion during the operation. Online index rebuild is available starting with Amazon Neptune engine release 1.5.0.0 on provisioned writer instances, in all regions where Amazon Neptune Database is supported. To learn more about configuring and running online index rebuild, including API references and tuning guidance, visit the Amazon Neptune documentation .",
+            "url": "https://aws.amazon.com/about-aws/whats-new/2026/10/neptune-online-index-rebuild/",
+            "source": "AWS What's New",
+            "category": "cloud",
+            "tags": [
+                "amazon",
+                "aws",
+                "cloud"
+            ],
+            "published_at": "2026-10-27T08:00:00+00:00",
+            "collected_at": "2026-10-28T03:21:27.350825+00:00"
         },
         {
             "id": "ea6e172fb46ef027cfe47ad1251ecd1e0cfd1e488f6e4deb8b6b7b610a4c1b77",
@@ -8483,6 +9434,21 @@
             "collected_at": "2026-10-26T18:27:03.699293+00:00"
         },
         {
+            "id": "61e512383f3ecddc813390d1bc74f207ebee0dccd60f740afafd47fb76f67c1e",
+            "title": "81 Jokes for the ZX81",
+            "description": "Comments",
+            "url": "https://spelk.press/gb/products/81-jokes-for-the-zx81",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-26T12:45:16+00:00",
+            "collected_at": "2026-10-28T03:21:23.743578+00:00"
+        },
+        {
             "id": "4dfd9e51f04ae36e67da74c644eefbd1e3428299d08ee8651e005fa6152c551d",
             "title": "Google AI Pro upgrades are turning into a costly headache for some students",
             "description": "Students paid to upgrade their Google AI plans. Then everything disappeared.",
@@ -10089,6 +11055,21 @@
             "collected_at": "2026-10-26T12:00:01.323450+00:00"
         },
         {
+            "id": "a657e4818f3f23e6634f5766775db7db350b73faffa83b4f9d993ae8995042a0",
+            "title": "SS United States to be sunk as largest artificial reef",
+            "description": "Comments",
+            "url": "https://divemagazine.com/scuba-diving-news/ss-united-states-to-be-sunk-as-worlds-largest-artificial-reef-in-november",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-26T04:41:15+00:00",
+            "collected_at": "2026-10-28T03:21:23.744005+00:00"
+        },
+        {
             "id": "64f7071ea3fec426a186324fb5cb4ad87b0a1a6afc59f135606fdcf748c53752",
             "title": "Bitcoin slips under $80,000 as traders de-risk ahead of Fed meeting",
             "description": "",
@@ -11067,6 +12048,22 @@
             ],
             "published_at": "2026-10-25T21:11:31+00:00",
             "collected_at": "2026-10-26T02:33:26.714287+00:00"
+        },
+        {
+            "id": "33dea60eeae1187fb3713037af86ac09308d3a8efd3567f56d89d960fddada4a",
+            "title": "Nvidia and Micron Make Up 34% of America's Earnings Boom",
+            "description": "Comments",
+            "url": "https://www.wsj.com/finance/stocks/the-earnings-boom-is-heavily-reliant-on-just-a-handful-of-stocks-21decb53",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "nvidia",
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-25T21:07:38+00:00",
+            "collected_at": "2026-10-28T03:21:23.744260+00:00"
         },
         {
             "id": "01a6e3e793b0992b37f806dcee450f762edb80da243edc0da47d3e09f8eb4686",
@@ -12410,6 +13407,21 @@
             ],
             "published_at": "2026-10-25T12:37:54+00:00",
             "collected_at": "2026-10-25T15:21:25.499048+00:00"
+        },
+        {
+            "id": "0ff651fc79ab12635909399e9f23d8c9dd6522a841155ee1f6bafc32fef4f9a0",
+            "title": "Assembly Nights",
+            "description": "Comments",
+            "url": "https://ratfactor.com/assembly-nights",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-25T12:35:37+00:00",
+            "collected_at": "2026-10-28T03:21:23.743492+00:00"
         },
         {
             "id": "cf410c299cc72c540ce17360a239dc2b127c3b47f35690f99c9e2853d2f86f74",
@@ -16072,6 +17084,21 @@
             ],
             "published_at": "2026-10-24T03:29:18+00:00",
             "collected_at": "2026-10-24T10:03:57.088692+00:00"
+        },
+        {
+            "id": "cbb3cd5f5327b1b9468df64892e91ceb33c9c6be19e3a6ec461b94c14a6938b7",
+            "title": "Tabletop Whale is an original science illustration blog",
+            "description": "Comments",
+            "url": "https://tabletopwhale.com",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-24T02:51:39+00:00",
+            "collected_at": "2026-10-28T03:21:23.743452+00:00"
         },
         {
             "id": "3e015fe4294e09ecc9902e04b20cee1d2f79caea1e650e373a47471c39cad9b6",
@@ -60213,6 +61240,36 @@
             ],
             "published_at": "2026-10-16T00:00:00+00:00",
             "collected_at": "2026-10-17T09:57:35.880210+00:00"
+        },
+        {
+            "id": "d3b9ba6f7bd01af06315d29c49e1c46aec299d60d23b626afa8e8db74404734d",
+            "title": "How Localiza reorganized work around generative AI",
+            "description": "See how Localiza uses ChatGPT Enterprise, the OpenAI API, Codex, and 60+ specialized agents to reorganize work and build AI-native mobility experiences.",
+            "url": "https://openai.com/index/localiza-generative-ai",
+            "source": "OpenAI",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "chatgpt",
+                "ia",
+                "openai"
+            ],
+            "published_at": "2026-10-16T00:00:00+00:00",
+            "collected_at": "2026-10-28T03:21:24.746894+00:00"
+        },
+        {
+            "id": "86dbfdb5b436c283839e74a6048a322413f28482bebe74ed7ba4a0c505aad443",
+            "title": "How Grupo Boticário uses AI to strengthen human connections",
+            "description": "Almost 50 years after starting in a compounding pharmacy in Paraná, the group operates a proprietary agent platform that autonomously resolves up to 80% of resellers’ operational requests—enabling the sales force to take on an advisory role.",
+            "url": "https://openai.com/index/grupo-boticario",
+            "source": "OpenAI",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "chatgpt",
+                "ia",
+                "openai"
+            ],
+            "published_at": "2026-10-16T00:00:00+00:00",
+            "collected_at": "2026-10-28T03:21:24.746978+00:00"
         },
         {
             "id": "eb0ac7f68c40eb75daf8838ba6e105680bb059baa069fca3a28749130e948416",
@@ -350801,6 +351858,22 @@
             ],
             "published_at": null,
             "collected_at": "2026-10-27T21:39:19.394994+00:00"
+        },
+        {
+            "id": "0986b691bd7840fce27102f49d8f279e39fcdf49c6e0f57353395a4d83afd734",
+            "title": "Here’s why the iPhone Duo’s hinge could be cracking the screen",
+            "description": "Within hours of the iPhone Duo launch last Friday, people reported that the inner screen on some brand new foldable phones was already broken. The issue was similar across many photos shared on social media: some kind of issue or crack would appear in the middle of the screen above the hinge, with lines appearing […]",
+            "url": "https://www.theverge.com/tech/1020145/iphone-duo-crackgate-broken-screen-hinge",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "ios",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-10-28T03:21:21.596092+00:00"
         }
     ]
 }
