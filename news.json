@@ -1,7 +1,1499 @@
 {
-    "updated_at": "2026-10-29T03:46:36.490115+00:00",
-    "count": 23085,
+    "updated_at": "2026-10-29T12:02:53.388010+00:00",
+    "count": 23192,
     "articles": [
+        {
+            "id": "8d3597e4f35502f02611ff14e7cf5930239bd245a98d6aa4e17ed505288a4464",
+            "title": "Half Price Until You Pay Twice: 6 Ways an OpenAI Batch Job in .NET Quietly Costs You More",
+            "description": "The pitch for the OpenAI Batch API is simple. You have a pile of work nobody needs answered in two seconds, say 40,000 rows to classify overnight. You put the requests in a JSONL file, upload it, and the provider finishes within 24 hours at half the price of the normal API. The discount is real. What eats it is the code around the batch. A batch job lives for hours, and anything that lives for hours meets crashes, retries and deadlines. Each of those can quietly turn \"half price\" into \"full price, twice\", or into results that are silently missing. Here are six mistakes I made or nearly made while building a batch pipeline in .NET 10 (official OpenAI 2.14.0 package, SQLite for state). The steps are general. The code is trimmed to the shape, and the trimmed parts are marked. Tech Skill Builder is $5/month for a very limited time only (normally $10). Grab it now before it goes back to $10. The complete, working, tested version of this batch project is inside, with full source and an in-depth PDF guide. Join Tech Skill Builder Mistake 1: Creating the batch again after a crash This is the expensive one. Your worker uploads the file, calls \"create batch\", and dies before it saves the batch id. On restart, your database says this shard was never sent, so you send it again. Now two batches run the same requests, and you pay for both. The fix doesn't need extra infrastructure. Batches accept metadata, so tag each one with your own shard id when you create it. On restart, before re-sending a shard that has no batch id, list the recent batches and look for that tag: var metadata = new Dictionary < string , string > { [ \"job_id\" ] = job . Id , [ \"shard_id\" ] = shard . Id , }; // create the batch with this metadata, then save the batch id (full flow in the complete project) // on restart, for a shard with no saved batch id: var match = recent . FirstOrDefault ( b => b . Metadata . TryGetValue ( \"shard_id\" , out var sid ) && sid == shard . Id ); // match found: adopt it. none found: send it. Never both. The other half of the rule: save your state before every provider call (planned, then uploaded, then created), so a restart always knows how far it got. Mistake 2: Retrying everything that failed A batch comes back with failures, and the easy move is \"put the failures in the next batch\". Some of those failures will fail again no matter how often you send them. A 400 for a malformed request or a model refusal gets the same answer the second time, and you pay for it again. So sort the failures before you retry anything: Retry: 408, 409, 429 and 5xx, batch_expired , lines that never came back, and output that parsed but broke your schema. Retry with more room: finish_reason: length . The next attempt doubles max_completion_tokens , up to a cap. Don't retry: other 4xx, refusals and content-filter stops. And give every item an attempt budget (three in my project). When it runs out, the item goes to a dead-letter state with its last reason instead of looping forever. One more thing on cost: when an attempt is truncated, you still paid for its tokens. My store adds each attempt's tokens to the item rather than replacing them, so the cost report shows what you actually paid. Mistake 3: Looping over the output file The docs say it plainly: output lines may not come back in input order. That part most people catch, and they join on custom_id . The subtler bug is which side you loop over . If you loop over the output file, items with no line at all simply never show up. Cancelled batches, expired batches and the occasional lost line all look like that. The job reports \"done\" and a few hundred rows were never processed. Loop over what you sent instead, and look each one up: foreach ( var ( itemId , attempt ) in shard . Members ) { if ( decisions . ContainsKey ( itemId )) continue ; // a line came back for it // no line at all: retry, with a reason like \"missing_after_cancel\" or \"missing_after_expiry\" // ... (reason mapping and the rest of the reconciler are in the complete project) } Also read the second file. Failed requests go to a separate error file, and that's where expired requests show up. Mistake 4: Reusing the same custom_id on a retry Item r-042 fails in batch one and goes into batch two. If its custom_id is still r-042 , a late line from batch one is indistinguishable from the fresh answer, and it can overwrite a newer result. Put the attempt number in the id. My format is {jobId}:{itemId}:a{attempt} , so the retry is ...:r-042:a2 . Any line carrying a1 after that is stale, and the reconciler ignores it. Lines from another job are ignored the same way, and a second line for the same id counts as a duplicate. The database side gets the same treatment: an update only lands if the item is still at that attempt and still waiting for a result, so a late line can't overwrite newer state. Mistake 5: Letting the JSON encoder inflate your file Each input file has limits: 50,000 requests and 200 MB. The default System.Text.Json encoder escapes every non-ASCII character as \\uXXXX . For English text, that changes nothing. For Arabic it hurts. In my measurement, one short Arabic ticket went from 116 bytes to 324. On long non-English rows, the byte limit starts to bind before the 50,000-request limit, so the same job needs more files and more batches. One option fixes it: var options = new JsonWriterOptions { Encoder = JavaScriptEncoder . UnsafeRelaxedJsonEscaping }; // write custom_id, method, url, body with a Utf8JsonWriter using these options (builder omitted) Despite the scary name, it still escapes control characters, so a newline inside a row can't split a JSONL line. I have a test for exactly that, because it's the first thing I'd worry about. While you're there, validate the file locally before uploading: unique custom_id s, one model per file, url equal to the batch endpoint, no stream: true , and within the limits. A mistake caught locally costs nothing. Mistake 6: Panicking at the deadline The Batch API promises 24 hours. Your report is due at 08:00. At 07:40 the batch is still running and half the rows are done. The panic move is \"cancel it and run everything through the normal API\". That pays full price for the rows the batch already finished, and a cancelled batch still produces output for what it completed, which you're billed for too. The better question is when to stop trusting the batch, and how to finish only what's left without paying twice. My project answers that with a deadline planner. How it decides, and what it costs, is in the complete project and its PDF guide, not here. The pre-flight checklist [ ] State saved before every provider call [ ] Every batch tagged with your shard id; crash recovery adopts before it re-sends [ ] Failures classified: retry, retry with more tokens, or fail for good [ ] Attempt budget and a dead-letter state [ ] Tokens added across attempts, not replaced [ ] Reconcile over what you sent, using both the output file and the error file [ ] Attempt number inside custom_id ; stale and foreign lines ignored [ ] Relaxed JSON encoder, and a local file validator [ ] A deadline plan that doesn't throw away finished work What I tested, and what I didn't The project has 162 passing tests (146 unit, 16 integration), with no API key needed. An offline simulator covers the documented batch lifecycle, including failed, expired and cancelled batches, and a test crashes the process right after \"create batch\" to prove recovery adopts the existing batch instead of creating a second one. What I didn't do: run it against the live Batch API. The OpenAI adapter was tested against an in-process server that speaks the documented Files and Batches format, not against OpenAI itself. Also note that BatchClient is marked experimental ( OPENAI001 ) in the 2.14.0 SDK, so expect it to change. Get the complete project Tech Skill Builder is $5/month for a very limited time only (normally $10). Grab it now before it goes back to $10. This batch project is already inside: the full .NET 10 solution with the 162 tests, the crash recovery, the reconciler, the deadline planner, a minimal API with idempotent job creation, and a PDF guide that goes much deeper than this post. You also get the other complete, tested .NET + AI projects in the membership, with new ones added regularly. Join Tech Skill Builder for $5/month Which of these six would hit your batch job first?",
+            "url": "https://dev.to/michael_maurice/half-price-until-you-pay-twice-6-ways-an-openai-batch-job-in-net-quietly-costs-you-more-22g5",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "csharp",
+                "developpement",
+                "java",
+                "javascript",
+                "openai",
+                "programmation",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-10-29T12:01:25+00:00",
+            "collected_at": "2026-10-29T12:02:33.825129+00:00"
+        },
+        {
+            "id": "f8915adc541844ea0814492318b687130acc823ab8362db1924683608817b03a",
+            "title": "No SSH, No Secrets: Team Collaboration Through Agent Prompts",
+            "description": "Originally published at getorquesta.com/blog/no-ssh-no-secrets-team-collaboration-through-agent-prompts The SSH Access Problem We built Orquesta after repeatedly hitting the same wall: giving teammates access to a server or local environment meant handing out SSH keys, managing jump hosts, and praying nobody ran rm -rf by accident. SSH is a blunt instrument. It exposes the entire filesystem, every environment variable, every secret. Even with strict key management, the risk surface is enormous. And for non-technical stakeholders—designers, PMs, QA—SSH is a non-starter. They shouldn't have to learn terminal commands to get something done. The alternative was worse: asking a developer to run commands on someone else's behalf. That creates a bottleneck and breaks the flow. We needed a way to let people request work in an environment without ever touching it directly. That led to the core idea behind Orquesta: install a local agent on the machine that owns the environment, then let anyone submit prompts from a dashboard. The agent executes those prompts locally, streams output in real-time, and commits every change to git. No SSH keys shared, no shell access granted, no direct infra exposure. How the Agent Works Orquesta's agent runs on the machine where the actual work happens—your laptop, a staging server, a production box. It uses the Claude CLI under the hood, which means all reasoning, code generation, and command execution stays on that machine. The agent opens a local terminal session, but only through a controlled interface. It can run shell commands, edit files, create branches, and push commits—but only because the agent is configured to do so. The person submitting the prompt never sees that terminal. They just see the streamed output in the dashboard. Here's what a typical setup looks like. Install the Orquesta CLI on your machine: npm install -g @orquesta/cli orquesta init This generates a local config, starts the agent, and connects it to your Orquesta workspace. The agent authenticates using a scoped token that has no permissions beyond what the agent itself needs. You can then invite teammates to that workspace with role-based access. We support roles like Admin , Developer , Reviewer , and Observer . A Reviewer can see prompts and outputs but can't submit new ones without approval. An Observer can only view the audit log. This means a product manager can submit a prompt like \"Add a dark mode toggle to the settings page\" and the agent will branch, implement, test, and open a PR—all without the PM ever seeing a command line. The Prompt-to-PR Pipeline Let's walk through a real workflow. A teammate submits a prompt from the dashboard: Fix the failing test in the auth module and update the docs. The Orquesta agent receives the prompt, picks an execution mode (Auto by default), and starts working. In Auto mode, the agent decides whether to run simple shell commands directly, use the Claude agent for complex tasks, or enter Batuta mode—a ReAct loop that thinks, acts, observes, and repeats until the task is done. Batuta is especially useful for multi-step tasks like debugging a flaky test or refactoring a module. The agent streams every line of output to the dashboard in real-time. Teammates can watch the agent's thought process, the commands it runs, and the files it touches. Every action becomes a git commit on a feature branch, so the entire history is preserved. When the agent finishes, it opens a PR with a summary. A team lead can review the diff, run quality gates, and merge. The person who submitted the prompt never needs to know how it worked. They just see a PR ready for review. Security Without Sacrificing Speed The biggest objection we hear is: \"If the agent can run commands on my machine, isn't that just as dangerous as SSH?\" The answer is no, because the agent operates within a defined scope. It doesn't expose raw shell access to anyone. The person submitting a prompt can't type arbitrary commands—they can only submit natural language prompts, which the agent interprets. The agent's actions are further constrained by the CLAUDE.md file in your repo, which sets coding standards and allowed operations. You can also configure quality gates: before the agent executes a risky command, it can simulate the change and require a sign-off from a team lead. All prompts, logs, diffs, and costs are encrypted with AES-256 and stored in an immutable audit trail. You can see exactly who submitted what, what the agent did, and how much it cost. If someone tries to inject a malicious prompt (e.g., \"Delete the production database\"), the agent's built-in safety checks and the quality gate will block it unless explicitly approved. We built this because we were tired of worrying about who had root access. Collaboration Beyond the Dashboard Orquesta isn't just a web UI. We've made it possible to collaborate from anywhere. The Telegram bot lets team members submit prompts from their phone. The Embed SDK lets you drop a single script tag into any internal tool and give users a prompt box. The Agent Grid shows all your running agents on one screen, with live terminals for each. This is invaluable for team leads managing multiple environments—you can watch six agents work in parallel and intervene if one goes off the rails. Here's a snippet of the embed SDK: <script src= \"https://cdn.orquesta.dev/embed.js\" ></script> <script> Orquesta . mount ( ' #prompt-box ' , { workspace : ' your-workspace-id ' , theme : ' dark ' }); </script> This drops a prompt submission widget into any web app. A customer support rep can submit \"Regenerate the invoice for order #1234\" directly from the CRM, without ever seeing a server. A New Collaboration Model The traditional model of infrastructure access is broken. SSH keys get shared, permissions drift, and non-technical users are locked out. Orquesta replaces that with a prompt-based interface. You install the agent on the machines you control, invite people to submit prompts, and let the AI do the work under strict guardrails. The result is faster iteration, fewer bottlenecks, and a complete audit trail. No one sees your keys, no one has shell access, and no one touches your infra directly. They just write what they want done, and the agent handles the rest. We built Orquesta because we wanted to stop being the middlemen for every environment change. Now our team submits prompts from the dashboard, watches the agent work, and reviews the PRs. It's not just safer—it's the way software development should work.",
+            "url": "https://dev.to/orquesta_live/no-ssh-no-secrets-team-collaboration-through-agent-prompts-4gfh",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "anthropic",
+                "developpement",
+                "git",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-10-29T12:01:09+00:00",
+            "collected_at": "2026-10-29T12:02:33.826085+00:00"
+        },
+        {
+            "id": "f36f1932bd441d5e504d6e0e6064e542d409843fac0b3b65849711e6e49c5e00",
+            "title": "SCRAM channel binding fails when clients silently downgrade",
+            "description": "SCRAM channel binding fails when clients silently downgrade PostgreSQL's SCRAM-SHA-256-PLUS authentication binds the password exchange to the TLS tunnel. When channel binding is enabled and enforced, a client and server can detect that an attacker has substituted the TLS connection on which the authentication exchange occurs. A recent PostgreSQL JDBC security release describes CVE-2026-54291: a driver configured with channelBinding=require could silently downgrade from SCRAM-SHA-256-PLUS to plain SCRAM-SHA-256. The connection might continue while the client believes the stronger guarantee is active. That gap is important because the problem is not the SCRAM algorithm by itself. It is the mismatch between a required security policy and the client's behavior. Version 42.7.12 of the JDBC driver contains the correction. Check policy and observation separately PostgreSQL documents channel binding as a protection against a man-in-the-middle substituting a different TLS connection. A database team therefore needs two pieces of evidence: the cluster permits the stronger SASL mechanism, and the client actually negotiates it. Do not accept a successful connection as proof that channelBinding=require took effect on an affected driver. Upgrade every application runtime that can open PostgreSQL connections, including services that vendor the driver through a framework or connection pool. Then build a test that records the negotiated authentication mode at both ends. A server log may show the SASL mechanism; a client library may expose the server's authentication type through debug output. Keep enough of that evidence to compare a known-good client with each production client type. The migration is broader than changing a JDBC URL. Older connection pools, reporting tools, and administrative scripts may embed their own driver copies. A platform team can inventory library manifests and container images, but it should also exercise real connections from the application boundary. Dependency scans find version strings; integration tests find behavior. Account for mix deployment states During an upgrade, some clients will support SCRAM-SHA-256-PLUS and others will negotiate plain SCRAM. If the server accepts both, the weaker mechanism remains available for clients that do not request or cannot use channel binding. Treat that mixed state as temporary and track exceptions by application owner. A client with a documented compatibility limit needs a compensating control, such as tighter network isolation and a shorter credential lifetime, until it can negotiate the required mode. Monitor authentication changes. A client that previously used the PLUS mechanism and later returns to plain SCRAM may signal a downgrade, a rollback, or a driver regression. Alert on the transition rather than only on failed logins. TLS protects connection confidentiality. Channel binding ties the authentication proof to the TLS endpoint, which is a narrower and useful guarantee. The defensive lesson from this CVE is to test the negotiated mechanism, not merely the configuration value that was supposed to enforce it. References PostgreSQL JDBC 42.7.12 Security Release PostgreSQL Documentation: SASL Authentication",
+            "url": "https://dev.to/stark_zhuang_df5076f35c68/scram-channel-binding-fails-when-clients-silently-downgrade-3dg4",
+            "source": "DEV Community",
+            "category": "cybersecurite",
+            "tags": [
+                "cve",
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-10-29T12:00:57+00:00",
+            "collected_at": "2026-10-29T12:02:33.826395+00:00"
+        },
+        {
+            "id": "689a83d5eed36bc9d784a2ef4507108dbe88e4b0a889613011797e862d5e524a",
+            "title": "Counter-Intuitive Call — sub-tenancy is not an enterprise feature",
+            "description": "Every email API will sell you sub-tenancy. Mailgun calls it subaccounts — $90/month, Scale plan minimum. What that price actually tells you: multi-tenancy was built on top, not into the data model. Things bolted on afterwards are expensive to run, so they get sold to the customers who can absorb it. But if you send email on behalf of your customers, you inherit their behaviour. One tenant imports a dirty list, your whole domain eats the complaint, and every other customer's password resets start landing in spam. That isn't an enterprise problem. It's your first problem — day one, ten customers, before you have any revenue to justify a $90 line item. So the tier structure gets it exactly backwards: the people who most need a tenant boundary are the ones priced out of having one until after it's already gone wrong. I built Rootmail with the boundary in the schema. Not as a plan. Closed beta at https://rootmail.io/beta — 8 seats, free, for people who'll tell me where it breaks. If you run a platform that sends as your customers — when did sub-tenancy stop being optional for you? Follow along if you build platforms that send as their customers. Tomorrow: \"A silent failure is not best-effort,\" the first entry in a weekly commit log.",
+            "url": "https://dev.to/robertpaschal/counter-intuitive-call-sub-tenancy-is-not-an-enterprise-feature-l06",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-10-29T12:00:46+00:00",
+            "collected_at": "2026-10-29T12:02:33.826618+00:00"
+        },
+        {
+            "id": "84094d285d6193aa30c5006182832bfd039ac3ae5bd7cab985d1e33a1c64e84b",
+            "title": "WhatsApp Message Statuses Arrive Out of Order: Modelling Sent, Delivered, Read and Failed",
+            "description": "Every outgoing WhatsApp message produces a few status webhooks: sent , delivered , read , or failed . If you store whichever one arrived last, your data goes wrong in ways that are hard to spot: a \"read\" message drops back to \"delivered\", a failure is overwritten by a late \"sent\", or a status arrives for a message you haven't saved yet and is lost. Treat delivery as a state that only moves forward, keep each status's timestamp separately, accept that delivered is sometimes never sent, and hold statuses that arrive before the message row exists. The snippets are small, self-contained versions of the patterns, and each was run against the cases shown. What Meta sends, and what it doesn't promise Meta's status webhook reference defines the statuses: sent: \"the message was successfully sent from our servers.\" delivered: \"message was successfully delivered to the WhatsApp user's device.\" read: \"the message was displayed in an open chat thread in the WhatsApp user's device.\" failed: \"failure to send or deliver the message to the WhatsApp user's device\", with an errors array. played: the first time a voice message is played. Three things that docs don't promise shape the design: Order. Nothing in Meta's webhook docs says statuses arrive in order. Each one is its own webhook request, so plan for any order. Uniqueness. Webhooks your endpoint doesn't acknowledge with a 200 are retried, with decreasing frequency, for up to 7 days, and the webhooks overview warns that \"These retries can result in duplicate webhook notifications.\" Every status. When a message is delivered and read at the same time, for example because the customer is already in the chat, the status reference says \"the \"delivered\" webhook is not sent because it's implied that the message was delivered since it was read.\" Code that waits for delivered before showing read will wait forever. A state that only moves forward Give the statuses a rank, and only move up it. failed sits outside the ladder: it ends the message, but only if the phone never had it. // A message's delivery state: the status only moves forward, but every // timestamp is kept, however late its webhook arrives. export type Status = \" accepted \" | \" sent \" | \" delivered \" | \" read \" | \" failed \" ; export type MessageState = { status : Status ; sentAt ?: number ; deliveredAt ?: number ; readAt ?: number ; failedAt ?: number ; errorCode ?: number ; }; const RANK : Record < Exclude < Status , \" failed \" > , number > = { accepted : 0 , sent : 1 , delivered : 2 , read : 3 }; export const applyStatus = ( state : MessageState , status : Status , at : number , errorCode ?: number ): MessageState => { const next = { ... state }; if ( status === \" sent \" ) next . sentAt ??= at ; // The real delivery time wins over one inferred from a read receipt. if ( status === \" delivered \" ) next . deliveredAt = Math . min ( next . deliveredAt ?? at , at ); if ( status === \" read \" ) { next . readAt ??= at ; // A read message was delivered, even if that webhook never comes. next . deliveredAt ??= at ; } if ( status === \" failed \" ) { // A failure only counts before the phone has the message. if ( next . deliveredAt === undefined && next . readAt === undefined ) { return { ... next , status : \" failed \" , failedAt : at , errorCode }; } return next ; } if ( state . status === \" failed \" ) return next ; return RANK [ status ] > RANK [ state . status ] ? { ... next , status } : next ; }; Each rule, and the case it protects against: Rank, don't replace. A late delivered after read doesn't move the message back. A duplicate read changes nothing. Keep every timestamp. The status column answers \"where is it now\"; the timestamps answer \"when did each thing happen\", which is what reply-time and read-rate reports need. A late delivered still records its time. Infer delivered from read . Meta doesn't send delivered when read covers it, so set deliveredAt from the read. If a real delivered turns up later with an earlier time, it wins. Fail only before delivery. A failed after sent is a real failure: record it with its error code. A failed arriving after the message was delivered or read contradicts what you already know, so keep the delivered state and log the oddity. Nothing revives a failure. Once failed, a stray sent doesn't turn it back into a success. Do it in one statement Reading the row, deciding in code and writing it back works until two webhook workers handle two statuses for the same message at once. Then the second write can overwrite the first. Put the rule in the UPDATE itself, so the database applies it atomically: // The same forward-only rule as one atomic statement, so two webhook workers // can't race each other. status_rank: accepted 0, sent 1, delivered 2, read 3. export const STATUS_UPDATE_SQL = ` UPDATE messages SET status = CASE WHEN status <> 'failed' AND status_rank < :rank THEN :status ELSE status END, status_rank = CASE WHEN status <> 'failed' AND status_rank < :rank THEN :rank ELSE status_rank END, sent_at = COALESCE(sent_at, CASE WHEN :status = 'sent' THEN :at END), delivered_at = CASE WHEN :status = 'delivered' AND (delivered_at IS NULL OR :at < delivered_at) THEN :at WHEN :status = 'read' THEN COALESCE(delivered_at, :at) ELSE delivered_at END, read_at = COALESCE(read_at, CASE WHEN :status = 'read' THEN :at END) WHERE wamid = :wamid` ; export const FAILED_UPDATE_SQL = ` UPDATE messages SET status = 'failed', failed_at = :at, error_code = :code WHERE wamid = :wamid AND delivered_at IS NULL AND read_at IS NULL` ; A status_rank column makes \"only move forward\" a single comparison. The test runs these statements against SQLite with the same out-of-order sequences as the in-memory model. Statuses that arrive before the message There's a race at the start of every send. You call /messages , Meta returns the message ID, and you save the row. But the sent webhook can arrive while your code is still between those last two steps. A handler that looks up the message ID, finds nothing and returns has just lost that status, and if it was the failed one, the message will look \"accepted\" forever. Hold statuses for unknown IDs, and replay them when the row is saved: // A status can arrive before your own code has saved the message ID that the // send returned. Hold it, then replay it once the message row exists. import { applyStatus , type MessageState , type Status } from \" ./status-model.ts \" ; type Pending = { status : Status ; at : number ; errorCode ?: number }; export const createStatusStore = () => { const messages = new Map < string , MessageState > (); const early = new Map < string , Pending [] > (); const onStatus = ( wamid : string , status : Status , at : number , errorCode ?: number ) => { const state = messages . get ( wamid ); if ( ! state ) { early . set ( wamid , [...( early . get ( wamid ) ?? []), { status , at , errorCode }]); return \" held \" as const ; } messages . set ( wamid , applyStatus ( state , status , at , errorCode )); return \" applied \" as const ; }; const onSaved = ( wamid : string ) => { let state : MessageState = { status : \" accepted \" }; for ( const p of early . get ( wamid ) ?? []) state = applyStatus ( state , p . status , p . at , p . errorCode ); early . delete ( wamid ); messages . set ( wamid , state ); return state ; }; return { onStatus , onSaved , get : ( wamid : string ) => messages . get ( wamid ) }; }; In production, the holding area is a table, and the replay runs inside the transaction that saves the message. Expire held statuses after a while, because some will be for messages sent by other tools on the same number. Things that look like statuses but aren't Marking inbound messages as read is a request you make, POST /<PHONE_NUMBER_ID>/messages with \"status\": \"read\" and the inbound message_id . It's unrelated to the read receipts you receive for messages you sent. Pricing information rides on the status webhooks too. The comments in Meta's sample payload say pricing is \"only included with sent status, and one of either delivered or read status\". If your billing reports read it, take it from whichever status carries it, not only from delivered . Checklist Rank statuses and only move forward; never overwrite with \"the latest webhook\". Keep sent_at , delivered_at and read_at separately. Treat read as implying delivered ; Meta may skip the delivered webhook. Accept failed only before delivery, store its error code, and never revive a failed message. Apply the rule in a single conditional UPDATE . Hold statuses for unknown message IDs and replay them when the row is saved. Expect duplicates, and make every status update idempotent. WAPGROWAI is built by DI Solutions , a custom software and AI development company. This series covers what we've learned building WAPGROWAI on the WhatsApp Cloud API. Related: why template sends fail silently and handling webhooks in Node.js .",
+            "url": "https://dev.to/wapgrowai_org/whatsapp-message-statuses-arrive-out-of-order-modelling-sent-delivered-read-and-failed-1n4n",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "javascript",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-10-29T12:00:32+00:00",
+            "collected_at": "2026-10-29T12:02:33.827843+00:00"
+        },
+        {
+            "id": "07b5b3ef92236812742bda76eea30d3c33742f302ff40d5691747f0c01190964",
+            "title": "Windows 11 KB5127936 update released with 41 changes and fixes",
+            "description": "Microsoft released the KB5127936 preview cumulative update for Windows 11 versions 25H2 and 26H2, with 41 changes, including File Explorer and Cloud rebuild improvements. [...]",
+            "url": "https://www.bleepingcomputer.com/news/microsoft/windows-11-kb5127936-update-released-with-41-changes-and-fixes/",
+            "source": "BleepingComputer",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "malware",
+                "ransomware",
+                "windows"
+            ],
+            "published_at": "2026-10-29T12:00:07+00:00",
+            "collected_at": "2026-10-29T12:02:29.085064+00:00"
+        },
+        {
+            "id": "9a47523c1cca7976b85da4fb479a60a85565bbdfaca9a1d73d05c43566076c0a",
+            "title": "Receiving Webhooks in Laravel Without Getting Burned: Signatures, Replay Protection and Idempotency",
+            "description": "The first webhook bug I shipped looked harmless: a payment provider retried an event after my endpoint took too long to answer, and the same order got marked as \"paid\" twice. Nothing crashed. The logs were green. The accountants found it three weeks later. Webhooks are the most common integration pattern in business software. Payment providers, shipping companies, e-invoicing gateways, CRMs and marketplaces all push events to you instead of waiting for you to poll. And almost every webhook endpoint I have reviewed has the same three holes: it trusts the caller, it accepts old messages, and it assumes each event arrives exactly once. This article walks through a small, production-shaped webhook receiver in Laravel that closes all three. The problem: a public URL that changes your data A webhook endpoint is a public POST route that, by design, modifies business records without a logged-in user. That gives you three questions to answer before you write any business logic: Authenticity : did this request really come from the provider? Freshness : is this a new message, or a captured one being replayed hours later? Idempotency : if the provider sends the same event twice (and it will), do we process it only once? Most providers solve the first two by signing each request with a shared secret, typically an HMAC-SHA256 over the raw body plus a timestamp. The exact header names and formats differ between providers, so always read your provider's documentation. In this article I'll use a common shape: X-Signature: t=1793260800,v1=5f2b...e91c Here t is a Unix timestamp and v1 is HMAC-SHA256(secret, \"{t}.{raw_body}\") in hex. Step 1: a table that remembers every event Idempotency needs memory. Before writing the endpoint, create a table where every incoming event is stored once, enforced by a unique index at the database level, not in PHP: <?php use Illuminate\\Database\\Migrations\\Migration ; use Illuminate\\Database\\Schema\\Blueprint ; use Illuminate\\Support\\Facades\\Schema ; return new class extends Migration { public function up (): void { Schema :: create ( 'webhook_events' , function ( Blueprint $table ) { $table -> id (); $table -> string ( 'provider' , 50 ); $table -> string ( 'event_id' , 191 ); $table -> string ( 'type' , 100 ); $table -> json ( 'payload' ); $table -> timestamp ( 'processed_at' ) -> nullable (); $table -> text ( 'last_error' ) -> nullable (); $table -> timestamps (); $table -> unique ([ 'provider' , 'event_id' ]); }); } public function down (): void { Schema :: dropIfExists ( 'webhook_events' ); } }; The unique index is on provider + event_id , not on event_id alone. Two different providers can easily produce the same ID format. Step 2: verify the signature in middleware Keep verification out of the controller. A middleware makes it reusable across providers and impossible to forget on a new route. <?php namespace App\\Http\\Middleware ; use Closure ; use Illuminate\\Http\\Request ; use Symfony\\Component\\HttpFoundation\\Response ; class VerifyWebhookSignature { private const TOLERANCE_SECONDS = 300 ; public function handle ( Request $request , Closure $next ): Response { $header = ( string ) $request -> header ( 'X-Signature' , '' ); $parts = $this -> parseHeader ( $header ); if ( ! isset ( $parts [ 't' ], $parts [ 'v1' ]) || ! ctype_digit ( $parts [ 't' ])) { abort ( 400 , 'Missing or malformed signature header.' ); } $timestamp = ( int ) $parts [ 't' ]; if ( abs ( time () - $timestamp ) > self :: TOLERANCE_SECONDS ) { abort ( 400 , 'Signature timestamp outside tolerance.' ); } // Sign the RAW body. Never json_decode and re-encode before verifying. $signedPayload = $timestamp . '.' . $request -> getContent (); foreach ( $this -> secrets () as $secret ) { $expected = hash_hmac ( 'sha256' , $signedPayload , $secret ); // Known string first, user-supplied string second. if ( hash_equals ( $expected , $parts [ 'v1' ])) { return $next ( $request ); } } abort ( 401 , 'Invalid signature.' ); } private function parseHeader ( string $header ): array { $result = []; foreach ( explode ( ',' , $header ) as $pair ) { [ $key , $value ] = array_pad ( explode ( '=' , trim ( $pair ), 2 ), 2 , null ); if ( $key !== '' && $value !== null ) { $result [ $key ] = $value ; } } return $result ; } /** Current secret first, previous one kept during rotation. */ private function secrets (): array { return array_filter ([ config ( 'services.payments.webhook_secret' ), config ( 'services.payments.webhook_secret_previous' ), ]); } } A few details matter here: hash_equals() is a timing-attack-safe comparison. A plain === can leak, through response timing, how many leading characters matched. The PHP manual also asks you to pass the user-supplied value as the second argument. The timestamp check is your replay protection. A captured request is useless after five minutes because its signature covers the timestamp. Supporting two secrets lets you rotate the key without downtime: deploy the new secret as primary, keep the old one as previous , update the provider, then remove the old one. Step 3: register the route outside the CSRF-protected group Providers can't send a CSRF token. Put the route in routes/api.php , which is stateless and doesn't belong to the web middleware group. On Laravel 11 and later, php artisan install:api creates that file and applies the /api prefix. <?php use App\\Http\\Controllers\\PaymentWebhookController ; use App\\Http\\Middleware\\VerifyWebhookSignature ; use Illuminate\\Support\\Facades\\Route ; Route :: post ( '/webhooks/payments' , PaymentWebhookController :: class ) -> middleware ( VerifyWebhookSignature :: class ); If you must keep it in web.php , exclude the URI from CSRF verification in bootstrap/app.php as described in the CSRF page of the docs for your Laravel version (the method name changed in recent releases, so check the version you run). Step 4: store first, process later The controller has one job: record the event and answer quickly. Heavy work in the request is the root cause of most duplicate events, because the provider times out, assumes failure and retries. <?php namespace App\\Http\\Controllers ; use App\\Jobs\\ProcessWebhookEvent ; use App\\Models\\WebhookEvent ; use Illuminate\\Database\\UniqueConstraintViolationException ; use Illuminate\\Http\\JsonResponse ; use Illuminate\\Http\\Request ; class PaymentWebhookController { public function __invoke ( Request $request ): JsonResponse { $payload = json_decode ( $request -> getContent (), true ); if ( ! is_array ( $payload ) || empty ( $payload [ 'id' ]) || empty ( $payload [ 'type' ])) { return response () -> json ([ 'error' => 'Invalid payload' ], 422 ); } try { $event = WebhookEvent :: create ([ 'provider' => 'payments' , 'event_id' => ( string ) $payload [ 'id' ], 'type' => ( string ) $payload [ 'type' ], 'payload' => $payload , ]); } catch ( UniqueConstraintViolationException ) { // Already received. Answer 200 so the provider stops retrying. return response () -> json ([ 'status' => 'duplicate' ]); } ProcessWebhookEvent :: dispatch ( $event ); return response () -> json ([ 'status' => 'queued' ]); } } Two things to notice. First, the duplicate check is the database insert itself. A \"check if exists, then insert\" approach has a race condition when two retries arrive at the same millisecond; the unique index doesn't. Second, a duplicate returns 200 , not an error. If you answer 4xx or 5xx to a duplicate, many providers will keep retrying it. The model is minimal: <?php namespace App\\Models ; use Illuminate\\Database\\Eloquent\\Model ; class WebhookEvent extends Model { protected $fillable = [ 'provider' , 'event_id' , 'type' , 'payload' , 'processed_at' , 'last_error' ]; protected function casts (): array { return [ 'payload' => 'array' , 'processed_at' => 'datetime' , ]; } } Step 5: an idempotent job Queues retry too. The job must be safe to run twice, so it locks the row and checks processed_at inside a transaction: <?php namespace App\\Jobs ; use App\\Models\\WebhookEvent ; use Illuminate\\Contracts\\Queue\\ShouldQueue ; use Illuminate\\Foundation\\Queue\\Queueable ; use Illuminate\\Support\\Facades\\DB ; use Throwable ; class ProcessWebhookEvent implements ShouldQueue { use Queueable ; public function __construct ( public WebhookEvent $event ) {} public function tries (): int { return 5 ; } public function handle (): void { DB :: transaction ( function () { $event = WebhookEvent :: whereKey ( $this -> event -> getKey ()) -> lockForUpdate () -> first (); if ( $event === null || $event -> processed_at !== null ) { return ; // Already handled by another worker or attempt. } match ( $event -> type ) { 'payment.succeeded' => $this -> markInvoicePaid ( $event -> payload ), 'payment.refunded' => $this -> registerRefund ( $event -> payload ), default => null , // Unknown types are stored, not failed. }; $event -> update ([ 'processed_at' => now (), 'last_error' => null ]); }); } public function failed ( ?Throwable $exception ): void { $this -> event -> update ([ 'last_error' => $exception ?-> getMessage ()]); } private function markInvoicePaid ( array $payload ): void { // Your domain logic. Keep it idempotent as well: // \"set status to paid\" is safe to repeat, \"add amount to balance\" is not. } private function registerRefund ( array $payload ): void { // ... } } The comment in markInvoicePaid is the real lesson. Prefer operations that set a state (\"invoice is paid\") over operations that accumulate (\"add 100 to balance\"). If you must accumulate, write a ledger row keyed by the event ID so a repeat insert fails on a unique index. Step 6: test it with a real signature Signature code that is never tested will break the first time someone \"cleans up\" the middleware. Build the raw body yourself and sign exactly that string: <?php namespace Tests\\Feature ; use Illuminate\\Foundation\\Testing\\RefreshDatabase ; use Illuminate\\Support\\Facades\\Queue ; use Tests\\TestCase ; class PaymentWebhookTest extends TestCase { use RefreshDatabase ; public function test_valid_event_is_stored_once (): void { Queue :: fake (); config ([ 'services.payments.webhook_secret' => 'test-secret' ]); $body = json_encode ([ 'id' => 'evt_123' , 'type' => 'payment.succeeded' ]); $t = time (); $sig = hash_hmac ( 'sha256' , $t . '.' . $body , 'test-secret' ); $server = [ 'CONTENT_TYPE' => 'application/json' , 'HTTP_X_SIGNATURE' => \"t= { $t } ,v1= { $sig } \" , ]; $this -> call ( 'POST' , '/api/webhooks/payments' , [], [], [], $server , $body ) -> assertOk () -> assertJson ([ 'status' => 'queued' ]); $this -> call ( 'POST' , '/api/webhooks/payments' , [], [], [], $server , $body ) -> assertOk () -> assertJson ([ 'status' => 'duplicate' ]); $this -> assertDatabaseCount ( 'webhook_events' , 1 ); } public function test_tampered_body_is_rejected (): void { config ([ 'services.payments.webhook_secret' => 'test-secret' ]); $t = time (); $sig = hash_hmac ( 'sha256' , $t . '.{\"id\":\"evt_1\"}' , 'test-secret' ); $this -> call ( 'POST' , '/api/webhooks/payments' , [], [], [], [ 'CONTENT_TYPE' => 'application/json' , 'HTTP_X_SIGNATURE' => \"t= { $t } ,v1= { $sig } \" , ], '{\"id\":\"evt_2\"}' ) -> assertStatus ( 401 ); } } Common pitfalls Verifying a re-encoded body. json_encode(json_decode($body)) can change whitespace, key order or escaping, and the signature won't match. Always sign $request->getContent() . Comparing with === . Use hash_equals() . No timestamp check. Without it, a signed request is valid forever. Doing the work in the request. Slow responses cause provider retries, which cause duplicates. Store, queue, answer. \"Exists? then insert\" instead of a unique index. It works in development and fails under concurrent retries. Answering duplicates with an error. Return 200 so the provider stops. Failing on unknown event types. Store them and move on; providers add new types without asking you. Secrets in code. Keep them in environment variables, read through config() , and plan for rotation. Summary A reliable webhook receiver is less about clever code and more about order of operations: verify the raw body with a timing-safe HMAC check, reject stale timestamps, record the event behind a unique index, answer fast, and let an idempotent queued job do the real work. In ERP and invoicing systems, where one duplicate can mean a double payment or a wrong stock level, these few dozen lines are some of the most valuable you'll write. What's the strangest webhook behavior you've seen from a provider in production?",
+            "url": "https://dev.to/developertugrul/receiving-webhooks-in-laravel-without-getting-burned-signatures-replay-protection-and-idempotency-2c1k",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "git",
+                "php",
+                "programmation",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-10-29T12:00:02+00:00",
+            "collected_at": "2026-10-29T12:02:33.829467+00:00"
+        },
+        {
+            "id": "9b295378941cb856b594e5eb3b520953f7bb6f543329b355546a056e23b29098",
+            "title": "Python wrote 19.944444444444446 and the model billed 7 tokens for it",
+            "description": "You want a model to look over a day of sensor readings and flag anything odd. One reading a minute is 1,440 rows, and you write them out with Python's csv module, the obvious way. That file is 49,723 tokens. The same information fits in 17,287. The other 32,436 tokens are digits that either repeat on every row or mean nothing. The model reads digits three at a time You pay per token , a short chunk of text the model reads as one piece. Input tokens are what you send, output tokens are what it writes back, and each has its own price per million. A tokenizer is the program that does the cutting. I used tiktoken, OpenAI's open-source one, with its o200k_base encoding. For numbers the rule is mechanical: digits are cut into groups of up to three, left to right. 19.94 is three tokens: 19 , . , 94 . 19.944444444444446 is seven: 19 , . , 944 , 444 , 444 , 444 , 446 . That second number is what Python gives you for (67.9 - 32) * 5 / 9 , a Fahrenheit reading converted to Celsius. A floating-point number is stored in binary, most decimal fractions can't be stored exactly, and Python prints the shortest form that reads back to the same value, often 17 digits. str() , f-strings, csv.writer and json.dumps all print that full form. The sensor measured to 0.1 °F, so four digits carry the measurement and thirteen are leftovers of arithmetic. The timestamps cost more than the readings I built one synthetic day: a greenhouse sensor, one row per minute, three columns. Temperature is the converted reading above. Humidity is the average of three whole-number samples, which is where 50.666666666666664 comes from. Timestamps are isoformat() strings with microseconds, as datetime.now() produces them. Then I counted the file four ways. What you send, 1,440 rows Tokens Per row Saved csv.writer default 49,723 34.5 — Values rounded to 2 decimals 40,327 28.0 19% Timestamps as HH:MM , values as is 26,683 18.5 46% Both 17,287 12.0 65% I expected the long floats to be the problem. They're the smaller half. The timestamp column alone is 28,799 tokens, 58% of the file. 2026-10-22T00:00:00.670487+00:00 is 19 tokens, and 16 of them are a date and timezone that repeat on every row plus seconds and microseconds that only record when the logger woke up. 00:00 is 3 tokens. That long form is ISO 8601 , the standard date-time format, and it's the right choice for storage. In a prompt where every row shares one date, it's a tax. Rounding to one decimal buys nothing With short timestamps in place, I tried rounding harder. One, two and three decimals all came out at exactly 17,287 tokens. That's the three-digit rule again: 19.9 , 19.94 and 19.944 are each 19 , . and one more token. I checked all 1,110 digit strings of length one to three, and every one is a single token. The fourth decimal is where the next token starts. So one decimal only costs you data. Two decimals kept all 96 distinct temperatures in the file. One decimal merged them into 53, because 0.1 °C is coarser than the sensor's 0.1 °F. The rule: round to the precision your source has, and don't expect tokens back below three decimals. To check, count distinct values before and after rounding. If the count drops, you rounded away a measurement. Shorten the rows before the call Save your readings the way your code writes them and run python compact_csv.py readings.csv . It expects an ISO timestamp in the first column and numbers in the rest: import csv , sys , tiktoken # pip install tiktoken from datetime import datetime DECIMALS = 2 # the precision your data really has; 1-3 cost the same tokens src = open ( sys . argv [ 1 ], encoding = \" utf-8 \" ). read () header , * rows = csv . reader ( src . splitlines ()) first = datetime . fromisoformat ( rows [ 0 ][ 0 ]) lines = [ f \" # { first : % Y -% m -% d } { first : % Z } , time is HH:MM \" , \" , \" . join ( header )] for ts , * values in rows : hhmm = f \" { datetime . fromisoformat ( ts ) : % H : % M } \" lines . append ( \" , \" . join ([ hhmm ] + [ str ( round ( float ( v ), DECIMALS )) for v in values ])) compact = \" \\n \" . join ( lines ) tok = tiktoken . get_encoding ( \" o200k_base \" ). encode print ( f \" { len ( tok ( src )) : , } tokens as written, { len ( tok ( compact )) : , } compact \" ) print ( lines [ 0 ], lines [ 2 ], sep = \" \\n \" ) It writes the date and timezone once in a header line, keeps hours and minutes, rounds the values and prints both counts. On my test file it prints 49,723 tokens as written, 17,302 compact ; the header line is the 15 tokens over the table. The compact variable is what you send. Now the bill. Say ten sensors, each checked every hour against its last 24 hours: 240 calls a day, each with a 41-token instruction and an answer of about 200 tokens. Prices are gpt-5.6's list prices, $2 per million input tokens and $12 per million output, from the catalog of the LLM gateway I work on, read on 23 October 2026. As written, a call costs $0.10 and the month $734. Compact, it's $0.037 a call and $267 a month. Input is 98% of the first bill, so the answer length barely matters here. On gpt-5.6-mini, ten times cheaper, the month is $73 against $27. What this doesn't solve Rounding destroys information when the digits are real: money (keep the cents, and keep money out of floats altogether), GPS coordinates, where the fifth decimal is about a metre, or lab measurements. HH:MM only works while the window sits inside one day and one timezone. A window across midnight needs the date where it changes, or minutes since the window start. The data is synthetic, one simulated sensor, and the counts come from tiktoken, not from an API's usage field. Claude and Gemini use their own tokenizers, so count yours with your vendor's token counter. Sending min, max and mean computed in code is cheaper still, though then the model no longer sees each reading. The gateway sells gpt-5.6 at $1.70 / $10.20, 15% under list, which makes the two monthly bills $624 and $227. It bills the tokens you send, digits included, and rounds nothing for you. The takeaway The tokenizer can't tell a measurement from arithmetic noise, and it bills both. Write the date once and round to the precision you have, and a day of readings costs a third of what Python's defaults send.",
+            "url": "https://dev.to/altrouter/python-wrote-19944444444444446-and-the-model-billed-7-tokens-for-it-23dn",
+            "source": "DEV Community",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "anthropic",
+                "developpement",
+                "gemini",
+                "git",
+                "llm",
+                "openai",
+                "programmation",
+                "python",
+                "web"
+            ],
+            "published_at": "2026-10-29T12:00:02+00:00",
+            "collected_at": "2026-10-29T12:02:33.830226+00:00"
+        },
+        {
+            "id": "704cbbe5295d9da21ed3086aee55204629f2e10d30ea9dace8c179c0ca8cbe11",
+            "title": "Attackers turn GitHub issues into supply chain campaign against 61 public repos in less than an hour",
+            "description": "'The workflow automatically is triggered within a second, and if the workflow is indeed vulnerable, then the attack is executed successfully'",
+            "url": "https://www.theregister.com/security/2026/10/29/attackers-turn-github-issues-into-supply-chain-campaign-against-61-public-repos-in-less-than-an-hour/5306153",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "git",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-10-29T12:00:00+00:00",
+            "collected_at": "2026-10-29T12:02:32.065022+00:00"
+        },
+        {
+            "id": "3d8de04332086f2780dff051a7ccd79cc263aa60f7878fc16a1a1f32e50398a8",
+            "title": "ISO 20022 Meets Real-Time Rails: Vladyslav Kolodistyi on Data-Rich Instant Payments Across Borders",
+            "description": "Domestic payments have changed beyond recognition in a decade. In much of the world, payments now move between bank accounts in seconds, day and night. Cross-border payments have not kept up, and their payment data often arrives incomplete. Cross-border payments from Madrid to Manila can still take days and pass through several banks. I'm Vladyslav Kolodistyi, and I believe the next big step is linking those fast domestic rails to each other, with ISO 20022 as the shared language. Three facts frame the opportunity: Many modern instant payment systems, including SEPA Instant in Europe and FedNow in the United States, already run on ISO 20022. Swift ended the coexistence of MT and ISO 20022 for cross-border payment instructions in November 2025, so the correspondent world now speaks the same standard. The G20 wants 75% of retail cross-border payments credited within an hour by the end of 2027, a goal that instant rails could help reach. Why instant cross-border payments are still rare If both sides already run instant systems, why can a customer not send money abroad as fast as at home? Because the systems behind cross-border payments were built for their own country. Each has its own rules, currency, participants and hours. Connecting them for cross-border payments means solving questions of FX conversion, liquidity, compliance and liability, not just ISO 20022 message formats. Progress on the wider goals has been slow. The Financial Stability Board's 2025 progress report on the G20 roadmap found only slight global improvement in the cost and speed of cross-border payments since 2023, and judged the 2027 targets unlikely to be met in full. Linking fast payment systems for cross-border payments is one of the priority actions in that roadmap. “Instant payments at home and slow payments abroad is a contradiction the industry can no longer defend to customers.” Vladyslav Kolodistyi What ISO 20022 solves, and what it does not A shared message standard removes one big barrier. When two instant systems both use ISO 20022, payment data for cross-border payments can pass from one to the other without translation. Names, addresses, purpose codes and remittance details arrive in the same fields they left. Nothing gets truncated, and compliance teams on both sides screen the same payment data. What ISO 20022 does not solve for cross-border payments is everything else. Someone still has to convert currency at a fair rate. Someone has to hold liquidity in both systems. Both countries' regulators have to agree on sanctions and AML obligations. The ISO 20022 standard makes those arrangements easier to build. It does not build them. A comparison of selected rails, prepared by Vladyslav Kolodistyi: SEPA Instant is the most advanced example of instant cross-border payments at scale. A transfer from Portugal to Finland in euros settles in seconds, carrying full ISO 20022 payment data, with Verification of Payee checks before it leaves. Europe solved the currency question by sharing one, and the payment data question by sharing a standard. Liquidity and FX: the hard part The toughest problems in instant cross-border payments are not about data at all. A link between two instant systems needs someone to convert currency at the moment of payment and to hold enough liquidity on both sides, around the clock. Weekends and holidays make cross-border payments harder, because traditional FX markets slow down while instant systems keep running. Several models are emerging: settlement institutions that hold accounts in both systems, FX providers that quote rates in real time and central bank arrangements between neighbouring countries. Each model depends on ISO 20022 to carry the FX rate, the fees and the parties with every one of those cross-border payments, so the sender sees the full cost before confirming. Note from Vladyslav Kolodistyi: transparency on FX is where instant links can beat traditional cross-border payments most clearly. When the rate and fees travel as structured ISO 20022 payment data, the customer knows the exact amount that will arrive. “The rail can be instant. The FX still has to be fair. ISO 20022 is how both facts reach the customer before they press send.” Vladyslav Kolodistyi B2B payments on real-time rails Consumer cross-border payments get the headlines, but I expect B2B payments to gain the most from instant cross-border payments. Businesses care about certainty in their payments: knowing that a supplier is paid, that goods can ship and that cash is where the treasurer expects it. Instant settlement of payments with rich ISO 20022 payment data delivers all three. The payment data part matters as much as the speed. A business payment that arrives in seconds but carries only a cryptic reference still needs someone to reconcile it. Payments that arrive in seconds with structured payment data, invoice numbers and amounts included, can post themselves. For finance teams, that combination is the real prize. “Speed without data gets the money there faster and leaves the finance team just as confused. ISO 20022 brings the context along with the cash.” Vladyslav Kolodistyi Remittances on instant rails Remittances may benefit even faster than B2B payments. Many remittance corridors end in countries with modern instant systems, where a recipient can receive money on a phone within seconds. The slow part is the journey between the sending and receiving countries. Linking the two instant systems with ISO 20022 payment data removes most of that journey and several fees along with it. For families, the difference is concrete: payments that arrive the same minute, with the full amount and the exchange rate shown before sending. For providers, lower costs per transfer make smaller cross-border payments viable. “A remittance that arrives in seconds, in full, with the rate known upfront is what the G20 promised. Instant links with ISO 20022 can deliver it.” Vladyslav Kolodistyi Data quality becomes urgent Instant payments leave no time for repair of payment data. In a correspondent chain for cross-border payments, a bank can pause a payment, fix a field and send it on. In an instant system, a payment with bad ISO 20022 payment data is simply rejected. That makes data quality at the source more important than ever. The Swift address rule shows the direction. From 14 November 2026, fully unstructured postal addresses will be rejected in cross-border payments on the network. Swift's update on the next ISO 20022 milestones sets out the details. Instant links for cross-border payments will demand the same ISO 20022 discipline, only faster. What banks and fintechs should do now Preparation advice from Vladyslav Kolodistyi: treat ISO 20022 payment data quality as a prerequisite for instant cross-border payments, not a later clean-up. Structure customer addresses, capture ultimate parties and validate fields before submission. Test how your fraud and sanctions controls perform on instant timelines. And watch the regional linkage projects closest to your corridors, because the first live links will reward the institutions ready to join them. Compliance in seconds Instant cross-border payments also compress compliance on payment data. Sanctions screening and fraud checks on payments must finish in seconds, not hours. That is only realistic when ISO 20022 payment data is structured, so screening engines match names to names and countries to countries without false alerts that need human review. Card payments reached the same conclusion from the other direction. Issuers abroad approve more card-on-file transactions when a network token brings assurance data along with the credential, a point I covered for Socialnomics in a piece on tokenisation and the recurring revenue leak . On instant rails, structured ISO 20022 fields do that job for every account-to-account transfer. Europe's Instant Payments Regulation offers one model. It shifts sanctions checks for instant euro payments to daily screening of customers rather than real-time screening of every transfer, and it adds Verification of Payee before each payment. Similar ideas may shape future links between instant systems for cross-border payments in other regions. “Instant rails do not remove compliance. They force it to run on clean data, because there is no time left for anything else.” Vladyslav Kolodistyi Outlook from Vladyslav Kolodistyi: the next few years will bring more links between instant systems, first within regions and then between them. ISO 20022 will not be the headline of those launches, but it will be the reason they work. Banks and businesses that clean their payment data now will be ready to use them from day one. Final thought from Vladyslav Kolodistyi: fast rails are ready. The payment data has to catch up. I'm Vladyslav Kolodistyi, and I write about instant payments, ISO 20022 and cross-border payments. Say hello on LinkedIn if you are building or using real-time rails.",
+            "url": "https://dev.to/vladyslav_kolodistyi/iso-20022-meets-real-time-rails-vladyslav-kolodistyi-on-data-rich-instant-payments-across-borders-oci",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-10-29T12:00:00+00:00",
+            "collected_at": "2026-10-29T12:02:33.831467+00:00"
+        },
+        {
+            "id": "898c2f1960e3baef658f0ade9ad41d4acb04a86a6444292d86470169b6cddf75",
+            "title": "Target-Size Video Compression Is Just Division: The Bitrate Math (With Real Results)",
+            "description": "Disclosure: I work on CompressVid , an online video compressor. The numbers below are from our own test runs, recorded while making tutorial videos. I've noted which figures come from the tool's UI and which are my own arithmetic. \"Compress this video to 24 MB\" sounds like a fuzzy, magic request. It isn't. Because a compressed video's size is almost entirely set by its bitrate , a target size is just a bitrate budget, and you get the budget by dividing. The one formula file size (bits) ≈ (video bitrate + audio bitrate) × duration + container overhead Rearrange it, and a size target becomes a bitrate target: video bitrate ≈ (target bytes × 8) / duration − audio bitrate To keep the arithmetic simple, this post uses 1 MB = 1,000,000 bytes and 1 Mbps = 1,000,000 bits/s. CompressVid actually displays sizes in binary megabytes (MiB, 1,048,576 bytes, about 4.9% bigger), so the true bitrates of the files below are roughly 5% higher than the figures in the table. The ratios and conclusions don't change. The MB/MiB gap matters when a limit is hard, though, and it's one reason to leave headroom. A worked example in JavaScript // Returns the average video bitrate (kbps) needed to hit a target size. function videoBitrateForTarget ({ targetMB , durationSec , audioKbps = 128 , overheadPct = 2 }) { const usableBits = targetMB * 1 e6 * 8 * ( 1 - overheadPct / 100 ); const totalKbps = usableBits / durationSec / 1000 ; return Math . max ( 0 , Math . floor ( totalKbps - audioKbps )); } videoBitrateForTarget ({ targetMB : 24 , durationSec : 30 }); // ≈ 6143 kbps videoBitrateForTarget ({ targetMB : 24 , durationSec : 45 }); // ≈ 4053 kbps videoBitrateForTarget ({ targetMB : 96 , durationSec : 180 }); // ≈ 4053 kbps The 2% overhead and 128 kbps audio here are assumptions for illustration. Real overhead depends on the container and the stream count. Look at the last two calls: a 24 MB target for 45 seconds and a 96 MB target for 3 minutes give the same bitrate budget. Size limits are really bits-per-second limits in disguise. A longer clip under the same cap simply gets fewer bits for every second. With ffmpeg, the classic way to spend a budget precisely is two-pass encoding: ffmpeg -y -i in .mp4 -c :v libx264 -b :v 4053k -pass 1 -an -f mp4 /dev/null ffmpeg -i in .mp4 -c :v libx264 -b :v 4053k -pass 2 -c :a aac -b :a 128k out.mp4 What actually happened on real files Here are four runs from our tests. Input and output sizes are as the tool reported them. Bitrates are my own division, using size × 8 / duration . Input Target Output Input avg bitrate Budget Output avg bitrate 135.95 MB, 30 s, 1080p60 MOV 24 MB 7.48 MB ~36.3 Mbps ~6.4 Mbps ~2.0 Mbps 65.05 MB, 45 s, 1080p MP4 24 MB 21.08 MB ~11.6 Mbps ~4.3 Mbps ~3.7 Mbps 185.24 MB, 3:00, 1080p MP4 96 MB 32.08 MB ~8.2 Mbps ~4.3 Mbps ~1.4 Mbps 185.24 MB, 3:00, 1080p MP4 \"70% smaller\" (55.6 MB) 23.86 MB ~8.2 Mbps ~2.5 Mbps ~1.1 Mbps The 45-second clip used about 88% of its budget. The iPhone MOV used about 31%. Same tool, same target, very different outcomes. Why? The target is a ceiling, not a goal A size target is a maximum . Modern encoders don't pad a file just to reach a number. In quality-driven modes (CRF in x264/x265, or a capped CRF with -maxrate / -bufsize ), the encoder spends bits only where the picture needs them: Phone footage is over-provisioned. The 1080p60 MOV started at ~36 Mbps, a bitrate chosen so the phone can encode in real time with little effort. A slower encoder can describe the same scene in far fewer bits, so it never needed the 6.4 Mbps it was allowed. Content complexity decides the rest. Static or slow-moving shots compress very well. Lots of motion, grain or fine texture eats bits. The 45-second clip sat much closer to its ceiling. Same input, different targets, both under. The 3-minute file landed at 32.08 MB with a 96 MB cap and at 23.86 MB with a 55.6 MB cap. Both runs stayed at 1080p and kept the full 3:00. If you're building this yourself, a robust pattern is: compute the bitrate ceiling from the target, then let a quality-based rate control work beneath it. Pure CBR or ABR will hit the number more literally, but it wastes bits on easy footage and can starve hard scenes. Why you still need headroom Even with the maths right, the final file can overshoot slightly: Container overhead (MP4 moov index, per-sample tables) grows with duration and frame count. Rate control isn't exact. Single-pass ABR can drift by a few percent, and VBV buffers allow short bursts. MB vs MiB confusion , as described above. We learned this the hard way. An early build produced 20.58 MB from a 19 MB target . That has since been fixed, and the reason presets like \"19 MB\" for a 20 MB limit or \"24 MB\" for 25 MB exist at all is to leave a margin for exactly these effects. My rule of thumb: aim about 5% under any hard limit. Takeaways Target size ÷ duration = bitrate budget. Subtract audio and overhead, and you have your video bitrate. Equal budgets can hide behind different-looking limits (24 MB for 45 s ≈ 96 MB for 3 min). Treat the target as a ceiling. Good encoders often finish well under it, especially on high-bitrate phone footage. Always leave headroom for container overhead and rate-control drift. If you want to watch the ceiling-versus-result behaviour on your own clips without writing any ffmpeg, the CompressVid video compressor lets you type a target size and shows input and output sizes side by side. I'd be curious how close your footage gets to its budget. Drop your numbers in the comments.",
+            "url": "https://dev.to/compressvid/target-size-video-compression-is-just-division-the-bitrate-math-with-real-results-4ff6",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "ios",
+                "java",
+                "javascript",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-10-29T12:00:00+00:00",
+            "collected_at": "2026-10-29T12:02:33.832243+00:00"
+        },
+        {
+            "id": "b292de80ebcdff82507986e5ee98f5029d6dbd43e1b75467d27b3551d514f4e4",
+            "title": "The Theater of Work",
+            "description": "When the appearance of progress replaces progress itself. A working day has a recognizable shape in many companies. Meetings happen. Tickets move. Documents get reviewed. People present updates, discuss priorities, and prepare the next plan. Some of this structure is necessary. People need to coordinate, make decisions, and understand what others are doing. But I think there is a point where the recognizable shape of work starts to replace its purpose. The calendar is full. The board is active. Everyone has something to report. And yet it can be surprisingly difficult to explain what has become better for the customer, what problem the business has resolved, or what important uncertainty the organization has reduced. Activity becomes easy to see. Its connection to an outcome becomes difficult to follow. The more I think about this, the more some organizations start to resemble a theater. People have roles, scripts, and familiar ways of demonstrating competence. The engineer discusses technical complexity. The manager discusses priorities. The architect discusses the target state. The team presents progress. But understanding how to perform a role is different from understanding why that role exists. Somebody can know exactly what belongs in a planning document while having little understanding of the decision it is supposed to improve. Somebody can know how to conduct a meeting without knowing what needs to be resolved in it. The procedure gives the activity a shape while allowing its purpose to remain undefined. Performing the procedure can be a safe way to demonstrate participation. There is something to deliver, something to discuss, and something to point to afterward. Actual impact is often more uncomfortable. A customer might not need what we planned to build. The problem might be different from the one described in the ticket. An investigation might show that an impressive initiative is unnecessary. There is uncertainty in doing useful work. There can be much less uncertainty in producing the expected evidence of work. Imagine a company discovering that new customers struggle to complete their first useful action in its product. The interface might be confusing. An integration might be failing. The product might ask for information customers do not have. The promise made during the sale might not match what the application actually does. The useful work begins with understanding which of those things is happening. Somebody needs to observe the experience, examine failures, and speak with the people involved. Then the company can decide what to change and find out whether it helps. But the organization can also generate an enormous amount of activity without getting much closer to the problem. A group prepares a roadmap. Another reviews the technical direction. A working group defines a new process. Teams estimate their part of a solution before the cause is clear. The initiative acquires a name, a presentation, and a reporting schedule. The customer can still be stuck at exactly the same point. Planning and coordination can be useful. Sometimes they are the most valuable things somebody can do. Their value depends on what they help us understand, decide, prevent, or change. Software provides plenty of opportunities to lose that connection. We can spend months discussing the internal structure of a system without establishing what it needs to accomplish. We can introduce layers, services, frameworks, and conventions because they are recognizable signs of professional engineering. They can be useful, but they can also give us an intellectually satisfying problem to work on while the business problem remains unresolved. The architecture becomes something we can defend. The outcome remains something we have not tested. Consider a company that refuses to accept a pull request with more than five hundred changed lines. The intention might be reasonable: keep changes focused and make reviews manageable. But line count is only one signal of review difficulty. A large mechanical update can be straightforward to inspect, while a few lines changing an important business rule can require considerable care. When the threshold becomes an absolute requirement, a coherent change may have to be split into dependent pull requests. Explanations are repeated, and reviewers have to reconstruct behavior across changes that belong together. Splitting work into independently understandable and safe steps can be valuable. Splitting it solely to satisfy a counter can make the complete change harder to review. Compliance is easy to demonstrate. Every pull request stays within the limit. But the original purpose was a better review, and the number alone cannot tell us whether we achieved one. I also think it would be too easy to explain the theater as individual laziness. Organizations can teach conscientious people to behave this way. If recognition depends on visible activity, polished communication, and adherence to approved procedures, people learn to produce those things. If questioning an initiative creates more personal risk than delivering its next update, continuing the performance can become the safer choice. The incentives matter. So does the authority people actually have. A person assigned a narrowly defined task may have no access to customers, no ability to change the priority, and no permission to question the proposed solution. Expecting that person to own the entire business outcome while keeping every meaningful decision elsewhere creates another performance: the appearance of accountability without the conditions required to exercise it. Leadership has a responsibility here. People need enough context to understand the problem, enough authority to make relevant decisions, and enough feedback to learn whether their work helped. There is also a difference between distributing work and distributing responsibility until it becomes impossible to locate. A decision can pass through several groups and receive several approvals. But agreement among participants does not establish that it serves the business. If the result disappoints, the same chain of approvals can make it difficult to find anyone responsible for learning from it. Everyone did their part. The problem remains. Large organizations do need controls. A review can prevent an expensive mistake. Documentation can preserve knowledge. Coordination can keep groups from creating incompatible solutions. Maintaining reliable infrastructure can protect value without producing a new feature every week. I think that makes judgment more important. We should be able to explain the risk a review addresses, the decision a meeting enables, or the dependency a process manages. An activity that exists primarily because it has always been part of the script deserves examination. Business impact also includes contributions that are not immediately visible. Reducing failures, making a product accessible, preserving customer trust, and learning that a planned investment would be wasteful can all matter. Immediate revenue is an incomplete measure of useful work. Even when the result is difficult to measure, we can make the intended contribution explicit and examine what we learn. An unsuccessful experiment can change what the organization understands. A successful presentation can leave everything important unchanged. Stopping work can be progress too. Discovering that an initiative is unnecessary, removing a meeting that no longer enables a decision, or simplifying a process can all make an organization more effective. But an organization that only recognizes additions will keep producing things to add. In earlier posts, I wrote about architecture becoming disconnected from the constraints and trade-offs it should serve. I think the same pattern can exist in the organization around the software. Processes become foundations. Roles become identities. Templates become obligations. Maintaining the structure becomes a considerable part of the work. People can work very hard to keep that structure running. The exhaustion is real. The effort is real. That can make it harder to notice how little opportunity people have to understand what their effort is supposed to achieve. I think a healthier organization makes the connection easier to follow. People can explain the problem, why it matters, what they are trying to change, and how they will learn whether the change helped. Meetings resolve things. Documents preserve useful decisions. Roles help people take ownership of something beyond performing the role itself. Work does not have to be spectacular to matter. Sometimes the useful result is a small correction, a prevented failure, or a clearer understanding of what to do next. But there should be a connection between the effort and the purpose. A company can become very good at performing work. The harder achievement is making that work mean something outside the performance.",
+            "url": "https://dev.to/rodrigovidal/the-theater-of-work-36hi",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "intel",
+                "programmation",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-10-29T12:00:00+00:00",
+            "collected_at": "2026-10-29T12:02:33.833266+00:00"
+        },
+        {
+            "id": "1fb831fb8c3243d422562c7851e01775f7c3d7beb92516a1e00c68f53dfd5e2d",
+            "title": "Cookies et application mobile : sanctions de 7 millions d’euros à l’encontre des sociétés FNAC DARTY PARTICIPATIONS ET SERVICES et FNAC DIRECT",
+            "description": "Le 22 octobre 2026, la CNIL a sanctionné les sociétés FNAC DARTY PARTICIPATIONS ET SERVICES et FNAC DIRECT d’une amende de 7&nbsp;millions d’euros pour non-respect des règles applicables en matière de traceurs (cookies).",
+            "url": "https://www.cnil.fr/fr/sanction-cookies-app-fnac",
+            "source": "CNIL",
+            "category": "reglementation",
+            "tags": [
+                "cnil",
+                "rgpd",
+                "vie-privee"
+            ],
+            "published_at": "2026-10-29T12:00:00+00:00",
+            "collected_at": "2026-10-29T12:02:49.911337+00:00"
+        },
+        {
+            "id": "44ada7c60584ad0f3bda830f450990c182e5d59c458d39bb909496543e8846d8",
+            "title": "Atlassian MCP Server Permissions vs Data Security Policy",
+            "description": "Someone on the Atlassian Community asked a simple question this month. How do you let people use Claude with Jira and Confluence, but keep it read-only, without touching anybody's project permissions? That thread had 205 views on 29 October, and the older Read-only scopes in MCP server has 6,346. MCP (Model Context Protocol) is how AI tools like Claude plug into other apps. Atlassian runs its own MCP server for Jira and Confluence. You do it with Atlassian MCP server permissions, on the Permissions tab. It was the Rovo MCP server until this autumn, so you'll still see that name around. We switched off the Jira write toolset on our test org on 29 October 2026. Eighteen seconds later, an OAuth connection and an API-token connection both got Access denied: Your organization admin has not authorized the write_jira permission. There's a second control too, and this one costs money. Since 29 September there's an Atlassian MCP server rule in data security policies. It needs Atlassian Guard and blocks whole spaces, apps or classification levels, so it sounds like the stronger lock. We blocked one space, then the whole org. For 27 minutes our AI connections kept reading the \"blocked\" pages, and we nearly wrote that the policy does nothing. Then we pointed the same users at Atlassian's newer V2 endpoint, and the same searches came back empty. My take, from what we saw on our org: the Permissions tab decides what an AI tool can do, it comes with your org, and it held on both kinds of connection we tried. A data security policy decides what it can read, only for OAuth users, only on V2, and it costs Guard on top. Toolset blocks held on both connection types, the policy only on V2 Permissions aren't a per-app grid any more. It groups toolsets by permission type, and ours had 38 of them in five groups. Blocking write_jira stopped Jira writes over OAuth and API token within 18 seconds. Reads and Confluence writes carried on, and the write tools stayed in the tool list. API tokens have their own switch, and it was off. With it off, the connection opens and then the tool calls are refused. A classic API token without scopes only reaches four Teamwork Graph tools, and they fail. A scoped service-account key reached 31 tools. A Blocked data security policy hid content from OAuth searches on V2 (0 results) and didn't touch V1, which is deprecated but still answers. Guard Standard for 200 users lists at $870 a month. Guard Premium, which you only need for classification levels, is $1,710. Atlassian MCP server permissions live under Connectors, grouped by toolset In admin.atlassian.com, pick your organization, open Connectors in the sidebar, then Atlassian MCP server . You'll get three tabs: Domains , Permissions and Authentication . A lot of Community answers still say Rovo > Rovo MCP server. That path redirects to Connectors now. Atlassian's permissions doc has one sentence that matters if you used to manage this in Connected apps. Settings on this tab \"will take precedence over settings in Connected Apps or individual app permissions in Marketplace.\" Each row opens a side panel with its toolsets. Write had 16 on our org, from write_confluence and write_jira to newer ones tagged New, such as write_goals . Delete holds one. Atlassian's supported tools page says delete_jira \"is disabled by default\", and describes its deleteJiraIssue tool as \"Permanently delete an issue. Cannot be undone.\" Manage holds manage_jira , also off by default. \"Partially allowed\" in the docs reads \"15/16 allowed\" on the screen Atlassian's doc describes a state called Partially allowed, \"The setting is on for some permissions but not all\". I repeated that wording on the Community in August, when I warned that a Jira-only block leaves the Write row reading Partially allowed. On our org there's no such label today. Block one toolset and the row says \"Write 15/16 allowed\", and the New toolsets allowed badge disappears. My warning still stands, because a row that's mostly green can hide the one toolset you blocked (or forgot). But the words on screen are a count now, so look for the number. Watch the New toolsets setting, too. When you allow a permission type, new toolsets in it are granted automatically and \"won't require manual review by admins\". When we counted for our Team '26 Europe write-up on 8 October there were 36 toolsets. On 29 October we counted 38. Make the Atlassian MCP server read only: block Write toolsets, keep Read and Search If you want Claude, ChatGPT or Cursor to read and search but never change anything, do this: On the Permissions tab, click the Write row. Change Write toolsets from Allow all toolsets to Block all toolsets , or to Allow some toolsets if you want to pick. Untick Allow new write toolsets , so a write toolset Atlassian adds next month doesn't arrive switched on, and click Save changes . There's no confirmation dialog. Save applies it. We tested the partial version because it's the one people get wrong: write_jira off, everything else on. Access denied: Your organization admin has not authorized the write_jira permission We saved at 02:33:45 UTC. At 02:34:03 an addCommentToJiraIssue call from a scoped API token came back with this: {\"error\":true,\"message\":\"Access denied: Your organization admin has not authorized the write_jira permission.\"} createJiraIssue got the same text eight seconds later. Then we ran an OAuth connection (the way ChatGPT and Claude.ai connect) and the API token side by side, and both got identical errors. Atlassian's doc gives the general form, \"Access denied: Your organization admin has not authorized the [permission name] permission\", and its FAQ quotes \"Access denied: Your organization admin has not authorized the write permission.\" If a user pastes you either version, this tab is where to look. Jira reads still worked ( getJiraIssue ), which is what you want. A Confluence footer comment still went through, because write_confluence is a separate toolset. And the write tools were still in the list the AI client sees, so your users will watch their assistant try and fail. Atlassian says changes \"take effect immediately\". Our first call after blocking, 13 to 18 seconds after Save, was already refused. After we allowed it again, a call at 18 seconds still failed and one at 54 seconds worked. Atlassian MCP API token connections have their own switch The Authentication tab starts with \"Users connect to the Atlassian MCP server with OAuth 2.1 by default.\" Below it, Allow API token authentication was off on our org, and so was Allow enterprise managed authentication . We couldn't find an Atlassian page that says API tokens are off by default. Atlassian only says the method \"is only available if enabled by your organization admin\". Off is what we found, and a Community member reported the same on their Standard org. You don't have permission to connect via API token With the switch off, the MCP handshake still worked and the tool list still came back. But each tool call returned You don't have permission to connect via API token. Please ask your organization admin for access. So a developer who says it connects fine but nothing works has probably hit this switch. Once we switched it on, the kind of token mattered a lot. A classic personal API token, one without scopes, saw only four Teamwork Graph tools. Calling one failed with Teamwork Graph tools require a modern API token (API token with scopes). Legacy API tokens without scopes are not supported. A scoped personal token wanted an emailed verification code first, so we made a service account instead. Its scoped key listed 31 tools either way, but the calls only worked with Authorization: Bearer . Sent as Basic auth, our calls failed with Failed to fetch accessible products: 401 . It's an all-or-nothing switch. You can't allow tokens for one pipeline and not for everyone else, and ECO-1445 asks for that (\"if API tokens are allowed for MCP, any user can create a token and use it\"). It had 2 votes. Token connections also skip the Domains allowlist. The settings doc says they \"are instead governed by your IP allowlist configuration and the scopes granted to their tokens or API keys.\" Prevent Atlassian MCP server access to sensitive spaces: the data security policy needs Guard The second control lives somewhere else: Atlassian Administration > Security > Data protection > Data security policy . In that list you'll find the Atlassian MCP server next to Export data, Public links, Anonymous access and app access. The 29 September changelog entry says admins \"can govern how external AI tools read and write Jira and Confluence data using MCP, with org-wide defaults and overrides scoped by Atlassian apps, spaces, and classification levels.\" The support doc for the rule is narrower than that announcement. It only talks about reading: \"It only prevents covered content from being read through the Atlassian MCP server.\" And its second paragraph says \"Data security policies are enforced only for OAuth authentication methods, not API token authentication methods.\" The rule needs Guard Standard, and blocking by classification level needs Guard Premium. Our piece on what an Atlassian data security policy blocks, and what needs Guard has the plan matrix for the other rules. Atlassian MCP V1 vs V2: the policy held only on V2, and we tested V1 first Our first try went like this. We blocked one Confluence space, HELP, at 02:40 UTC and kept a second space, PEOPLE, as the control. Then we polled a page in HELP every minute, as the admin over OAuth and with the service account's API token. It came back for 17 minutes straight, including on a fresh OAuth token issued 14 minutes after we activated the rule. So we set the whole org to Blocked at 03:00 and polled again for 10 minutes. Still nothing was blocked. We didn't want to write \"the policy does nothing\" off one admin account, so we set the org back to Blocked at 03:22 and ran it again as Elzi, a test user on our org with no admin rights. Same result on V1, for 18 minutes. Then we noticed the replies carried a deprecation notice. Our V1 endpoint, mcp.atlassian.com/v1/mcp , says \"status\": \"deprecated\" with \"sunsetAt\": \"2027-03-01T00:00:00Z\" and points to mcp.atlassian.com/v2/mcp . V2 is a separate OAuth resource, so you need a new login for it. At 03:39 and 03:40 UTC, 17 to 18 minutes after that activation, we logged Elzi and the admin in against V2. Fetching the PEOPLE home page came back with getConfluenceContent failed: 404 and a NOT_FOUND code. The admin's getJiraIssue for a Jira issue in our test project said Issue \"LZPT-186\" not found . A Confluence search for space = PEOPLE returned \"totalSize\":0 , and a JQL search for the project returned an empty list. Seconds later, on V1, the admin's old token still read both pages. At 03:42, after we set the policy back to Allowed, the same PEOPLE fetch and search returned the page for both users, and the admin's JQL search listed the project's issues. So V2 does block. Your users just won't see the word blocked. The doc warns that an agent \"receives a \"does not exist or you don't have permission\" response\", and what we got reads like a missing page, so your users will think the content isn't there. Atlassian's V1 to V2 upgrade doc says \"On March 1 2027 any existing utilization of v1 will automatically start to expose and utilize v2 tools.\" Until then, anyone whose client still talks to V1 reads straight past the policy. The Permissions tab, which we tested on V1, held there. We didn't re-test it on V2, so check it there after your clients move. We didn't see a way to turn V1 off for an org, and we didn't find one in the docs either. Our API-token calls all went to V1 as well, so they don't tell you much about the policy, because OAuth wasn't blocked on V1 either. The exemption for API tokens is Atlassian's own statement, and we didn't test tokens on V2. To see which endpoint a tool uses, look at the server URL in its connector settings. Anything with /v1/ in the path ( /v1/mcp , /v1/sse , /v1/mcp/authv2 ) is V1, and /v2/mcp is V2. The upgrade doc says existing Claude installs of V1 \"will become \"Custom Web\" connectors\". What ChatGPT, Claude and Cursor can read and write through the Atlassian MCP server Under all of this, the user's own permissions still decide what an AI tool sees. Atlassian's policy doc puts it plainly for the Allowed setting: \"The user's existing permissions control what the AI agent can access.\" An assistant connected as Elzi reads what Elzi's account can read, and with Write allowed it can change what that account can change. Over OAuth, the Domains tab decides which tools may connect. \"Allow Atlassian supported domains\" was on for us, and Atlassian's domain list had 45 entries on 29 October, including chatgpt.com, claude.ai, vscode.dev, cursor://cursor.mcp , localhost and 127.0.0.1. You can't pick from that list (\"You can only allow or block the entire domain list\"). You either keep it or switch it off and add your own domains. A client we registered ourselves, with a localhost redirect, went straight through consent, which fits with localhost being on the list. If you switch the list off, re-test the tools your developers run locally. Your users will see two consent screens. The first says the client \"is requesting to be authorized on Atlassian Rovo MCP server\" and lists the apps it wants, Compass included. Then a second screen asks them to choose a site and lists scopes such as View and Update jira-work. Our access token lasted about 7.9 hours. A refresh token came with it. For evidence afterwards, Atlassian's monitoring doc says each tool call goes to the organization audit log with \"the tool name, action, and user who performed it\", on all tiers. For API tokens it warns that calls \"may run under a service account or technical user\". That's one more reason to keep tokens off unless a pipeline needs them. What Guard costs a 200-person company for the second control On 29 October the Guard pricing page listed Guard Standard at $4.35 per user per month and Guard Premium at $8.55, monthly billing, in US dollars. For 200 users: Plan Per user / month 200 users / month 200 users / year (annual tier) Guard Standard (policies, app and space overrides) $4.35 $870 $8,700 Guard Premium (adds classification levels) $8.55 $1,710 $17,100 The yearly figures are the 101-200 user tier in the page's own price data. Matching each tier to its plan is my reading of that data, so check your quote. Guard Standard comes with Atlassian Cloud Enterprise \"at no additional cost\". Guard also bills everyone with an account in your org, free accounts too, unless you put them in a non-billable policy. Our earlier Guard article quoted $4.20 and $8.18. The Standard price list on the page now is dated 13 October 2026. If you'd buy Guard mainly to keep AI tools out of a few spaces, weigh $870 a month against what the free Permissions tab already does. On our org the policy didn't cover V1, and Atlassian's own doc says it never covers API tokens. A default for a 200-person company: Read on, Write off, sensitive spaces blocked If it were my org, I'd start here: Leave Read and Search on, but untick the allow-new-toolsets box in the Read and Search panels. In the Write panel it's labelled Allow new write toolsets. Your people will use ChatGPT and Claude with Jira anyway, and this way it's logged and runs on their own permissions. Block Write, then allow back what a team asks for. When the developers want Jira comments from Cursor, turn on write_jira and leave the rest off. Delete and Manage stay blocked, as they start, because deleteJiraIssue can't be undone. Keep API tokens off unless a named pipeline needs one. Then give it a service account with a scoped key and put your IP allowlist in front of it. If you already have Guard , add the MCP rule for your HR and finance spaces. Test it from a normal user's seat over OAuth on V2, and wait the full 10 minutes before you trust it. Check the audit log a week later for \"Atlassian MCP User Actions\", to see which tools people really call. Where the native controls stop You can't block a single tool. You can switch off write_jira , but not just the worklog tool inside it, and ROVO-1143 asking for that had 3 votes. You can't limit API tokens per user either (ECO-1445 above). And the data security policy covers only Atlassian's own server: the doc lists \"Access through custom MCP servers\" among the things it doesn't affect. If you're connecting other sources to Rovo as well, our piece on the Rovo SharePoint connector's permissions covers what that one reads. We ran all of this on our own test org, with Guard Premium on a trial, and put the settings back afterwards. If your org shows something different, I'd love to know, especially which endpoint your users' tools are on. Have you blocked writes for AI tools yet, or are you waiting until someone asks? Originally published on leanzero.net . More Atlassian, Forge and local-AI write-ups at leanzero.net/blog , and if you're planning a migration or a Forge app, that's what we do: leanzero.net/services .",
+            "url": "https://dev.to/mihai_leanzero/atlassian-mcp-server-permissions-vs-data-security-policy-129",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "anthropic",
+                "csharp",
+                "developpement",
+                "openai",
+                "programmation",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-10-29T11:59:17+00:00",
+            "collected_at": "2026-10-29T12:02:33.835189+00:00"
+        },
+        {
+            "id": "33b8e2a28ae49a607aff7ed202440293aa42bf6c846104647aaf8d2ae26b8cd5",
+            "title": "Les trois obligations du NIS2 que tout le monde minimise",
+            "description": "NIS2 : les trois obligations que tout le monde minimise Vous avez lu le texte. Vous avez coché les cases. Votre déclaration de conformité est prête. Et pourtant, dans six mois, votre audit révélera des failles que ni vous ni votre CISO n'aviez identifiées. Qu'est-ce qui a échappé au radar ? Le NIS2 n'est pas une checklist. C'est une mutation de notre rapport à la cybersécurité, et trois de ses exigences sont systématiquement sous-estimées — pas par ignorance technique, mais parce qu'elles heurtent nos habitudes organisationnelles. Je les ai vues passer au travers chez des acteurs pourtant avertis, des infrastructures critiques aux opérateurs de services essentiels. Voici ce que le décret belge d'octobre 2024 rend incontournable, et pourquoi cela change tout. La gouvernance, pas la technique Première illusion : penser que la sécurité opérationnelle suffit. Le NIS2 exige une gouvernance à trois niveaux — direction, CISO, et management — avec une responsabilité personnelle des dirigeants en cas d'incident majeur. Ce n'est plus une question de budget IT. C'est une question de culture du risque au conseil d'administration. J'ai assisté à des réunions où la cybersécurité tenait quinze minutes en fin d'ordre du jour. Ce temps est révolu. L'article 20 impose une supervision active, des ressources dédiées, et une formation continue. Le décret belge précise : absence de mesures = responsabilité pénale des mandataires. Votre CA est-il prêt à signer une attestation de prise de conscience ? La chaîne logistique, pas votre périmètre Deuxième angle mort : vos fournisseurs. Le NIS2 étend l'obligation de sécurité à toute la chaîne de valeur. Vos sous-traitants, vos hébergeurs cloud, vos éditeurs de logiciels — vous devez en garantir la résilience. Dans mon environnement, cela prend une forme concrète. Mon GPU local, une RTX 4070 Ti de 12 Go, héberge des services critiques via Ollama et LiteLLM. Aucun cloud externe pour l'inférence sensible. Mais mes conteneurs Docker ? Ils tirent des images de registres que je ne contrôle pas. Ma base vectorielle Qdrant ? Je dois en vérifier les mises à jour de sécurité comme je le ferais pour un équipement réseau. Le NIS2 me rend responsable de cette chaîne, même lorsque je déploie en interne. Le décret belge parle d'évaluation des risques liés aux relations de fourniture. Traduction opérationnelle : inventorier, classer, contractualiser, vérifier. Combien d'entreprises ont une cartographie complète de leurs dépendances tierces ? L'incident, pas l'attaque Troisième mécompréhension : confondre détection d'intrusion et gestion d'incident. Le NIS2 impose des obligations de notification strictes — 24 heures pour l'alerte initiale, 72 heures pour le rapport détaillé, un mois pour le rapport final. Ces délais sont irréductibles. Mais le vrai défi n'est pas bureaucratique. Il est organisationnel. Avez-vous testé votre chaîne de crise ? Vos procédures d'escalade fonctionnent-elles un samedi soir ? Votre CISO peut-il joindre votre hébergeur cloud à 3 heures du matin ? Je gère mon infrastructure domestique comme un laboratoire de résilience. Whisper sur CPU pour l'OCR, paperless-AI pour la classification, un auto-classifieur de Gmail — chaque service a un propriétaire, une procédure de secours, un temps de récupération cible. À l'échelle d'une entreprise, cette discipline est rare. Le NIS2 l'impose. L'Europe contre elle-même ? Une tension traverse le décret belge : ambition européenne, réalité nationale. La transposition laisse une marge d'interprétation que les États membres exploitent différemment. L'Allemagne durcit. La France précise. La Belgique ? Elle crée un cadre, mais la mise en œuvre opérationnelle reste en construction. Nous préférons éviter les vérités inconfortables : le NIS2 coûte cher, demande des compétences rares, et expose juridiquement ceux qui ne s'y conformeraient pas. L'ANSSI belge, reconfigurée en Centre de Cybersécurité, manque de moyens pour accompagner. Les entreprises moyennes, elles, manquent de CISO. Et pourtant, c'est maintenant. La période de transition se rétrécit. Les premières sanctions — jusqu'à 1% du chiffre d'affaires mondial — ne sont plus théoriques. À nous de jouer Qu'est-ce qui bloque chez vous ? La gouvernance, la chaîne logistique, ou la réactivité incident ? Chacun de ces trois leviers demande des ressources, du temps, une culture du risque que nos organisations n'ont pas cultivée. Mais le NIS2 a aussi une vertu : il oblige à la clarté. Plus d'excuses, plus de déni. La cybersécurité devient un sujet de direction, de stratégie, de survie. Parler. Partager. Confronter. Comment avancez-vous sur ces trois fronts ? Originally published at articles.savethemall.eu . 🤖 Written with AI assistance, reviewed and approved before publication. Editorial responsibility: Frédéric Guariento. How it works",
+            "url": "https://dev.to/analogique/les-trois-obligations-du-nis2-que-tout-le-monde-minimise-55d",
+            "source": "DEV Community",
+            "category": "cybersecurite",
+            "tags": [
+                "developpement",
+                "docker",
+                "llm",
+                "nvidia",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-10-29T11:59:17+00:00",
+            "collected_at": "2026-10-29T12:02:33.835772+00:00"
+        },
+        {
+            "id": "71f6ace31bb2b54b892f60dcbe46f8174c8f4e083ae59d4337870ac431ca2616",
+            "title": "NetBSD adds a new beginner-friendly text editor called atto",
+            "description": "Comments",
+            "url": "https://mastodon.sdf.org/@netbsd/117518160563539748",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-10-29T11:58:00+00:00",
+            "collected_at": "2026-10-29T12:02:33.586767+00:00"
+        },
+        {
+            "id": "7de21dd1342f4bb56d1912f8dc61c4285886d6e54847da3fbd5cbcc9f2814dcd",
+            "title": "Score a huge $1,250 saving on this Alienware gaming PC with an RTX 5070 Ti and 32GB DDR5 right now — big Newegg price drop means you can grab this 4K-ready rig with a 24-core Intel CPU and 1TB SSD for $2,599.99",
+            "description": "You can save $1,250 on this Alienware Aurora gaming PC with an RTX 5070 Ti and 32GB of DDR5 RAM, now priced at just $2,599.99.",
+            "url": "https://www.tomshardware.com/desktops/gaming-pcs/score-a-huge-usd1-250-saving-on-this-alienware-gaming-pc-with-an-rtx-5070-ti-and-32gb-ddr5-right-now-big-newegg-price-drop-means-you-can-grab-this-4k-ready-rig-with-a-24-core-intel-cpu-and-1tb-ssd-for-usd2-599-99",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "intel",
+                "nvidia",
+                "pc"
+            ],
+            "published_at": "2026-10-29T11:55:45+00:00",
+            "collected_at": "2026-10-29T12:02:36.449949+00:00"
+        },
+        {
+            "id": "ee93db176d788bddba719536b23eadff313824e61206055d7dd35aed58a8a5eb",
+            "title": "Garmin Messenger is placing too much trust in SMS verification, and this might not end well",
+            "description": "Your old chats might not be gone when your phone number is reassigned.",
+            "url": "https://www.androidauthority.com/garmin-messenger-recycled-phone-number-privacy-risk-3729560/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "rust",
+                "smartphone"
+            ],
+            "published_at": "2026-10-29T11:52:06+00:00",
+            "collected_at": "2026-10-29T12:02:42.706958+00:00"
+        },
+        {
+            "id": "78935e875a1690d35e0d4a1b5df4c052156969b711d6feff4f761afe6a1dfa6a",
+            "title": "Google Builds Crypto Custody Security Platform for Banks",
+            "description": "Google has introduced a multi-party computation platform designed to help banks and financial institutions secure cryptocurrencies and tokenized assets without storing a complete private key in one place. Google MPC Splits Crypto Keys to Reduce Single-Point Failure Google is moving deeper into crypto infrastructure, this time by tackling one of institutional investors’ biggest concerns: who […]",
+            "url": "https://news.bitcoin.com/security/google-builds-crypto-custody-security-platform-for-banks/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-10-29T11:45:46+00:00",
+            "collected_at": "2026-10-29T12:02:51.630035+00:00"
+        },
+        {
+            "id": "f6d00e3db5ccb0bcdd18e588e252149873e96eeeb76d59abe0f4386bb2ed9c79",
+            "title": "Syrinx: A censorship-resistant communications platform",
+            "description": "You can see a demo here: https://syx.var0.xyz/ You'll need the server's public key to access it: -----BEGIN PGP PUBLIC KEY BLOCK----- xjMEauMlLxYJKwYBBAHaRw8BAQdAtfhhdbSSUVmzgZgSak2OlJwLDOsdhqlPvQW2 riMb+XrNCFhVNk5Gdktmwr0EExYIAG8FgmrjJS8CCwcJEMOqN5gwW3VjNRQAAAAA ABwAEHNhbHRAbm90YXRpb25zLm9wZW5wZ3Bqcy5vcmc9BlGpsOfW/mrcw2NeuF2S AhUIAhYAAhkBApsDAh4BFiEEZByTKLjN5CQxL/yQw6o3mDBbdWMAAM5hAPwNuf3/ whkTFcBtZo+jZVmRE6xNfU+i4ZPX/KE4aY1QTAD+Mt2w/UG0d3yU5AzoytbQfu13 SKYR2TZ0SG/k8WraJgnOOARq4yUvEgorBgEEAZdVAQUBAQdASloHQrKU+YwSzoEB w/JOfxcY97pn2oDBe/N6ng8L3SIDAQoJwq4EGBYIAGAFgmrjJS8JEMOqN5gwW3Vj NRQAAAAAABwAEHNhbHRAbm90YXRpb25zLm9wZW5wZ3Bqcy5vcmc5DlseP1BwxD6/ GK/AHtyiApsMFiEEZByTKLjN5CQxL/yQw6o3mDBbdWMAAN86AP0eEbXH7QGtG8l8 7uw88zqr1Ua1sh+yHT2m4nAmligT0wEA7WBp5AshaIeIG7fE94smRDzT9h7JXEzW gXcGm1RcQwY= =v+fX -----END PGP PUBLIC KEY BLOCK----- Comments",
+            "url": "https://var0xyz.github.io/syrinx/",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "5g",
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-10-29T11:44:45+00:00",
+            "collected_at": "2026-10-29T12:02:33.586883+00:00"
+        },
+        {
+            "id": "82b8035be55238c5005039cc3f7949789b97a5736ae37bb55ddd9123a116dea1",
+            "title": "Fujifilm plans 5x production boost of 100TB magnetic storage tapes driven by skyrocketing AI storage demand — $63 million injection is the largest investment in tape for 20 years",
+            "description": "Fujifilm plans to increase the production of magnetic tape by as much as 5x as it works to meet a newfound demand for AI data center storage.",
+            "url": "https://www.tomshardware.com/tech-industry/data-centers/fujifilm-plans-5x-production-boost-of-100tb-magnetic-storage-tapes-driven-by-ai-usd63-million-injection-is-the-largest-investment-in-tape-for-20-years",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "pc"
+            ],
+            "published_at": "2026-10-29T11:40:00+00:00",
+            "collected_at": "2026-10-29T12:02:36.450047+00:00"
+        },
+        {
+            "id": "1604c64fe7f881836149ec2b39d1a94e0a95b34d6fa8c30980aa1c328a990508",
+            "title": "Save $234 on 32GB of DDR5 RAM with this 3-item AM5 Newegg bundle",
+            "description": "This Newegg AM5 combo deal is $234 off. Priced at only $1,069, you get a Ryzen7 9800X3D, X870E Aorus Elite Wifi7 board, 32GB of G.Skill DDR5-6000 RAM and a free MSI AIO cooler.",
+            "url": "https://www.tomshardware.com/pc-components/save-usd234-on-32gb-of-ddr5-ram-with-this-four-item-am5-newegg-bundle-score-g-skill-trident-z5-neox-ram-the-venerable-ryzen-7-9800x3d-processor-gigabyte-x870e-aorus-elite-wifi7-motherboard-and-a-free-240mm-aio-for-only-usd1-069",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "amd",
+                "cpu",
+                "gpu",
+                "hardware",
+                "pc",
+                "wifi"
+            ],
+            "published_at": "2026-10-29T11:31:57+00:00",
+            "collected_at": "2026-10-29T12:02:36.450113+00:00"
+        },
+        {
+            "id": "6dd8d3a1fa342090a299123913c5fc71fe760b0446d82fbdf557bc81d765b174",
+            "title": "7 Android settings I always turn off on my Google Pixel phone",
+            "description": "My Pixel is so much better this way.",
+            "url": "https://www.androidauthority.com/always-disable-these-google-pixel-settings-3727587/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-10-29T11:30:26+00:00",
+            "collected_at": "2026-10-29T12:02:42.707018+00:00"
+        },
+        {
+            "id": "0a14b4446137eeee731f346ce67c7f172a9a442648276b7a7aed78eebefddedf",
+            "title": "Anthropic’s IPO filing shows most of its compute goes to R&D, not serving customers",
+            "description": "Anthropic’s S-1 splits its $8.9 billion H1 compute bill: most went to R&D, with less than a third estimated to serve Claude customers.",
+            "url": "https://www.tomshardware.com/tech-industry/artificial-intelligence/anthropics-ipo-filing-shows-most-of-its-compute-goes-to-r-and-d-not-serving-customers-company-details-massive-usd800-billion-in-tpu-and-gpu-contracts",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "anthropic",
+                "cpu",
+                "gpu",
+                "hardware",
+                "pc"
+            ],
+            "published_at": "2026-10-29T11:30:00+00:00",
+            "collected_at": "2026-10-29T12:02:36.450193+00:00"
+        },
+        {
+            "id": "5a2838ac9b8e01cfb21aff15b5a61afd8647931db87d5277b25af61cd49d5176",
+            "title": "An Urgent Message on Artificial Intelligence from the Kogui People",
+            "description": "Comments",
+            "url": "https://sonidoselva.com/perspectiva-kogui",
+            "source": "Hacker News",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "intel",
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-29T11:29:49+00:00",
+            "collected_at": "2026-10-29T12:02:33.482808+00:00"
+        },
+        {
+            "id": "0293163764e5a74a48cf47fb4edb7e9b68fdf21172eb5b2520e4b219edafad44",
+            "title": "LibreOffice's 'no AI' stance meets LLM-assisted code",
+            "description": "Core developers avoid AI coding assistants, while community contributors face disclosure and review rules",
+            "url": "https://www.theregister.com/ai-and-ml/2026/10/29/libreoffices-no-ai-stance-meets-llm-assisted-code/5306084",
+            "source": "The Register",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "llm",
+                "technologie"
+            ],
+            "published_at": "2026-10-29T11:29:00+00:00",
+            "collected_at": "2026-10-29T12:02:32.065084+00:00"
+        },
+        {
+            "id": "ec885a99b3decbb14dc145d50b60d85c3c86b4c799732a88e35c4933f3680f07",
+            "title": "This beefy Android handheld quietly got a gigantic, 10,000mAh battery",
+            "description": "The MANGMI Pocket Max might be the new battery king in the handheld space.",
+            "url": "https://www.androidauthority.com/mangmi-pocket-max-10000mah-battery-3729563/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-10-29T11:23:41+00:00",
+            "collected_at": "2026-10-29T12:02:42.707073+00:00"
+        },
+        {
+            "id": "8491748c911f3e756516a1d1bd9f2e3c2aa9f50d97960b08a0b25bc4d8dbee65",
+            "title": "Fake PS5 emulators are being used to steal gamers' passwords — two well-known GitHub repos, including popular AnyPS5, get hit, infecting gamers' computers with password-scraping malware",
+            "description": "Malware disguised as two popular PS5 game emulators, distributed via GitHub, has been identified as stealing passwords from unsuspecting gamers.",
+            "url": "https://www.tomshardware.com/tech-industry/cyber-security/fake-ps5-emulators-are-being-used-to-infect-gamers-computers-with-password-scraping-malware-two-well-known-github-repos-including-anyps5-hit",
+            "source": "Tom's Hardware",
+            "category": "cybersecurite",
+            "tags": [
+                "cpu",
+                "git",
+                "gpu",
+                "hardware",
+                "malware",
+                "pc"
+            ],
+            "published_at": "2026-10-29T11:20:00+00:00",
+            "collected_at": "2026-10-29T12:02:36.450264+00:00"
+        },
+        {
+            "id": "6a3ccd1ab0126cfcb123812f4f145cf314e3610d83a73aaa1b3ea5f69d369e54",
+            "title": "Show HN: UK Farming Simulator",
+            "description": "Comments",
+            "url": "https://butterbean.farm/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-29T11:15:59+00:00",
+            "collected_at": "2026-10-29T12:02:33.482392+00:00"
+        },
+        {
+            "id": "92091c4dadf2077326a637b9e9c02f8390fd0f9f8fe240b193ef1d4f8e640f5e",
+            "title": "Bitcoin drops to $80,000 on Fed dissent, Samsung, Alphabet earnings; AI tokens slump",
+            "description": "",
+            "url": "https://www.coindesk.com/markets/2026/10/29/bitcoin-drops-to-usd80-000-on-fed-dissent-samsung-alphabet-earnings-ai-tokens-slump",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-10-29T11:11:48+00:00",
+            "collected_at": "2026-10-29T12:02:51.268405+00:00"
+        },
+        {
+            "id": "9e6d32503d8c89a9281a0e30d1c77a4ceffef9226fc7306c6275811af1f279a2",
+            "title": "NYSE owner takes steps to bring Hyperliquid perpetual futures to U.S.",
+            "description": "",
+            "url": "https://www.coindesk.com/markets/2026/10/29/nyse-owner-takes-steps-to-bring-hyperliquid-perpetual-futures-to-u-s",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-10-29T11:11:25+00:00",
+            "collected_at": "2026-10-29T12:02:51.268460+00:00"
+        },
+        {
+            "id": "4665f17a8f062865003b59a120dbc818a2841d6b16ef3ec11717c4ccf891c1a5",
+            "title": "New Cisco firewall zero-day exploited to crash SSL VPN devices",
+            "description": "Cisco released security updates to patch a denial-of-service zero-day in Adaptive Security Appliance (ASA) and Threat Defense (FTD) software that attackers are exploiting to remotely crash vulnerable firewall devices. [...]",
+            "url": "https://www.bleepingcomputer.com/news/security/cisco-warns-of-firewall-zero-day-exploited-to-crash-ssl-vpn-devices/",
+            "source": "BleepingComputer",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "malware",
+                "ransomware",
+                "zero_day"
+            ],
+            "published_at": "2026-10-29T11:10:13+00:00",
+            "collected_at": "2026-10-29T12:02:29.085147+00:00"
+        },
+        {
+            "id": "ed1a9bdd37cc4fc630f35fdf31d0eb26ad88f6e55e9126248f7ac252ad7c2614",
+            "title": "JetBrains Academy – October Digest",
+            "description": "Hello, October isn’t quite done yet! A few late arrivals made the cut, and they’re too good to hold onto until November. Inside: A free frontend event about AI, a free way to practice reviewing agent-written code, our first Coursera specialization, and three full-stack Python courses. * Applies to Junie Lite configuration, after signing in […]",
+            "url": "https://blog.jetbrains.com/education/2026/10/29/jetbrains-academy-october-2026/",
+            "source": "JetBrains",
+            "category": "web",
+            "tags": [
+                "ide",
+                "jetbrains",
+                "programmation",
+                "python"
+            ],
+            "published_at": "2026-10-29T11:07:29+00:00",
+            "collected_at": "2026-10-29T12:02:33.060242+00:00"
+        },
+        {
+            "id": "388b742dd4dab737e76598b02251ba7d7b884c29279179ecb6f0d85b8bfaf81f",
+            "title": "I hope the Motorola Signature 27 is great, but I have 2 big concerns I can’t shake",
+            "description": "I love the hardware, but I need real update commitments and a sane price before buying in.",
+            "url": "https://www.androidauthority.com/motorola-signature-27-software-updates-price-concerns-3728019/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-10-29T11:00:48+00:00",
+            "collected_at": "2026-10-29T12:02:42.707146+00:00"
+        },
+        {
+            "id": "68cc7bf957fbb593d576d3b50887279d7547b6f5333a4d9a0d7f75b53ef4db92",
+            "title": "Hackers Steal 2.6 Million Records From Sony’s Japanese ISP So-net",
+            "description": "The data of So-net and Plala customers in Japan was exposed, along with 54,401 email account passwords and 16 bank account records. The post Hackers Steal 2.6 Million Records From Sony’s Japanese ISP So-net appeared first on SecurityWeek .",
+            "url": "https://www.securityweek.com/hackers-steal-2-6-million-records-from-sonys-japanese-isp-so-net/",
+            "source": "SecurityWeek",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "security",
+                "vulnerabilites"
+            ],
+            "published_at": "2026-10-29T11:00:00+00:00",
+            "collected_at": "2026-10-29T12:02:29.949959+00:00"
+        },
+        {
+            "id": "56f2ab6ea2cc985a432b2c09365c41e66cbb44406e8a6d34995ea6b3368e47b9",
+            "title": "Traces of new Pi hardware spotted in GitHub",
+            "description": "A new Pi Zero 3 W and Pi 4 Model A seen lurking in the repository",
+            "url": "https://www.theregister.com/personal-tech/2026/10/29/traces-of-new-pi-hardware-spotted-in-github/5306022",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "git",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-10-29T11:00:00+00:00",
+            "collected_at": "2026-10-29T12:02:32.065138+00:00"
+        },
+        {
+            "id": "c1c3becbb64fc1a6dfe01b7512719c00e151d9939ad8330f978e904b0621af63",
+            "title": "Man granted first-of-its-kind religious exemption against mandatory AI use at work",
+            "description": "A research administrator at the University of Kentucky was granted a Title VII exemption, allowing them to not use AI tools as it goes against their moral beliefs.",
+            "url": "https://www.tomshardware.com/tech-industry/artificial-intelligence/secular-humanist-gets-religious-exemption-from-using-ai-argues-that-offloading-his-thinking-to-llms-violates-his-beliefs-american-humanist-association-says-its-the-first-case-of-its-kind",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "pc"
+            ],
+            "published_at": "2026-10-29T11:00:00+00:00",
+            "collected_at": "2026-10-29T12:02:36.450328+00:00"
+        },
+        {
+            "id": "cbbf7dc01733ba5b9a22e469b4fc1a45ab9a3f62c6e1ced60a283aeb42387447",
+            "title": "Cathie Wood’s ARK buys the dip on Robinhood in its largest purchase in 6 months after 23% slump",
+            "description": "",
+            "url": "https://www.coindesk.com/markets/2026/10/29/cathie-wood-s-ark-buys-the-dip-on-robinhood-in-its-largest-purchase-in-6-months-after-23-slump",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-10-29T10:51:10+00:00",
+            "collected_at": "2026-10-29T12:02:51.268521+00:00"
+        },
+        {
+            "id": "a404182a58d89989641c11c1d43d4b986f79a84aa6bf0a182f801a61b68b1a34",
+            "title": "Pokémon Legends: Z-A's Latest Mystery Gift Distribution Is Now Live",
+            "description": "Spewpa Duper. The catchily-titled ' Pokémon Legends: Z-A - Nintendo Switch 2 Edition + Mega Dimension ' releases today, and to mark the occasion, The Pokémon Company has launched a new Mystery Gift distribution in the game. This one is all about Spewpa and its multi-coloured evolution. Those who redeem the Mystery Gift via the internet between today (29th October) and 19th November at 1:59am UTC will redeem one of the adorable little caterpillar Pokémon for free. But this Spewpa is a special one, since it can evolve into one of 16 different Vivillon patterns that aren't currently available in the Z-A base game. Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/news/2026/10/pokemon-legends-z-as-latest-mystery-gift-distribution-is-now-live",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-10-29T10:45:00+00:00",
+            "collected_at": "2026-10-29T12:02:49.281752+00:00"
+        },
+        {
+            "id": "1317db1f3d0b587d0adea27d5493904b7198abd08e1026d2672125ff50902433",
+            "title": "The US added a record 20.2 GWh of battery storage in just 3 months",
+            "description": "Comments",
+            "url": "https://electrek.co/2026/08/31/the-us-added-a-record-20-2-gwh-of-battery-storage-in-just-3-months/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-29T10:44:49+00:00",
+            "collected_at": "2026-10-29T12:02:33.482127+00:00"
+        },
+        {
+            "id": "79d9d3f0f5615700c51616218059bf2fdd0f6415c6cbfbdfd857ab13cd5c70f7",
+            "title": "Solana wallet Solflare pledges to pay missed rewards on staked $160 million after validator goes offline",
+            "description": "",
+            "url": "https://www.coindesk.com/markets/2026/10/29/solana-wallet-solflare-pledges-to-pay-missed-rewards-on-staked-usd160-million-after-validator-goes-offline",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-10-29T10:44:48+00:00",
+            "collected_at": "2026-10-29T12:02:51.268571+00:00"
+        },
+        {
+            "id": "7d482c1bcf9fa313acb9e633e6f24c3333f3e150c7ee16dd31aae22a564e553b",
+            "title": "Cisco Patches Actively Exploited ASA and FTD VPN Flaw That Can Crash Firewalls",
+            "description": "Cisco has released patches to address a high-severity security flaw in Secure Firewall Adaptive Security Appliance (ASA) Software and Secure Firewall Threat Defense (FTD) Software that it said has been exploited in the wild. The vulnerability, tracked as CVE-2026-76418, is rated 8.6 on the CVSS scoring system. Successful exploitation could allow an unauthenticated, remote attacker to cause the",
+            "url": "https://thehackernews.com/2026/10/cisco-patches-actively-exploited-asa.html",
+            "source": "The Hacker News",
+            "category": "cybersecurite",
+            "tags": [
+                "cve",
+                "cybersecurite",
+                "hacking",
+                "vulnerabilites"
+            ],
+            "published_at": "2026-10-29T10:44:46+00:00",
+            "collected_at": "2026-10-29T12:02:29.261986+00:00"
+        },
+        {
+            "id": "51d60e7a1e33c71b3e3947f2168ffabe24232cfe1e67a648a5dab69dd3b8c354",
+            "title": "Live updates: Bitcoin clings to $80,000 as Samsung and Google tumble after earnings",
+            "description": "",
+            "url": "https://www.coindesk.com/business/2026/10/29/live-updates-bitcoin-clings-to-usd80-000-as-strategy-s-cushion-thins-before-earnings",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-10-29T10:41:39+00:00",
+            "collected_at": "2026-10-29T12:02:51.268617+00:00"
+        },
+        {
+            "id": "6a720936c4d4ac680ddba3784c4ec8d1524038d3f032844cf2639867a100edfb",
+            "title": "Prompts That Can Write Themselves: A Kotlin Experiment",
+            "description": "TL;DR Koog Agents Optimization Library is a research library developed by JetBrains Research for optimizing the prompts of Koog agents. With it, you write a first version of each instruction, mark the steps worth tuning, provide the library with a training set, and specify a way to score the agent’s output. The library then runs […]",
+            "url": "https://blog.jetbrains.com/research/2026/10/koog-agents-optimization-library-prompts/",
+            "source": "JetBrains",
+            "category": "developpement",
+            "tags": [
+                "ide",
+                "jetbrains",
+                "programmation"
+            ],
+            "published_at": "2026-10-29T10:32:37+00:00",
+            "collected_at": "2026-10-29T12:02:33.060352+00:00"
+        },
+        {
+            "id": "98b68407023158f601283f1be28569189d44b18702be19839016c15d491bd0bd",
+            "title": "The iPhone 18 Pro is the antithesis to Android’s AI era",
+            "description": "Apple might be behind Google in AI, but its approach to the iPhone 18 Pro is the one I actually want.",
+            "url": "https://www.androidauthority.com/iphone-18-pro-google-gemini-android-3724781/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "ios",
+                "smartphone"
+            ],
+            "published_at": "2026-10-29T10:30:56+00:00",
+            "collected_at": "2026-10-29T12:02:42.707211+00:00"
+        },
+        {
+            "id": "6fd955ca2b24555bafd8d9f75738b5de86c1c3cedc329454b70eba3e8aa8c258",
+            "title": "GitHub says massive influx of AI-generated code required extra 4 million CPU cores and 160 petabytes of storage to manage",
+            "description": "Agentic AI led to a sixfold year-on-year influx of new code at GitHub, leading the company to add 4 million CPU cores and 160PB of storage to its datacenters",
+            "url": "https://www.tomshardware.com/software/github-report-highlights-massive-influx-of-ai-generated-code-sixfold-increase-in-activity-over-one-year-required-extra-4-million-cpu-cores-and-160pb-of-storage",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "git",
+                "gpu",
+                "hardware",
+                "pc"
+            ],
+            "published_at": "2026-10-29T10:30:00+00:00",
+            "collected_at": "2026-10-29T12:02:36.450386+00:00"
+        },
+        {
+            "id": "12d9b8223a9161ef5095c7236d34ee4ea736c6856498d1f29a2774596fd92868",
+            "title": "Cisco SD-WAN Zero-Day Exploitation Tied to Volt Typhoon’s ‘Silent Train’ Network",
+            "description": "Cisco Talos linked SD-WAN key-stealing malware to infrastructure overlapping Volt Typhoon’s Silent Train network, which Lumen detailed. The post Cisco SD-WAN Zero-Day Exploitation Tied to Volt Typhoon’s ‘Silent Train’ Network appeared first on SecurityWeek .",
+            "url": "https://www.securityweek.com/cisco-sd-wan-zero-day-exploitation-tied-to-volt-typhoons-silent-train-network/",
+            "source": "SecurityWeek",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "malware",
+                "security",
+                "vulnerabilites",
+                "zero_day"
+            ],
+            "published_at": "2026-10-29T10:29:25+00:00",
+            "collected_at": "2026-10-29T12:02:29.950054+00:00"
+        },
+        {
+            "id": "193f5a35878b3318e2295579104063925d0f3e50d5e034da5f8b39d637bb391c",
+            "title": "GitHub Launches npm Firewall to Block Malicious Packages Before Installation",
+            "description": "GitHub has announced that it's introducing a new package firewall as a preview to block installation of suspicious npm packages during installation time. \"The firewall inspects both metadata requests and package downloads for signs of malicious activity, acting as an install-time policy gate,\" GitHub said. The feature, which currently supports only npm packages, is available in public preview",
+            "url": "https://thehackernews.com/2026/10/github-launches-npm-firewall-to-block.html",
+            "source": "The Hacker News",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "git",
+                "hacking",
+                "vulnerabilites"
+            ],
+            "published_at": "2026-10-29T10:26:33+00:00",
+            "collected_at": "2026-10-29T12:02:29.262086+00:00"
+        },
+        {
+            "id": "094f6f72d42251de336010c197391fbd9bcc53b8a35692b1b69c89cf6b6ec5a5",
+            "title": "Microsoft breaks New Outlook attachment opening with Edge Update",
+            "description": "Attachments in New Outlook come undone thanks to Windows' fundamental interconnectedness of things",
+            "url": "https://www.theregister.com/personal-tech/2026/10/29/microsoft-breaks-new-outlook-attachment-opening-with-edge-update/5306224",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "technologie",
+                "windows"
+            ],
+            "published_at": "2026-10-29T10:14:00+00:00",
+            "collected_at": "2026-10-29T12:02:32.065214+00:00"
+        },
+        {
+            "id": "32d69d7e6fd51a11d82013a026c4a65fbeb79da7148e874c1777b7177024760c",
+            "title": "We urgently need to monitor AI agents’ actions in real time",
+            "description": "This summer, hundreds of OpenAI agents tried to cheat on a cybersecurity test. They broke out of their test environment and successfully hacked Hugging Face, a site that they believed held clues about how they’d be graded. Around the same time, another OpenAI agent accessed private files from an Australian government website. It’s a problem…",
+            "url": "https://www.technologyreview.com/2026/10/29/1147824/monitor-ai-agents-actions-real-time/",
+            "source": "MIT Technology Review",
+            "category": "recherche_innovation",
+            "tags": [
+                "innovation",
+                "openai",
+                "recherche",
+                "science"
+            ],
+            "published_at": "2026-10-29T10:11:12+00:00",
+            "collected_at": "2026-10-29T12:02:50.202513+00:00"
+        },
+        {
+            "id": "af3c85ff155400aafb6f4b359904d9ccab92021d9ce27a035697c73fbbaba69f",
+            "title": "Thai Supreme Court rules bitcoin is property after thief challenges conviction",
+            "description": "",
+            "url": "https://www.coindesk.com/policy/2026/10/29/thai-supreme-court-rules-bitcoin-is-property-after-thief-challenges-conviction",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-10-29T10:04:36+00:00",
+            "collected_at": "2026-10-29T12:02:51.268684+00:00"
+        },
+        {
+            "id": "edb882eb921b41b20eba50a79fb716f5b86f5400d5df63e4f9ff0861a50ea524",
+            "title": "I’ve tested plenty of chargers, but this is the one staying on my desk",
+            "description": "Love at first watt? Apparently, yes.",
+            "url": "https://www.androidauthority.com/baseus-picogo-pro-100w-gan-charger-3722018/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-10-29T10:00:25+00:00",
+            "collected_at": "2026-10-29T12:02:42.707269+00:00"
+        },
+        {
+            "id": "730953813f947d1df9d6f101d84fcea6e9170db931ef39cfafaa3b1ad517af11",
+            "title": "Shadowy AI Relay Disables OpenAI Codex, Claude Code Sandboxes",
+            "description": "The enigmatic service is providing popular AI coding tools to mainland China and other regions where OpenAI and Anthropic products are not officially for sale — but with key security features turned off.",
+            "url": "https://www.darkreading.com/threat-intelligence/ai-relay-service-openai-codex-claude-code-sandboxes",
+            "source": "Dark Reading",
+            "category": "cybersecurite",
+            "tags": [
+                "anthropic",
+                "cybersecurite",
+                "enterprise-security",
+                "openai"
+            ],
+            "published_at": "2026-10-29T10:00:00+00:00",
+            "collected_at": "2026-10-29T12:02:29.851461+00:00"
+        },
+        {
+            "id": "91071756db1c218e7384c0f8c008635efe766a3a9f95a470cbe13eaeb2488119",
+            "title": "Flock ignores Minnesota city’s orders not to reinstall AI surveillance cameras",
+            "description": "Dayton, MN's city council removed Flock cameras and canceled its contract in August, but Flock reinstalled cameras anyway, almost a month after the program's suspension.",
+            "url": "https://www.tomshardware.com/tech-industry/big-tech/flock-ignores-minnesota-citys-orders-not-to-reinstall-ai-surveillance-cameras-citizens-complain-after-spotting-two-cameras-despite-the-city-canceling-its-contract",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "pc"
+            ],
+            "published_at": "2026-10-29T10:00:00+00:00",
+            "collected_at": "2026-10-29T12:02:36.450457+00:00"
+        },
+        {
+            "id": "2238a069543e4a79206402310b31871e807a23dd959b680c9d031570d9ac3f08",
+            "title": "Cronos: The New Dawn's 'Lazarus' DLC Launches Next Year On Switch 2",
+            "description": "Watch the spooky new story trailer. Those who enjoyed blasting through space nasties in Cronos: The New Dawn last year, listen up! The game's Lazarus DLC has just got a brand new story trailer and it looks hella spooky. Don't be fooled by the December release date at the end of the new look, the expansion is set to launch on Switch 2 slightly later than other platforms, and is currently targeting a Q1 2027 window. Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/news/2026/10/cronos-the-new-dawns-lazarus-dlc-launches-next-year-on-switch-2",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-10-29T10:00:00+00:00",
+            "collected_at": "2026-10-29T12:02:49.281863+00:00"
+        },
+        {
+            "id": "69c7dbeddf2248ad30780c42d8bb8740642f5fb14ed16763b26a59eb20f4935b",
+            "title": "Our climate models have a big, dangerous blind spot",
+            "description": "Climate change itself is increasingly fueling climate change. Rising concentrations of greenhouse gases are driving up global temperatures, setting off dangerous feedback loops that we have not fully accounted for in our climate models—or our emissions-reduction goals. Scientists have long warned that warming would propel further warming in various ways, but a growing number of…",
+            "url": "https://www.technologyreview.com/2026/10/29/1147735/climate-models-blind-spot/",
+            "source": "MIT Technology Review",
+            "category": "recherche_innovation",
+            "tags": [
+                "innovation",
+                "recherche",
+                "science"
+            ],
+            "published_at": "2026-10-29T10:00:00+00:00",
+            "collected_at": "2026-10-29T12:02:50.202650+00:00"
+        },
+        {
+            "id": "f9fe883d4ec1df04af401ab13af1d155b3286a12af460ddb2917ef0b7dc9ac3b",
+            "title": "Bermuda taps WalletConnect to advance its onchain economy plan",
+            "description": "",
+            "url": "https://www.coindesk.com/business/2026/10/29/bermuda-taps-walletconnect-to-advance-its-onchain-economy-plan",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-10-29T10:00:00+00:00",
+            "collected_at": "2026-10-29T12:02:51.268731+00:00"
+        },
+        {
+            "id": "a8c93a077438eadc99160830ffa128e367e575cc9b87a9809fd2ddd5b6364eff",
+            "title": "Attackers Exploit Second Cisco Firewall VPN Zero-Day Since August",
+            "description": "An exploited flaw in the Remote Access SSL VPN service lets unauthenticated attackers remotely force ASA and FTD firewalls to reload. The post Attackers Exploit Second Cisco Firewall VPN Zero-Day Since August appeared first on SecurityWeek .",
+            "url": "https://www.securityweek.com/attackers-exploit-second-cisco-firewall-vpn-zero-day-since-august/",
+            "source": "SecurityWeek",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "security",
+                "vulnerabilites",
+                "zero_day"
+            ],
+            "published_at": "2026-10-29T09:47:10+00:00",
+            "collected_at": "2026-10-29T12:02:29.950124+00:00"
+        },
+        {
+            "id": "2823e0a89c406668d6a0e604ae34c697b3746b7750620c2d02606a99e851433c",
+            "title": "Survey says the Fitbit Edge’s biggest rival could be its own Google sibling",
+            "description": "The call is coming from inside the house.",
+            "url": "https://www.androidauthority.com/best-fitbit-edge-alternative-poll-results-3729522/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-10-29T09:33:57+00:00",
+            "collected_at": "2026-10-29T12:02:42.707325+00:00"
+        },
+        {
+            "id": "b748cb6533309d6bcf4352c4e977957f5ac2f5c600008a1572ba147257be6632",
+            "title": "Matrix takes sovereign messaging into the realm of the tech giants",
+            "description": "Once more, with feeling: 'First they ignore you, then they laugh at you, then they fight you'",
+            "url": "https://www.theregister.com/software/2026/10/29/matrix-takes-sovereign-messaging-into-the-realm-of-the-tech-giants/5305915",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-10-29T09:30:00+00:00",
+            "collected_at": "2026-10-29T12:02:32.065299+00:00"
+        },
+        {
+            "id": "824a699f701a8dfc0735552cdab68b3f267db22f7e8f20680d0d60b6a4459e94",
+            "title": "Go Empty Interface Explained & The Hidden Heap Allocation",
+            "description": "Comments",
+            "url": "https://www.youtube.com/watch?v=_BxdvkLLnDc",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-10-29T09:27:01+00:00",
+            "collected_at": "2026-10-29T12:02:33.586531+00:00"
+        },
+        {
+            "id": "8decbd4c8e9add9724901e8d7a1cb5b82916b4c2cc942a2a094468630cefca77",
+            "title": "Trump Phone passes the bend test, fails the originality test",
+            "description": "The gold paint can only hide so much.",
+            "url": "https://www.androidauthority.com/trump-phone-durability-test-3729503/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-10-29T09:11:59+00:00",
+            "collected_at": "2026-10-29T12:02:42.707373+00:00"
+        },
+        {
+            "id": "b36cbddd30558feada5c369fe36c7d7a45f3497ff9d237dfac8aefa4e39e39e3",
+            "title": "Attacker Tried to Exploit Alpine Linux’s GitLab via CVSS 10.0 Flaw Its Ruby Left Open",
+            "description": "An attacker tried to exploit a critical GitLab vulnerability on the Alpine Linux project's own GitLab server a week after GitLab released a fix, Alpine Linux said on 28 October. The flaw, CVE-2026-97229 (CVSS score: 10.0), can let an attacker run code on a GitLab server through a crafted regular expression in a CI configuration. Alpine found no evidence that the attack worked but",
+            "url": "https://thehackernews.com/2026/10/attacker-tried-to-exploit-alpine-linuxs.html",
+            "source": "The Hacker News",
+            "category": "cybersecurite",
+            "tags": [
+                "cve",
+                "cybersecurite",
+                "git",
+                "hacking",
+                "linux",
+                "vulnerabilites"
+            ],
+            "published_at": "2026-10-29T09:05:39+00:00",
+            "collected_at": "2026-10-29T12:02:29.262187+00:00"
+        },
+        {
+            "id": "c7a6421daf094b9d020f9988b7f23becc011a960cf5ae739d1d5cba73e5e4b41",
+            "title": "Admin dropped the F-bomb in a password to show hackers who was really 1337",
+            "description": "Cursing in login credentials can help keep the bad guys out, but not when the rest of your security is BS",
+            "url": "https://www.theregister.com/security/2026/10/29/admin-dropped-the-f-bomb-in-a-password-to-show-hackers-who-was-really-1337/5306139",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-10-29T09:00:00+00:00",
+            "collected_at": "2026-10-29T12:02:32.065362+00:00"
+        },
+        {
+            "id": "57aac2271e2be868ff4613da31d8b8d25d678338608ff021e3884ed21af7bc13",
+            "title": "HPE puts storage to work on AI’s expensive memory problem",
+            "description": "PARTNER CONTENT: HPE Alletra MP X10000 cache offload delivers up to 20× faster time to first token in testing validated by Kamiwaza. Apparently, remembering things beats calculating them again.",
+            "url": "https://www.theregister.com/storage/2026/10/29/partner-content-hpe-puts-storage-to-work-on-ais-expensive-memory-problem/5305793",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-10-29T09:00:00+00:00",
+            "collected_at": "2026-10-29T12:02:32.065446+00:00"
+        },
+        {
+            "id": "c26c797618acd5d27be1194280c05e0e2a35b76cf6f7465942cab60763fff063",
+            "title": "Former Swift CEO joins stablecoin firm OpenTrade as chairman",
+            "description": "",
+            "url": "https://www.coindesk.com/business/2026/10/29/former-swift-ceo-joins-stablecoin-firm-opentrade-as-chairman-after-a-usd17-million-raise",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-10-29T09:00:00+00:00",
+            "collected_at": "2026-10-29T12:02:51.268773+00:00"
+        },
+        {
+            "id": "4ef6bc2e777f15a771620762a4c88f96795833c0eb157a6011551a3122364b95",
+            "title": "Samsung is killing another key Galaxy service",
+            "description": "Your One UI home screen will look a little different later this year.",
+            "url": "https://www.androidauthority.com/samsung-news-shutdown-december-2026-3729509/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-10-29T08:49:53+00:00",
+            "collected_at": "2026-10-29T12:02:42.707422+00:00"
+        },
+        {
+            "id": "9b5b7982fa89061171b1d6fcd05207aab8818f3ff6a0a571d1fbada4bd7da5f6",
+            "title": "Powered by Raspberry Pi – from Stockholm to Sydney, South Korea to Slovakia",
+            "description": "From the practicalities of everyday life to creative endeavours, Raspberry Pi power is behind hundreds of products. The post Powered by Raspberry Pi – from Stockholm to Sydney, South Korea to Slovakia appeared first on Raspberry Pi .",
+            "url": "https://www.raspberrypi.com/news/powered-by-raspberry-pi-from-stockholm-to-sydney-south-korea-to-slovakia/",
+            "source": "Raspberry Pi",
+            "category": "hardware",
+            "tags": [
+                "arm",
+                "embedded",
+                "raspberry-pi"
+            ],
+            "published_at": "2026-10-29T08:34:09+00:00",
+            "collected_at": "2026-10-29T12:02:37.598518+00:00"
+        },
+        {
+            "id": "f7d0e225f8d05c3fd3ba7e8570e77df3d735f8fcbfd54259d7a6e3d17948ad28",
+            "title": "Birds Across Europe Flee Sooner When a Woman Approaches Than a Man, and Scientists Have No Idea Why",
+            "description": "Urban birds in Czechia, France, Germany, Poland, and Spain let men get about one meter closer, on average, than women before taking off, a new flight initiation distance study found. Researchers tested 37 city-dwelling species including great tits, house sparrows, and blackbirds, and say the reason for the sex-linked gap remains unexplained. In city parks […]",
+            "url": "https://news.bitcoin.com/featured/birds-across-europe-flee-sooner-when-a-woman-approaches-than-a-man-and-scientists-have-no-idea-why-49201/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-10-29T08:30:30+00:00",
+            "collected_at": "2026-10-29T12:02:51.630156+00:00"
+        },
+        {
+            "id": "62e358f0783bbcc3869e8a2528e36addeceb590e4167ece827434fd444960703",
+            "title": "HHS Filing Puts iRhythm Data Breach Toll at 8.2 Million",
+            "description": "Hackers stole personal information and iRhythm account and device data from third-party-hosted business applications. The post HHS Filing Puts iRhythm Data Breach Toll at 8.2 Million appeared first on SecurityWeek .",
+            "url": "https://www.securityweek.com/hhs-filing-puts-irhythm-data-breach-toll-at-8-2-million/",
+            "source": "SecurityWeek",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "security",
+                "vulnerabilites"
+            ],
+            "published_at": "2026-10-29T08:27:16+00:00",
+            "collected_at": "2026-10-29T12:02:29.950197+00:00"
+        },
+        {
+            "id": "98f1f144a0d1f94944225fd5b6caff5981ccf2a556bbc5569767fa012737f035",
+            "title": "Gemini in Google Sheets is getting faster, smarter, and easier to trust",
+            "description": "Gemini's got the answers, and now it's bringing the evidence too.",
+            "url": "https://www.androidauthority.com/google-sheets-gemini-update-3729506/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "gemini",
+                "rust",
+                "smartphone"
+            ],
+            "published_at": "2026-10-29T08:24:59+00:00",
+            "collected_at": "2026-10-29T12:02:42.707473+00:00"
+        },
+        {
+            "id": "96402b0bba36a5534299f8cf76a48208eb7d49296eee770808d2622dce34c589",
+            "title": "Hackers Exploited Cisco SD-WAN Flaw to Plant Malware Built to Steal Encryption Keys",
+            "description": "Hackers exploited a critical Cisco Catalyst SD-WAN flaw, fixed in February, to plant custom malware inside the systems that control an organization's SD-WAN network. The malware, called KeyDrift, is designed to copy the keys that encrypt traffic between sites and store them for later use, Cisco Talos said on October 28. Talos calls the attacks historical but does not specify when they",
+            "url": "https://thehackernews.com/2026/10/hackers-exploited-cisco-sd-wan-flaw-to.html",
+            "source": "The Hacker News",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "hacking",
+                "malware",
+                "vulnerabilites"
+            ],
+            "published_at": "2026-10-29T08:24:22+00:00",
+            "collected_at": "2026-10-29T12:02:29.262273+00:00"
+        },
+        {
+            "id": "2c5c55ac6c807dc84fd13d90173c95544c53dfce1ea65062cff75c9eecc14f10",
+            "title": "Gemini’s new ‘immersive explorations’ turn it into an interactive encyclopedia",
+            "description": "Gemini will let you dive deep into 20 topics.",
+            "url": "https://www.androidauthority.com/gemini-immersive-explorations-library-3729494/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "gemini",
+                "smartphone"
+            ],
+            "published_at": "2026-10-29T08:06:03+00:00",
+            "collected_at": "2026-10-29T12:02:42.707530+00:00"
+        },
+        {
+            "id": "6fa958c054e03af64d72c3b0fc1cd5b628a2862090cc7389112a6394fcb0fa5f",
+            "title": "Chinese Hackers Quietly Used Low-Severity ESXi Logging Flaw as Zero-Day",
+            "description": "CVE-2026-41709 allows attackers with administrative privileges to perform operations without being logged. The post Chinese Hackers Quietly Used Low-Severity ESXi Logging Flaw as Zero-Day appeared first on SecurityWeek .",
+            "url": "https://www.securityweek.com/chinese-hackers-quietly-used-low-severity-esxi-logging-flaw-as-zero-day/",
+            "source": "SecurityWeek",
+            "category": "cybersecurite",
+            "tags": [
+                "cve",
+                "cybersecurite",
+                "security",
+                "vulnerabilites",
+                "zero_day"
+            ],
+            "published_at": "2026-10-29T08:01:05+00:00",
+            "collected_at": "2026-10-29T12:02:29.950257+00:00"
+        },
+        {
+            "id": "becf7920c629f4d7414191bafa137aa7b6de28b88679b53e20d62c8af3ff8e43",
+            "title": "Cyber Vulnerabilities Besiege Italy, Absent Clear Cause",
+            "description": "Researchers can't quite explain why cyber threats look so different in Italy compared to everywhere else.",
+            "url": "https://www.darkreading.com/cybersecurity-analytics/cyber-vulnerabilities-besiege-italy",
+            "source": "Dark Reading",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "enterprise-security"
+            ],
+            "published_at": "2026-10-29T08:00:00+00:00",
+            "collected_at": "2026-10-29T12:02:29.851529+00:00"
+        },
+        {
+            "id": "6c5a2de99651867624b8dc2497f038efdbc22e12dbd8620a75d5e71442c15adc",
+            "title": "The chart bitcoin traders should be paying attention to",
+            "description": "",
+            "url": "https://www.coindesk.com/markets/2026/10/29/the-chart-bitcoin-traders-should-be-paying-attention-to",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-10-29T07:44:44+00:00",
+            "collected_at": "2026-10-29T12:02:51.268815+00:00"
+        },
+        {
+            "id": "539b609b7c5387d62a68f43723335dcd9aa35f066e08594e0ccfce6bb8a399fe",
+            "title": "The next big threat to RCS isn’t another messaging app",
+            "description": "The clock is ticking for RCS as AI threatens to rewrite the rules of messaging.",
+            "url": "https://www.androidauthority.com/rcs-ai-messaging-gsma-warning-3729457/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-10-29T07:27:12+00:00",
+            "collected_at": "2026-10-29T12:02:42.707589+00:00"
+        },
+        {
+            "id": "be45563be2308845bee024a8298f315552eb7a22588e0bca411abae55d60053b",
+            "title": "Zero click, silent, remote Android DoS",
+            "description": "Comments",
+            "url": "https://smsofdeath.com/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "android",
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-29T07:08:50+00:00",
+            "collected_at": "2026-10-29T12:02:33.482219+00:00"
+        },
+        {
+            "id": "81eb5369154c8035765c2d0051dbd0963047ade1ba4070b1416e7a0f0a8f7777",
+            "title": "Google AI Mode is getting more ads, whether you like it or not",
+            "description": "Google's AI Mode has answers, and advertisers have some suggestions too.",
+            "url": "https://www.androidauthority.com/google-ai-mode-ads-expansion-3729474/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "gemini",
+                "smartphone"
+            ],
+            "published_at": "2026-10-29T07:04:27+00:00",
+            "collected_at": "2026-10-29T12:02:42.707662+00:00"
+        },
+        {
+            "id": "031b1d5df88a0d0dcc053f74c142e2539de7d676a3b95db148ca6b6d9a817937",
+            "title": "Samsung Wallet’s new cash back perks can help you pay for dinner or settle up with a friend",
+            "description": "You can earn cash back rewards from thousands of US brands.",
+            "url": "https://www.androidauthority.com/samsung-wallet-perks-cash-back-rakuten-3729462/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-10-29T06:51:45+00:00",
+            "collected_at": "2026-10-29T12:02:42.707729+00:00"
+        },
+        {
+            "id": "06a8df264efd028f439a02d57e94c5b616f9457c7973c290be4f9a235cfc2220",
+            "title": "What the fox say?",
+            "description": "Comments",
+            "url": "https://entropicthoughts.com/what-the-fox-say",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-10-29T06:42:40+00:00",
+            "collected_at": "2026-10-29T12:02:33.585847+00:00"
+        },
+        {
+            "id": "84d517b392e710e13b379a5cbddee6801d9c6a10e94bc9a45b0e4d2656f88dba",
+            "title": "She Trained to Be a Ballerina in Brazil. At 30, She’s the World’s Youngest Self-Made Female Billionaire",
+            "description": "Luana Lopes Lara, the co-founder and COO of prediction-market platform Kalshi, now has a reported net worth of $2.6 billion after the company’s Series F round valued it at $22 billion. Lara grew up in Brazil training as a competitive ballerina before pivoting to computer science and finance, and she still puts in 12 to […]",
+            "url": "https://news.bitcoin.com/featured/she-trained-to-be-a-ballerina-in-brazil-at-30-shes-the-worlds-youngest-self-made-female-billionaire-49201/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-10-29T06:30:29+00:00",
+            "collected_at": "2026-10-29T12:02:51.630266+00:00"
+        },
+        {
+            "id": "48f467fc9990539a6e8ad8a2bbce0f0d1d0c63500e496a2e9335a95820f828df",
+            "title": "China-Linked Hackers Exploited VMware ESX Zero-Day to Reduce Audit Trail Visibility",
+            "description": "The U.S. Cybersecurity and Infrastructure Security Agency (CISA) on Wednesday added a security flaw impacting Broadcom VMware ESX to its Known Exploited Vulnerabilities (KEV) catalog, after CrowdStrike revealed that it had been weaponized by a China-nexus threat actor known as Warp Panda in attacks targeting the U.S. legal sector. The vulnerability in question is CVE-2026-41709 (CVSS score:",
+            "url": "https://thehackernews.com/2026/10/china-linked-hackers-exploited-vmware.html",
+            "source": "The Hacker News",
+            "category": "cybersecurite",
+            "tags": [
+                "cve",
+                "cybersecurite",
+                "hacking",
+                "vulnerabilites",
+                "zero_day"
+            ],
+            "published_at": "2026-10-29T06:22:33+00:00",
+            "collected_at": "2026-10-29T12:02:29.262347+00:00"
+        },
+        {
+            "id": "c39370cac32a108b2078a42e38664089dfb6420a56f921c5d0c52e3e7825c0de",
+            "title": "Your Google Messages chats are getting a ChatGPT upgrade",
+            "description": "Your next text buddy has zero plans to leave you on read.",
+            "url": "https://www.androidauthority.com/chatgpt-dots-on-google-messages-3729446/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "openai",
+                "smartphone"
+            ],
+            "published_at": "2026-10-29T05:59:53+00:00",
+            "collected_at": "2026-10-29T12:02:42.707778+00:00"
+        },
+        {
+            "id": "6966318478a1a3db85f933042ce237f09d84bb82611f5b1a67509ee661399ad7",
+            "title": "AI found a way to crash bitcoin nodes on Windows and Macs. It's now public",
+            "description": "",
+            "url": "https://www.coindesk.com/tech/2026/10/29/ai-found-a-way-to-crash-bitcoin-nodes-on-windows-and-macs-it-s-now-public",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto",
+                "windows"
+            ],
+            "published_at": "2026-10-29T05:54:39+00:00",
+            "collected_at": "2026-10-29T12:02:51.268860+00:00"
+        },
+        {
+            "id": "7cd598614444dd0aca24515d58a3fa8914a5651c7f9aec4344fdc5fcdaf57b9d",
+            "title": "Attackers Exploit PHP2Shell Flaws in Internet-Exposed Palo Alto Networks Management Interfaces",
+            "description": "Palo Alto Networks on Wednesday warned that threat actors are exploiting the recently patched PHP2Shell vulnerabilities against publicly-accessible management interfaces. \"Active exploitation has been observed targeting the Palo Alto Networks management interface exposed to the internet,\" the network security company said in an update to its advisory. The vulnerabilities, tracked as",
+            "url": "https://thehackernews.com/2026/10/attackers-exploit-php2shell-flaws-in.html",
+            "source": "The Hacker News",
+            "category": "cybersecurite",
+            "tags": [
+                "aws",
+                "cybersecurite",
+                "hacking",
+                "php",
+                "vulnerabilites"
+            ],
+            "published_at": "2026-10-29T05:50:17+00:00",
+            "collected_at": "2026-10-29T12:02:29.262423+00:00"
+        },
+        {
+            "id": "516e36af856e856538b58f2fff9e8648d272aa96d5a609bbf35874bb15a5feff",
+            "title": "Security failure at Indian certificate firm bites Ethereum as developers rush out fixes",
+            "description": "",
+            "url": "https://www.coindesk.com/tech/2026/10/29/ethereum-clients-patch-flaw-that-could-let-attackers-redirect-eth-rewards",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto",
+                "ethereum"
+            ],
+            "published_at": "2026-10-29T05:30:34+00:00",
+            "collected_at": "2026-10-29T12:02:51.268905+00:00"
+        },
+        {
+            "id": "7dc1e23d4ac8e929726ed37e4f513a813b5badddf7f4c063d47bac77602d6e51",
+            "title": "No Man's Sky Unveils Forsaken (Update 7.10), Here Are The Full Patch Notes",
+            "description": "New \"spooky new gameplay\" just in time for Halloween. The space exploration title No Man's Sky didn't launch in the best state, but 10 years later, it's doing better than ever thanks to new features, content and regular game updates. With this in mind, the latest free update has now arrived. No Man's Sky: Forsaken (Update 7.10) allows players to explore the darker side of the universe, and bunch of other features. It also introduces iPad and iPhone support for the first time. Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/news/2026/10/no-mans-sky-unveils-forsaken-update-7-10-here-are-the-full-patch-notes",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "ios",
+                "nintendo"
+            ],
+            "published_at": "2026-10-29T05:30:00+00:00",
+            "collected_at": "2026-10-29T12:02:49.281973+00:00"
+        },
+        {
+            "id": "f3cb79a8a9e54ccc5724c9df987e9ed6a54a47f4125eefe5709102793c3df2c6",
+            "title": "Google's Gemini 4 Carbon looks like a diamond in the rough",
+            "description": "Undercutting Claude on price ahead of Anthropic's IPO",
+            "url": "https://www.theregister.com/ai-and-ml/2026/10/29/googles-gemini-4-carbon-looks-like-a-diamond-in-the-rough/5306149",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "anthropic",
+                "entreprise",
+                "gemini",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-10-29T05:29:00+00:00",
+            "collected_at": "2026-10-29T12:02:32.065498+00:00"
+        },
+        {
+            "id": "f41751dbe484af5a00b03842da2c9b75fd8dff0fe792e2b7f093535a1824cbd1",
+            "title": "Boffin's software found a possible dwarf planet - a result so rare he thought it must be a bug",
+            "description": "2026 ED138 is way out beyond Neptune and perhaps the smallest known object of its type",
+            "url": "https://www.theregister.com/science/2026/10/29/boffins-software-found-a-possible-dwarf-planet-a-result-so-rare-he-thought-it-must-be-a-bug/5306204",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-10-29T05:06:42+00:00",
+            "collected_at": "2026-10-29T12:02:32.065554+00:00"
+        },
+        {
+            "id": "7dc7c020dae728bc8023fdfb97102403c99bb78c6875bfbd42e1bc5bf9956ac7",
+            "title": "Utah charges predictions platform Kalshi with illegal gambling",
+            "description": "",
+            "url": "https://www.coindesk.com/policy/2026/10/29/utah-charges-predictions-platform-kalshi-with-illegal-gambling",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-10-29T05:02:37+00:00",
+            "collected_at": "2026-10-29T12:02:51.268945+00:00"
+        },
+        {
+            "id": "6b6f2e6f35437f2b2c31b240d378773284cd7d3cdb93e6cf0901d9c6f7cf8e83",
+            "title": "Ripple’s RLUSD Wins Historic Moody’s Rating After US Bank Approval",
+            "description": "Ripple says Ripple USD (RLUSD) has become the first stablecoin to receive an investment-grade rating from Moody’s, a day after the company won final approval for a national trust bank. The issuer targets 103% reserve coverage, while bankruptcy risks remain a qualification in the assessment. RLUSD Receives A2 and P-1 Ratings Moody’s Ratings assigned RLUSD […]",
+            "url": "https://news.bitcoin.com/featured/ripples-rlusd-wins-historic-moodys-rating-after-us-bank-approval/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto",
+                "rust"
+            ],
+            "published_at": "2026-10-29T04:30:08+00:00",
+            "collected_at": "2026-10-29T12:02:51.630375+00:00"
+        },
+        {
+            "id": "ef66c767eb42999942c910fae83ded780bc75575c36151b000f74661aa62d6a4",
+            "title": "The Future Trait Has A Missing State",
+            "description": "Comments",
+            "url": "https://blog.yoshuawuyts.com/the-future-trait-has-a-missing-state",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-10-29T04:24:28+00:00",
+            "collected_at": "2026-10-29T12:02:33.586191+00:00"
+        },
+        {
+            "id": "2663ae9ffdac29c980838bca0c0b97486b95eca9516588d770630d5c8aac54a4",
+            "title": "Ghostty 1.4 is out with big improvements on Linux",
+            "description": "A major new release of Ghostty, the open-source terminal emulator, is out. Ghostty 1.4.0 brings a varied set of changes after seven months of development. There are welcome performance optimisations on Linux and macOS, a more capable SSH implementation and an easier way to rearrange tab splits – dragging them! This update to the Zig-based app offers complete Kitty graphics protocol support (including animation and relative placements) – the first terminal besides Kitty to do so. If you use TUI tools or script to render images in the terminal, this is a major feat. Devs say performance is improved hugely […] You're reading Ghostty 1.4 is out with big improvements on Linux , a blog post from OMG! Ubuntu . Do not reproduce elsewhere without permission.",
+            "url": "https://www.omgubuntu.co.uk/2026/10/ghostty-1-4-released",
+            "source": "OMG! Ubuntu",
+            "category": "linux",
+            "tags": [
+                "desktop",
+                "linux",
+                "macos",
+                "ubuntu"
+            ],
+            "published_at": "2026-10-29T04:08:04+00:00",
+            "collected_at": "2026-10-29T12:02:39.052867+00:00"
+        },
+        {
+            "id": "a5b8bd98f438eda1cd13cbb6fc24317159745a3f1cbc5032299a7a6456dfbc47",
+            "title": "Samsung teases Galaxy S27 plans as its phone business slips into the red again",
+            "description": "Samsung expects to ship fewer phones in 2027, but it has big plans for its next Galaxy S series, foldables, and more.",
+            "url": "https://www.androidauthority.com/samsung-galaxy-s27-plans-q3-2026-earnings-call-3729435/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-10-29T03:55:56+00:00",
+            "collected_at": "2026-10-29T12:02:42.707835+00:00"
+        },
         {
             "id": "9df0a57f98949a53bebe84d03676f76a60de067343be0e03acfcabb589b1c481",
             "title": "Adding a 14 KB Kanji Table to a JavaScript QR Generator",
@@ -139,6 +1631,37 @@
             "collected_at": "2026-10-29T03:46:19.407846+00:00"
         },
         {
+            "id": "74d53c3e6bc4d8edcf3f6e7354c63019ad458de9eb33c31753cf4fa16a978cf0",
+            "title": "Tape is so not dead that Fujifilm will increase production capacity 5x",
+            "description": "Because, sigh, AI",
+            "url": "https://www.theregister.com/storage/2026/10/29/tape-is-so-not-dead-that-fujifilm-will-increase-production-capacity-5x/5306189",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-10-29T03:34:32+00:00",
+            "collected_at": "2026-10-29T12:02:32.065600+00:00"
+        },
+        {
+            "id": "94430ceaa839cbc65bd3beb50f4a415e11e18e27e79127cc99549442483ed67e",
+            "title": "Claude Code regularly sends each background agent’s transcript to its model",
+            "description": "Comments",
+            "url": "https://gist.github.com/flamerix-ai/c3905705cc4205e5de3011fa2e74efce",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "anthropic",
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-29T03:33:42+00:00",
+            "collected_at": "2026-10-29T12:02:33.482766+00:00"
+        },
+        {
             "id": "dd74760b71eb209c7a7b1fe0d09cae444ad4cf428a501e1e397727e084fa3cf8",
             "title": "Bitcoin dips below $80,000 as Samsung-led tech jitters and a hawkish Fed weigh on crypto",
             "description": "",
@@ -220,6 +1743,20 @@
             ],
             "published_at": "2026-10-29T03:30:47+00:00",
             "collected_at": "2026-10-29T03:46:19.410182+00:00"
+        },
+        {
+            "id": "2573542f00636ad75b0f295ac5061e188908ac9e4ed4b291aad229d5185c8b64",
+            "title": "Palworld Dev Open To Switch 2 Release, If There's Ever An \"Opportunity\"",
+            "description": "The Pocketpair team thinks it's a \"really amazing platform\". Despite Pocketpair's ongoing legal battle with Nintendo, the developer is apparently open to bringing its monster-taming survival game Palworld to Switch 2 one day. In a new interview with VGC recently, Pocketpair CEO Takuru Mizobe has praised the Switch 2, calling it a \"really amazing platform\", and says the team would love to see Palworld on the new hybrid system, if there's a \"future\" that presents this kind of opportunity. Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/news/2026/10/palworld-dev-open-to-switch-2-release-if-theres-ever-an-opportunity",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-10-29T03:30:00+00:00",
+            "collected_at": "2026-10-29T12:02:49.282081+00:00"
         },
         {
             "id": "aa830a5d1d50c1e46ef9f606a9b99b4bcfd2599af7411d0043b0da8a01e34c6d",
@@ -1849,6 +3386,21 @@
             ],
             "published_at": "2026-10-28T17:41:05+00:00",
             "collected_at": "2026-10-28T17:43:56.871794+00:00"
+        },
+        {
+            "id": "5dbadd761c8e8714b233db16fa803cf638074590ea9a6c089249341b39f1ee22",
+            "title": "Introducing the Microsoft Copilot harness in Foundry Agent Service",
+            "description": "Today, we’re introducing the Microsoft Copilot harness in Foundry Agent Service in public preview. The post Introducing the Microsoft Copilot harness in Foundry Agent Service appeared first on Microsoft Azure Blog .",
+            "url": "https://devblogs.microsoft.com/foundry/microsoft-copilot-harness-in-foundry/",
+            "source": "Microsoft Azure",
+            "category": "cloud",
+            "tags": [
+                "azure",
+                "cloud",
+                "microsoft"
+            ],
+            "published_at": "2026-10-28T17:40:56+00:00",
+            "collected_at": "2026-10-29T12:02:38.302569+00:00"
         },
         {
             "id": "837570a7deda002fc5a21e98a6e99a5f7148ef84cb0ee01305c44d6bef9ceed0",
@@ -9213,6 +10765,21 @@
             "collected_at": "2026-10-27T17:08:46.498874+00:00"
         },
         {
+            "id": "fbe3a7a1daf8c0ead60510314532f85d06450dd0363ca8e00e1cd522d608b6fb",
+            "title": "MiniLake Is a Local Databricks API Emulator with SQL, Delta Lake and Spark",
+            "description": "Comments",
+            "url": "https://dmux.github.io/minilake/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-27T14:12:59+00:00",
+            "collected_at": "2026-10-29T12:02:33.482352+00:00"
+        },
+        {
             "id": "3fbb6d8c32783e47dd5a6c940b929a32964a33237e70217e982fdab33fd61c2a",
             "title": "Tailscale warns of SSH flaws allowing root privilege escalation",
             "description": "The Tailscale security team is working to patch almost a dozen security vulnerabilities that could be exploited to steal credentials, crash servers, gain root privileges, and more. [...]",
@@ -12670,6 +14237,37 @@
             "collected_at": "2026-10-27T17:08:39.700596+00:00"
         },
         {
+            "id": "2d7458168c2cc9a97201f661dee2756df3c15b5043297abd89651fe68887283e",
+            "title": "OpenAI's agents talked to each other through the CPU Cache",
+            "description": "Comments",
+            "url": "https://the-decoder.com/openais-isolated-ai-agents-found-ways-to-talk-to-each-other-through-cpu-cache/",
+            "source": "Hacker News",
+            "category": "hardware",
+            "tags": [
+                "open-source",
+                "openai",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-26T21:24:18+00:00",
+            "collected_at": "2026-10-29T12:02:33.482305+00:00"
+        },
+        {
+            "id": "eaf6a1a6f5667bb4f1cc66c98f7115b2271a8f323abd1202285320dd91304127",
+            "title": "Muhammad Aqeel: Undo for Postgres, without losing the rest of your day",
+            "description": "Comments",
+            "url": "https://www.pgedge.com/blog/undo-for-postgres-without-losing-the-rest-of-your-day",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-26T21:15:57+00:00",
+            "collected_at": "2026-10-29T12:02:33.482557+00:00"
+        },
+        {
             "id": "1255087617fde52820a213d98085725af87f7a4a9aef7d9875eec1c949982a49",
             "title": "This emulator just cut off support to Anbernic’s upcoming Nintendo 3DS clone",
             "description": "Anbernic's RG DDS gets some bad news before launch.",
@@ -15121,6 +16719,21 @@
             "collected_at": "2026-10-26T18:27:02.893724+00:00"
         },
         {
+            "id": "a901d569ec7749bb172f156941e0c26cd75384b5033137c878828a3384777a5b",
+            "title": "Getting debug access on a Brother printer over Telnet",
+            "description": "Comments",
+            "url": "https://inventor7777.github.io/blog/2026/10/22/debug-access-on-brother/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-26T13:54:39+00:00",
+            "collected_at": "2026-10-29T12:02:33.482175+00:00"
+        },
+        {
             "id": "e9d0a52a8978e8f79451438aa9611593db1ae22cfa05d4142295fbf45d32a348",
             "title": "Apple just eliminated Android’s biggest advantages in compact tablets with the new iPad mini",
             "description": "By adopting an OLED display, A20 Pro SoC, and IP67 durability, Apple leaves rival mini slates with virtually no counter.",
@@ -16131,6 +17744,21 @@
             "collected_at": "2026-10-26T11:59:46.438651+00:00"
         },
         {
+            "id": "e960639439fd0b270158fa785c98850f4146d2c105029a0cadb4e0a6aeb1c99e",
+            "title": "Treap (Cartesian Tree)",
+            "description": "Comments",
+            "url": "https://cp-algorithms.com/data_structures/treap.html",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-26T11:19:31+00:00",
+            "collected_at": "2026-10-29T12:02:33.482893+00:00"
+        },
+        {
             "id": "17b01ba59d42d01e7607c5935da01756773fc204e59d2219b4d7934a1827dccb",
             "title": "This open-source app lets you run practically any phone app on your Android Auto car screen",
             "description": "Android Auto Maker lets you repackage Android apps for car displays, but there are several notable trade-offs.",
@@ -16609,6 +18237,21 @@
             ],
             "published_at": "2026-10-26T09:30:00+00:00",
             "collected_at": "2026-10-26T11:59:52.585998+00:00"
+        },
+        {
+            "id": "8a53a55b3a1fd4ea0a7d7d4f7892e744c10580f5824f16012db4c24eb16d73c3",
+            "title": "Requests, Please",
+            "description": "Comments",
+            "url": "https://morronel.github.io/requests_please/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-26T09:23:43+00:00",
+            "collected_at": "2026-10-29T12:02:33.482512+00:00"
         },
         {
             "id": "7c54e769948b6fc771ccdcc1deb0ab86df57a2140dfd1bafbff34a65ad653f61",
@@ -358577,6 +360220,36 @@
             ],
             "published_at": null,
             "collected_at": "2026-10-29T03:46:30.031087+00:00"
+        },
+        {
+            "id": "7b13a13aa99910ae3a029c78367129f384d2cd3aebfca85e46cd4ca33188d1a9",
+            "title": "DoorDash is acquiring Instacart for around $17 billion",
+            "description": "DoorDash has announced that it's buying Instacart in a deal valued at approximately $17 billion. The acquisition will give DoorDash a bigger presence in online grocery delivery via Instacart's established grocery marketplace and retailer partnerships. DoorDash, which started as a restaurant courier service, already has its own grocery delivery business, but that faces ongoing competition […]",
+            "url": "https://www.theverge.com/business/1021981/doordash-instacart-acquisition-announcement",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-10-29T12:02:31.079284+00:00"
+        },
+        {
+            "id": "d62a8f09dced3dd91988f5ed0aa68aba8ec1f44959ebb676014ad68d516e9437",
+            "title": "AI has come for Arizona’s water",
+            "description": "A hulking gray giant rises from the desert. Inside, engineers create the force behind our phones and computers and appliances, our streaming services and search engines and chatbots and vibe-coded apps and websites. The complex is simultaneously massive and squat, dwarfed by the mountains that surround it, and it is endless. I drive past one […]",
+            "url": "https://www.theverge.com/cs/features/1016650/arizona-water-data-center-tsmc",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-10-29T12:02:31.079384+00:00"
         }
     ]
 }
