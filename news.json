@@ -1,7 +1,706 @@
 {
-    "updated_at": "2026-10-31T03:30:52.618692+00:00",
-    "count": 23906,
+    "updated_at": "2026-10-31T11:29:49.981898+00:00",
+    "count": 23956,
     "articles": [
+        {
+            "id": "930f0a6aa240a338b069c354be8631946f1507f678f1b1e9a119cd0eb176348d",
+            "title": "Terraform Testing in 2026: Unit Tests With terraform test and Mock Providers",
+            "description": "Terraform Testing in 2026: Unit Tests With terraform test and Mock Providers TL;DR: Most Terraform changes are still reviewed by reading a plan and hoping. The native test framework ( terraform test , stable since Terraform 1.6) changes that: test files declare inputs, run a plan or apply, and assert on the results — and with mock providers (since 1.7) the logic tests run in CI in seconds with no cloud account and no credentials. Test your modules' contracts — outputs, conditional resources, naming and tagging rules — not the cloud provider's behaviour. Keep a small number of real apply tests for critical modules in an ephemeral sandbox, and let linters and scanners do their separate jobs alongside. Originally published on DevOps Enginer . The problem: the plan is not a test Application code gets unit tests as a matter of course. Infrastructure code — which can delete a database just as dead as any application bug — usually gets a human skimming terraform plan output in a pull request. That review catches typos. It does not catch the conditional that inverted last refactor, the variable default that quietly changed a bucket from private to public, or the count logic that creates zero replicas of the thing production needs three of. The reason was tooling: for years, testing Terraform meant heavyweight frameworks or applying to a real account and inspecting by hand. The native framework removes the excuse. Tests live next to the module, run with one command, and — the decisive part — can run against mocked providers , so the suite executes like unit tests: fast, hermetic, credential-free. What is worth testing (and what is not) Test your module's decisions , not the provider's implementation: Outputs and contracts. Callers depend on output values and shapes. If bucket_name changes format, downstream code breaks — a test should break first. Conditional logic. Every count , for_each , and ternary is a decision your module makes: versioning on/off, optional resources created or skipped, single vs multi-AZ shapes. Each branch deserves a run. Naming, tagging, and policy invariants. The rules platform teams actually care about: names compose from project/environment correctly, required tags are always present, encryption is enabled, nothing is public unless an explicit variable says so. Variable edge cases. Empty lists, zero counts, nulls — the inputs real callers will eventually pass. Do not test that AWS creates an S3 bucket when asked, that an attribute AWS generates looks a certain way beyond your control, or other provider internals. Those tests are slow, brittle, and verify someone else's software. The framework in one module A small module to test: # main.tf variable \"project\" { type = string } variable \"environment\" { type = string } variable \"enable_versioning\" { type = bool default = true } resource \"aws_s3_bucket\" \"this\" { bucket = \"${var.project}-${var.environment}-assets\" } resource \"aws_s3_bucket_versioning\" \"this\" { bucket = aws_s3_bucket . this . id versioning_configuration { status = var . enable_versioning ? \"Enabled\" : \"Suspended\" } } output \"bucket_name\" { value = aws_s3_bucket . this . bucket } And its test file (conventionally in a tests/ directory inside the module): # tests/bucket.tftest.hcl mock_provider \"aws\" {} variables { project = \"shop\" environment = \"prod\" } run \"versioning_on_by_default\" { command = plan assert { condition = aws_s3_bucket_versioning . this . versioning_configuration [ 0 ]. status == \"Enabled\" error_message = \"Versioning must be enabled by default\" } assert { condition = output . bucket_name == \"shop-prod-assets\" error_message = \"Bucket name must compose project and environment\" } } run \"versioning_can_be_disabled\" { command = plan variables { enable_versioning = false } assert { condition = aws_s3_bucket_versioning . this . versioning_configuration [ 0 ]. status == \"Suspended\" error_message = \"Versioning should suspend when explicitly disabled\" } } Run it with terraform test from the module root. The anatomy: mock_provider \"aws\" {} replaces the real provider. Terraform generates fake computed values, so a plan (or even an apply ) runs without credentials, network, or a cloud account — in milliseconds. variables {} at file level sets shared inputs; a run block can override them per case. run blocks are the test cases. command = plan is the default workhorse; command = apply executes against the (possibly mocked) provider for shape checks that only appear after apply. assert pairs a condition over any value in the configuration — resources, outputs, variables, locals — with the error_message a human reads when it fails. Write the messages as explanations, not echoes. Where a mocked computed value needs to be specific — an ARN a policy references, an ID another resource consumes — override_resource and override_data blocks pin those values inside a run. Use them sparingly; a test that overrides everything asserts nothing. Mock providers: what they change, and their honest limits Before mocks, a \"unit test\" of a module still configured the real provider, which meant credentials in CI, provider API calls in every plan, and suites measured in minutes. Mocks invert all three: the pipeline job needs no cloud credentials at all for the test stage (which, per the keyless-CI pattern in the GitHub Actions OIDC guide on this site, is exactly where you want the fewest credentials), tests run at unit-test speed, and nobody's sandbox account accumulates test debris. The limits are equally clear, and stating them keeps the suite trustworthy: Mocks validate your configuration logic against the provider's schema , not against the real API. A value the real AWS API would reject (an invalid name pattern, an unsupported combination) can sail through a mocked plan. Data sources return generated values unless overridden — tests depending on a data source's real content need overrides or a real read. Provider-side quirks and eventual-consistency behaviour are, by definition, absent. So the strategy is layered: mocked tests for logic, in bulk; a few real tests for reality, on purpose. The top of the pyramid: real apply tests, kept few For a critical module — the network foundation, the shared database module — a mocked plan cannot prove the one thing that matters: it actually builds. Keep a small suite of command = apply runs against the real provider in a sandbox account with three disciplines: Ephemeral by design. Tests create, assert, and the framework destroys what it created at the end of the run (that is the framework's contract for test-created resources). Verify the destroy happened; orphaned test resources are a cost and security smell — the state-management guide's hygiene rules apply to test state too. Separate credentials, narrow scope. The sandbox role can create and destroy only the resource types under test, in the sandbox account only. The OIDC guide's per-environment role pattern fits exactly here. Scheduled, not per-commit. Real applies take minutes and cost real (if small) money. Run them nightly or on module release, while the mocked suite gates every pull request. Where tests sit among the other tools Terraform already has a quality neighbourhood, and the test framework does not evict anyone: Variable validation blocks — the module rejecting bad input at plan time. First line of defence, and the test suite should cover that they fire. terraform fmt / validate — shape and syntax. Free; run always. tflint and friends — lint rules, naming conventions, deprecated syntax. Style and hygiene, not behaviour. Checkov / tfsec-style scanners — policy and security posture of the configuration. They check what the config says ; tests check what the module decides given inputs. Complementary, not overlapping. terraform test — behaviour: outputs, conditionals, invariants across input variations. A sane pipeline order: fmt check → validate → lint/scan → terraform test (mocked) → plan for human review. Each stage is cheap; together they mean the human reviews intent, not correctness arithmetic. Modules are where tests pay rent For a root configuration used once, tests are nice. For modules — shared, versioned, consumed by teams who did not write them — they are the contract enforcement mechanism. The modules guide in this series covers structuring reusable modules; tests are what let a maintainer refactor a module's internals while proving its callers see the same outputs, the same resource decisions, the same invariants. That confidence is precisely what a module library runs on, and it is why test files should ship inside the module repository, versioned with the code they describe. Common mistakes Testing the provider. Asserting that a mocked (or real) AWS resource has AWS-chosen properties teaches the suite to fail for other people's changes. Assert your decisions. Overriding everything. Heavy override_resource use pins the fake world so completely that the test passes regardless of the configuration. Overrides are scalpels for specific computed values, not a substitute world. One giant run block. A failed assert should name the broken decision. Many small runs with descriptive names beat one mega-run with forty asserts. Apply tests against shared accounts. Test resources in an account other teams use will eventually collide, linger, or be \"cleaned up\" by someone mid-run. Sandbox account, always. Mocked-only confidence for critical paths. The suite is green, the module cannot actually apply. Keep the few real apply tests for the modules whose failure would hurt. Ignoring test state. terraform test manages its own state for runs, but interrupted real applies can leave residue; a periodic sandbox sweep belongs in the routine. Writing tests once, at the end. The suite earns its keep when a refactor lands six months later. Add the run block when you add the conditional — that is when the intent is clearest and cheapest to encode. FAQ terraform test or Terratest? They answer different questions. terraform test is native, HCL-based, and ideal for module logic and contracts — no Go toolchain, no extra framework. Terratest (Go) remains strong for end-to-end verification that spans tools and real cloud behaviour beyond one module. Many teams use both: native tests in every module repo, Terratest-style end-to-end checks for platform assemblies. Does terraform test cost money? Mocked and plan-only runs create nothing and cost nothing. command = apply runs against a real provider create real resources for the duration of the test — priced accordingly, then destroyed by the framework. Keep them few, small, and in a sandbox. Can tests run in CI without cloud credentials? Mocked-provider tests: yes, completely — that is their headline feature. Plan runs against a real provider still need whatever credentials that provider requires to configure itself, which is one more reason the mocked suite should carry the bulk of the assertions. Where do test files live? In the module root or a tests/ subdirectory (the conventional choice), as *.tftest.hcl . terraform test discovers them in both places; keep one convention per repository. What about OpenTofu? OpenTofu implements the same test framework model — test files, run blocks, and mock providers are compatible concepts, so the approach in this guide carries across. Check your version's documentation for exact feature parity before assuming a specific block behaves identically.",
+            "url": "https://dev.to/softverseadmin/terraform-testing-in-2026-unit-tests-with-terraform-test-and-mock-providers-2e5k",
+            "source": "DEV Community",
+            "category": "cloud",
+            "tags": [
+                "aws",
+                "developpement",
+                "git",
+                "programmation",
+                "rust",
+                "terraform",
+                "web"
+            ],
+            "published_at": "2026-10-31T11:23:47+00:00",
+            "collected_at": "2026-10-31T11:29:37.099686+00:00"
+        },
+        {
+            "id": "9312b0bdbbc0ff4cee2f53639ae4cb07a6ddc82ca5927941428c6ba6f00b7963",
+            "title": "NIST Just Rewrote the Post-Quantum Deadline. Your RSA-3072 Plan Is Out of Date",
+            "description": "On October 27, NIST published the final version of IR 8547, Transition to Post-Quantum Cryptography Standards. If you followed the draft from November 2024, you might think you know what it says. You probably don't, because the final version changed the one thing that mattered most. The draft deprecated only the 112-bit parameter sets after 2030. That left a comfortable reading: RSA-3072, P-256 ECDSA, and Ed25519 looked acceptable until 2035. The final report closes that door. Every approved quantum-vulnerable public-key algorithm is deprecated after 2030 and disallowed under NIST standards and guidelines after 2035, regardless of key size. That is not a small edit. It moves the algorithms most products actually ship today into the deprecation category, with just over four years on the clock. What the schedule actually says For signatures, RSA, ECDSA, and EdDSA are all deprecated after 2030 and disallowed after 2035. For key establishment, finite-field Diffie-Hellman, elliptic-curve Diffie-Hellman, MQV, and RSA key transport get the same treatment. The dates are the same as the draft. The scope is much wider. \"Deprecated\" in NIST usage does not mean banned. It means the algorithm may still be used, but there is a security risk, and the data owner has to examine that risk and decide whether to continue. In practice, that turns into a documented risk-acceptance obligation. For federal high-value assets and high-impact systems, the grace period is shorter than it looks: an executive order from June 2026 requires post-quantum key establishment by December 31, 2030, and post-quantum signatures by December 31, 2031. Those systems do not get until 2035. They get 2030 and 2031. And the report does not stop at federal systems. NIST explicitly positions it as a blueprint for critical infrastructure and other organizations. The deadlines reach private vendors through procurement, not through NIST directly. How a government report becomes your vendor requirement NIST IR 8547 is not binding on private companies. It reaches them through five mechanisms, and together they explain why this report functions as a vendor requirement in practice. First, the executive order directs the FAR Council to propose a rule requiring covered contractors to comply with NIST's post-quantum FIPS by December 31, 2030. That proposed rule is due around December 19, 2026, under a 180-day clock. Second, OMB Memorandum M-26-15, issued in June 2026, tells agencies to build post-quantum integration into product requirements and to settle post-quantum responsibilities with FedRAMP cloud providers. Agencies owed their migration plans by October 22, 2026. Third, CISA published a list of product categories back in January 2026, from web browsers to endpoint encryption, where agencies \"should acquire only PQC-capable products.\" Fourth, NIST is revising its module validation processes to move faster. Fifth, CISA owes minimum elements for a cryptographic bill of materials by around March 19, 2027. If you sell software, cloud services, or hardware into any of those categories, expect to be evaluated on post-quantum capability in federal acquisitions now, not after the FAR rule lands. And vendors are unlikely to keep separate federal and commercial cryptographic baselines for long. One baseline wins, and it will be the post-quantum one. A Government Accountability Office report from October found that none of the 24 agencies it reviewed had fully addressed all three preparatory practices: building a cryptographic inventory, identifying funding, and planning testing. The people with the biggest budgets and the clearest mandate are behind. That should tell smaller teams something: this is not a task you start in 2029. The hybrid question finally has an answer For builders, the most useful clarification in the final report is about hybrid key establishment, the approach that pairs ML-KEM with a classical exchange like X25519. Until now, it was unclear how such constructions would fare in FIPS 140 validation once the classical half became deprecated or disallowed. The final report answers it: as long as at least one input to an approved composite key-establishment technique comes from an approved scheme, the combination can be validated. A hybrid mode does not lose its validation status because its classical half ages out. That removes the last respectable excuse to wait. You can ship hybrid now without painting yourself into a validation corner later. Two cautions, though. A validated module that supports hybrid ML-KEM does not prove that a given deployment actually negotiates it. Capability and enablement are different things, and buyers should check which one they are getting. And on hybrid signatures, NIST is more careful: it will accommodate dual signatures in validation but notes that their security properties are complex and need careful analysis. Signatures are the slower, more operationally disruptive half of this transition. They touch certificate authorities, firmware signing, hardware security modules, and smart cards, and none of those move quickly. NIST also named ML-KEM-768 as its recommended default parameter set, calling it a large security margin at a reasonable performance cost, and said it has no current plans to standardize additional KEMs beyond HQC. If you are picking a parameter set today and want the choice least likely to be second-guessed, that is the one. What I would do this quarter I build a small end-to-end encrypted messenger, and I went through this migration myself: ML-KEM-768 for key establishment and ML-DSA-65 for identity signatures, replacing a classical design. The protocol part was not the hard part. The hard part was everything around it: key storage, migration paths for existing sessions, and making sure a new key type did not silently break an old client. That experience shapes how I read this report, and it is why I think the practical checklist matters more than the dates. First, make a cryptographic inventory. You cannot migrate what you cannot list. Walk your codebase and your infrastructure and write down every place a public key is generated, exchanged, stored, or verified. Include the boring ones: TLS certificates, code signing, backup encryption, JWT signing keys, SSH host keys. The inventory is the part the GAO found agencies missing, and it is the part most small teams skip. Second, put ML-KEM-768 behind a flag in your key establishment path, hybrid with your existing classical exchange, and turn it on where you control both ends. Do not wait for a perfect migration plan. The hybrid validation answer means this step is safe to take now. Third, design for crypto-agility from the start. The algorithm you pick today will not be the last one you ship. If swapping a KEM or a signature scheme requires touching twenty files and a database migration, fix that structure before you fix the algorithm. A clean seam between \"what key type\" and \"what the protocol does with it\" is worth more than picking the perfect parameter set. Fourth, treat signatures as a separate, longer project. Key establishment can go hybrid quickly. Signatures touch trust roots, and trust roots move slowly. Start the inventory for signatures now, even if the migration itself takes years. Fifth, watch two dates that are closer than 2030: the FAR proposed rule around December 19, 2026, and the CISA bill-of-materials elements around March 19, 2027. If you sell to anyone who sells to the government, those will show up in your contracts and questionnaires before the 2030 deadline does. The deadline stopped being a draft For two years, the post-quantum transition had the feel of a long-range plan: real standards, vague dates, and plenty of room to say \"we will get to it.\" The final IR 8547 changes the texture of it. The dates are now attached to procurement rules, validation processes, and contract clauses. The deprecation scope now covers the strong classical defaults, not just the weak ones. And the agencies that were supposed to be ready first have, by the GAO's account, not finished their homework. None of this means a quantum computer is about to break RSA next week. It means the paperwork, the procurement, and the product roadmaps have caught up with the standards. If your plan still says RSA-3072 and P-256 are fine until 2035, that plan is out of date as of October 27. Rewrite it now, while rewriting it is still cheap. Sources: NIST IR 8547 (Final, October 2026); OMB Memorandum M-26-15 (June 2026); Executive Order 14412 (June 2026); GAO-27-108740 (October 2026); Cloud Security Alliance research note on IR 8547 (October 30, 2026).",
+            "url": "https://dev.to/indirectb/nist-just-rewrote-the-post-quantum-deadline-your-rsa-3072-plan-is-out-of-date-3a35",
+            "source": "DEV Community",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "developpement",
+                "llm",
+                "programmation",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-10-31T11:23:43+00:00",
+            "collected_at": "2026-10-31T11:29:37.100250+00:00"
+        },
+        {
+            "id": "6fbf9676e7d3e41dcc9c8f72686df9c58d23a1369513bf92bd3ee9292150c11d",
+            "title": "SpecterLAN: Find the Ghosts on Your Network",
+            "description": "This is a submission for the Hacktoberfest Open-Source AI Challenge Week 4: Ghost in the Machine What I Built I built SpecterLAN , a local-first network monitor that helps you understand which devices are connected to your network and what changed between scans. SpecterLAN can show: New devices Devices that went offline Devices that returned IP address changes Devices that still need review For the Ghost in the Machine theme, unfamiliar or forgotten devices become the \"ghosts\" on your network. SpecterLAN does not assume an unknown device is dangerous. It shows what changed and lets you identify the device yourself. It also includes Ask the Ghost , where a local AI model explains network changes using evidence collected by SpecterLAN. Everything runs locally on your device. Demo Watch the SpecterLAN demo The demo shows: A baseline network scan A new device appearing SpecterLAN detecting the change Ask the Ghost explaining the change with local AI A device changing IP while keeping the same identity Another device going offline SpecterLAN also includes Demo Séance , which uses simulated network data so people can test the full experience without exposing their real network. Code GitHub repository: https://github.com/rishabh-hasija/spectarlan SpecterLAN is open source and released under the MIT License. How I Built It SpecterLAN is built with: Python Streamlit SQLite Ollama Gemma 3 4B as the default local AI model Pydantic Nmap when available, with a local fallback when it is not Network scanning happens on the user's own device. Scan history, device names, trust labels, and other information are stored locally in SQLite. For AI analysis, SpecterLAN sends structured evidence only to the locally running Ollama service. The default model is gemma3:4b . SpecterLAN also detects other compatible Ollama models already installed on the device and lets the user select one from a dropdown. Ask the Ghost does not decide whether a device is malicious. Instead, SpecterLAN creates evidence records, checks the evidence referenced by the model, and removes unsupported AI output. Why Does Open Innovation Matter? Network information is private. A network scan can contain device names, local addresses, hardware details, and information about devices inside someone's home. I did not want SpecterLAN to send that information to an external AI API. Using Ollama and an open-weight model means the AI runs on the same device as SpecterLAN. There is: No cloud AI No API key No SpecterLAN account No registration No shared database No network history uploaded to a SpecterLAN server Users can also switch to another compatible local Ollama model. Even without AI, device discovery, tracking, and scan history continue to work. This open and local approach keeps the user's network data under their control. The Spirit of It Devices appear, disappear, return, and sometimes change addresses. SpecterLAN treats those changes like apparitions on your network. A forgotten device might suddenly appear again. A new device might show up without a recognizable name. Ask the Ghost helps explain what SpecterLAN observed. The Halloween theme is part of the experience, while the findings remain evidence-based. Unknown does not mean malicious. Prize Categories Best Use of Gemma SpecterLAN uses Gemma 3 4B through Ollama as its default local AI model. Gemma powers Ask the Ghost , which explains changes between saved network scans using structured local evidence. The model runs on the user's own device, so private network information does not need to be sent to a hosted AI provider.",
+            "url": "https://dev.to/rishabhhasija/specterlan-find-the-ghosts-on-your-network-1208",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "git",
+                "programmation",
+                "python",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-10-31T11:23:40+00:00",
+            "collected_at": "2026-10-31T11:29:37.100593+00:00"
+        },
+        {
+            "id": "49569ca40c4c5abd9af258746def1c0c9929f4ee6f864a97e0b205695a5cf2e4",
+            "title": "Make Playwright Email Tests Explain Their Waits",
+            "description": "Email verification tests often fail in a confusing way: the browser is on the right page, the message eventually arrives, and the test still reports only Timeout 30000ms exceeded . That error is not a diagnosis. It does not tell you whether the application never sent the message, the inbox query used the wrong address, the provider was slow, or the assertion looked for an old message. When an email test is part of a Playwright suite, the wait itself should leave evidence. The symptom: a test that waits but cannot explain why A common first draft looks roughly like this: await page . getByRole ( ' button ' , { name : ' Create account ' }). click (); await inbox . waitForMessage ({ subject : ' Verify your email ' }); await expect ( page . getByText ( ' Account verified ' )). toBeVisible (); The code is readable, but waitForMessage may hide several different operations. It may create an inbox, poll a mailbox, filter messages, and extract a link. If all of those steps share one timeout, the failure has no useful boundary. I prefer a test to answer four questions: which mailbox was allocated, when was the message expected, what messages were observed, and why did the final candidate pass or fail? This is especially important when a team searches for phrases such as “temp mail so” or “temp mail email” while comparing test-inbox options. The search phrase is not a test contract; the observable message is. Model the email flow as observable states Treat the inbox interaction as a small state machine rather than one long sleep: allocated : the test owns a unique address. triggered : the application accepted the signup request. observed : at least one message was returned. matched : the message has the expected sender, subject, and correlation value. consumed : the verification link was opened once. Each state should have a timestamp and a small diagnostic payload. If a run reaches observed but never reaches matched , you have a filtering or application-content problem. If it never reaches observed , investigate delivery, the sender, or the inbox service. The distinction saves a surprising amount of re-running. Build a bounded inbox probe The probe should poll at a fixed interval, stop at a deadline, and return the messages it saw. Do not use an unbounded retry helper that turns every failure into “try again.” A bounded probe makes the delivery timeout a visible part of the test design. type ProbeResult = { state : ' matched ' | ' timed-out ' ; messageId ?: string ; seenSubjects : string []; }; async function waitForVerification ( inbox : InboxClient , address : string , token : string , deadlineMs = 20 _000 , ): Promise < ProbeResult > { const started = Date . now (); const seenSubjects = new Set < string > (); while ( Date . now () - started < deadlineMs ) { const messages = await inbox . list ({ to : address }); for ( const message of messages ) { seenSubjects . add ( message . subject ); if ( message . text . includes ( token )) { return { state : ' matched ' , messageId : message . id , seenSubjects : [... seenSubjects ] }; } } await new Promise (( resolve ) => setTimeout ( resolve , 1 _000 )); } return { state : ' timed-out ' , seenSubjects : [... seenSubjects ] }; } The exact inbox client will differ, but the shape is portable. Notice that the probe returns subjects even on timeout. A timeout with an empty list points in a different direction than a timeout where three unrelated messages arrived. Capture evidence at every decision Attach the probe result to the Playwright test, along with the allocated address, correlation token, and trigger timestamp. Keep the message body out of ordinary logs if it can contain user data; a subject, message ID, and redacted excerpt are usually enough. It also helps to record the application request ID. That gives you a join between browser actions, server logs, and inbox data. For CI, save this small JSON object as an artifact: { \"address\" : \"run-1842@example.test\" , \"triggeredAt\" : \"2026-10-31T11:20:00Z\" , \"state\" : \"timed-out\" , \"seenSubjects\" : [ \"Welcome\" ], \"requestId\" : \"signup-7f2a\" } This same one-change-set thinking for CI infrastructure is useful when the test depends on more than the browser; a related example is one-change-set thinking for CI infrastructure . The goal is not to collect every log, but to preserve the smallest chain of evidence that explains a failure. A Playwright example The test can now make the failure boundary explicit: const mailbox = await inbox . allocate ( `pw- ${ test . info (). workerIndex } ` ); const token = crypto . randomUUID (); await page . getByLabel ( ' Email ' ). fill ( mailbox . address ); await page . getByLabel ( ' Signup token ' ). fill ( token ); await page . getByRole ( ' button ' , { name : ' Create account ' }). click (); const result = await waitForVerification ( inbox , mailbox . address , token ); await test . info (). attach ( ' email-probe.json ' , { body : JSON . stringify ({ address : mailbox . address , token , result }, null , 2 ), contentType : ' application/json ' , }); expect ( result . state , `Inbox subjects: ${ result . seenSubjects . join ( ' , ' )} ` ). toBe ( ' matched ' ); If several tests can trigger the same mailbox, queue email checks instead of duplicating them, as shown in queue email checks instead of duplicating them . A unique lease per test is simpler, but queueing can be the safer option when the provider has strict limits. Failure analysis checklist When this test fails, check the evidence in this order: No messages observed: verify the sender accepted the request, the test address is correct, and the inbox provider is reachable from CI. Messages observed, no match: inspect subject filters, token generation, and whether an older message was selected. Match found, link fails: check URL environment, link expiry, and whether the link was already consumed by a retry. Only parallel runs fail: look for reused addresses, shared inbox filters, or a race in cleanup. Failures appear randomly: compare delivery latency and polling deadlines before adding retries. Small search typos such as temp gamil com should stay out of selectors and assertions. They can be useful as plain-text content only when you are explicitly testing search or input normalization; otherwise they add noise. Keep the wait boring and repeatable Reliable email testing is less about finding a magic timeout and more about giving every wait a purpose. Allocate a mailbox, trigger one action, poll within a deadline, record what appeared, and assert on a correlation value. The test don't need to be clever; it needs to make the next failure understandable. That workflow turns flaky email verification from a vague browser timeout into a bounded QA signal. Once the evidence is stable, you can tune delivery budgets with confidence instead of hiding the problem behind another retry.",
+            "url": "https://dev.to/silviutech/make-playwright-email-tests-explain-their-waits-3cp5",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-10-31T11:23:34+00:00",
+            "collected_at": "2026-10-31T11:29:37.101292+00:00"
+        },
+        {
+            "id": "39f10f199b9f1cdc70e75554edea66e61a7b568ed47a5c49c4c6831208a56a70",
+            "title": "n8n 3.0 removes the Function node, and published workflows stop activating",
+            "description": "n8n 3.0.0 shipped as a beta on 27 October, stable lands in early December, and it is an operational release rather than a feature release. Around three dozen legacy nodes go away, including Function, Function Item, Item Lists, Cron and Interval. The dangerous sentence is in n8n's own docs: \"Workflows that use a removed node fail when they run. If such a workflow is published, it doesn't activate when n8n 3.0 starts, so its triggers stop firing.\" No red execution. No retry. No email. The workflow is simply not active, and you find out from a customer. The mapping Removed in 3.0 Use instead -------------------- ---------------------------------------------- Function Code node, Run Once for All Items Function Item Code node, Run Once for Each Item Item Lists Split Out, Aggregate, Sort, Limit, Remove Duplicates, Summarize Cron, Interval Schedule Trigger HTML Extract current node version iCalendar current node version Binary file nodes current node versions Some migrations are automatic (the AI Transform node becomes a Code node with the same generated JavaScript). Function and Function Item are not. You replace those yourself. Find them in ten minutes Settings, then Migration Report. Exists from 2.39 onwards, and it lists the affected workflows, nodes and settings on your own instance. Save a copy. On an older version, upgrade to 2.39 first. The report is worth one small, reversible upgrade. Count the node types yourself. Export workflows through /api/v1/workflows or the CLI and search the JSON for n8n-nodes-base.function , functionItem , itemLists , n8n-nodes-base.cron , n8n-nodes-base.interval . Write the list down with workflow name, node and purpose. That list is your upgrade plan and your rollback argument. Fix on 2.x, not after The Function to Code conversion is the only real work, because the execution model changes: // Function (legacy): input is items, you return an array of items return items . map ( item => ({ json : { ... item . json , seen : true } })); // Code, Run Once for All Items: read all input, return an array const items = $input . all (); return items . map ( item => ({ json : { ... item . json , seen : true } })); For Function Item, use Code with Run Once for Each Item: the input is a single item and you return that item's new data. Test each migrated workflow on 2.x, run it once manually, check the output shape the next node expects, then publish. Then upgrade, with a backup, because 3.0 cannot be rolled back. The check nobody does after upgrading Open the workflow list and look at the active toggle on every workflow, not only the ones you migrated. A workflow that lost activation looks identical to a healthy one in a screenshot. The list is the only place the difference shows, and only if you look. Full guide with the audit steps and sources: voxahq.in . No affiliate links.",
+            "url": "https://dev.to/voxahq/n8n-30-removes-the-function-node-and-published-workflows-stop-activating-41h1",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "java",
+                "javascript",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-10-31T11:23:23+00:00",
+            "collected_at": "2026-10-31T11:29:37.101534+00:00"
+        },
+        {
+            "id": "55c585918c07599be7326f084d2fa8974612d9793c93f40c96a81130c31d08c8",
+            "title": "Two Redis Ports, One TLS Boundary",
+            "description": "Two Redis Ports, One TLS Boundary A Redis Cluster node can expose a client port and a cluster bus port. The first carries application commands; the second carries node-to-node cluster traffic. Enabling TLS only for application clients leaves a second network path that deserves its own review. The cluster bus is a separate path Redis documentation describes each cluster node as needing a client TCP port, commonly 6379, and a cluster bus port. The bus port is used for cluster communication. It is not an ordinary application endpoint, even when it is reachable from the same network segment. The TLS documentation states that tls-cluster yes enables TLS for the cluster bus and cross-node connections when Redis Cluster is used. Replication links are another communication path. Teams should check the relevant replication setting as well if replicas are part of the deployment. The practical consequence is that a network scan can find two listeners and report different protocol behavior. A client certificate policy on the application endpoint does not automatically describe the cluster bus. Inventory both ports, the listening addresses, and the certificate or key material used by each node. Shared names are not shared trust Cluster nodes need a consistent view of node identity and reachability. Certificate names, client authentication requirements, and address announcements can affect both security and cluster formation. Changing a certificate can break a node's connection to peers even when ordinary clients still connect. Use a test cluster with the same node count and network layout as production, if possible. Verify peer discovery, failover, and a rolling restart. Check that a node rejects a client certificate it should not trust. Then check cluster traffic from an address that should not be a member. Test both client and peer paths before treating the rollout as complete. Avoid placing files with cluster credentials or private keys in a container layer that is copied to every role. Mount them with the right ownership and rotate them through a process that accounts for all nodes. Keep the private key out of logs and command arguments. Announcement addresses need review Redis Cluster is sensitive to how nodes announce addresses and ports. A setting that works inside one Docker network may produce an address that remote clients or peers cannot reach. This can lead an operator to broaden firewall rules until the cluster works, which is a poor way to discover the intended network boundary. Record the announced address, client address, and bus address separately. Compare them with the DNS names and network policies used by applications. If a proxy or NAT layer changes the path, document the translation and test from both sides. A rollout checklist Confirm that the client and bus ports are both in the asset inventory. Review tls-cluster and replication TLS settings on every node. Verify certificate names, trust roots, and client-authentication policy. Test peer join, failover, and restart on a disposable cluster. Test denied peer and client paths from outside the intended networks. Keep a rollback node configuration and a certificate rollback path. After rollout, monitor for nodes that repeatedly join and leave or report certificate errors. A cluster that appears healthy from one node can still have one peer using a weaker path. The useful evidence is a complete map of listeners and a tested rejection for each path, with no unencrypted bus ports left behind. References Redis TLS documentation Redis cluster specification",
+            "url": "https://dev.to/kozhevniko/two-redis-ports-one-tls-boundary-512i",
+            "source": "DEV Community",
+            "category": "devops",
+            "tags": [
+                "developpement",
+                "docker",
+                "programmation",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-10-31T11:23:10+00:00",
+            "collected_at": "2026-10-31T11:29:37.101813+00:00"
+        },
+        {
+            "id": "60dc89a7a00f0908e9b9718d0c50881fd882bbfb459248d78798719da9ed319f",
+            "title": "Ollie raised $7.5 million in September and shuts down on 6 November",
+            "description": "A privacy-first family assistant told users on Friday that it closes on 6 November. That is about a week of notice, and six weeks after it announced a $7.5 million seed round led by Khosla Ventures. Ollie is worth ten minutes of your attention, and not because a startup failed. Because of the shape of it. What it was San Diego based, text-message first: no app to install, just a number you message. It connected to calendars and email, and handled the unglamorous part of a household, schedules, meals, to-dos, groceries, appointments, payments. For logins it opened a cloud browser session and sent you a link rather than asking for your password. It also held SOC 2, the audit standard that says a company handles data to a documented process. In a category where \"we care about privacy\" is usually a paragraph in a pitch deck, that certificate was the product's argument. The part developers should notice A funded company with a compliance certificate, a subscription product and real users closed six weeks after announcing the round. Users got a week. There is a structural reason assistant products are hard. The big platforms ship a general assistant for free, with the calendar, the phone and the mail already inside it. A startup has to be better at one narrow job, charge for it, and pay per token for every conversation. Privacy is a real differentiator, but it is expensive to prove and it does not reduce the token bill. If you build on top of small vendors Three habits that cost nothing and save a weekend: 1. Export weekly if a tool holds your calendar, receipts or requests, keep a local copy 2. Keep a fallback one script or spreadsheet that can do the job badly but without the vendor 3. Read the notice check how much warning the terms give before a shutdown The third one is the one people skip. A week of notice is normal in this market, not an edge case. The same week, the money side On 30 October the FT reported that OpenAI had cut its latest round from up to $30 billion to about $20 billion, four days after lowering the valuation it was asking from $1.4 trillion to $1.25 trillion. Read those two stories together and you get the quarter: capital became more careful, and small subscription products feel it first. A seed round announces the intention to build; it does not announce the runway. Full story with sources: voxahq.in . No affiliate links.",
+            "url": "https://dev.to/voxahq/ollie-raised-75-million-in-september-and-shuts-down-on-6-november-1fl3",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "openai",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-10-31T11:22:23+00:00",
+            "collected_at": "2026-10-31T11:29:37.102018+00:00"
+        },
+        {
+            "id": "3b103df14aaa2c65009e56d2dee7a9649f78ea5dd7941b083bafa1727b401095",
+            "title": "Our maintenance mode is one boolean in a TypeScript file, and it taught us that our sign-in pages are not public",
+            "description": "Nakodo has a maintenance mode. The whole of it is this file, src/lib/maintenance.ts , 15 lines: // On while the database is down for maintenance; off again, and deployed, once // it's back. While on: // - the app and the sign-in pages show /maintenance instead (src/proxy.ts), so // nobody can sign up, sign in or change anything; // - the crons skip their runs (src/lib/cron.ts); the first run after it's off // picks the work up where it was left; // - Stripe's and Resend's webhooks answer 503, so they send the event again // later, and the other endpoints that need the database answer 503 too; // - creators' opt-out and unsubscribe links say to come back later. // The public pages stay up: they never touch the database. export const MAINTENANCE = false ; export function maintenanceResponse (): Response { return new Response ( \" Down for maintenance \" , { status : 503 , headers : { \" Retry-After \" : \" 600 \" } }); } No feature flag service, no environment variable, no row in a table. A constant, read in ten places, and changing it is a commit and a deploy. It has been true once, on 12 October 2026, for 23 minutes. Both flips are in the history: 8efb633 2026-10-12 15:05:09 Add maintenance mode for database downtime 5bd22d3 2026-10-12 15:28:33 Disable maintenance mode The ten call sites Writing a kill switch is easy. Deciding what it means is the work, and it means something slightly different in each of the ten places that read it. The proxy , first, because it covers everything a browser asks for: if ( MAINTENANCE ) { const path = request . nextUrl . pathname ; if ( isPublicPath ( path ) && ! isSignInPath ( path )) return NextResponse . next (); if ( path . startsWith ( \" /api/ \" )) return maintenanceResponse (); return NextResponse . rewrite ( new URL ( \" /maintenance \" , request . url )); } Three answers in three lines: public pages carry on, API routes get the 503, everything else is rewritten to a page that says we will be back. A rewrite rather than a redirect, so the URL the visitor came for stays in the address bar and works when they reload it later. The cron jobs , through one function: export async function cronSkipReason (): Promise < string | null > { if ( MAINTENANCE ) return \" maintenance \" ; try { await withTimeout ( db . execute ( sql `select 1` ), 10 _000 , () => new Error ( \" timed out \" )); return null ; } catch ( e ) { console . error ( \" cron: the database isn't answering, skipping this run \" , e ); return \" database unreachable \" ; } } Two reasons to skip, and the flag is the cheap one: it costs no round trip. The important property is that a skipped run starts nothing, so nothing is left half done, and the queue is picked up by the next run as if the gap had not happened. Two of the four crons run every five minutes, so a 23-minute window is about nine skipped runs between them. The two webhook endpoints , which get the 503 for a specific reason. Both Stripe and our mail provider retry a failed delivery with backoff, so a 503 means \"ask again\" and the event is not lost. A 200 with the body thrown away would be a lost subscription change or a lost bounce. This is the one place where answering with an error is the careful behaviour and answering successfully is the destructive one. The two public pages behind email links , the opt-out page and the unsubscribe page, which render a different component: if ( MAINTENANCE ) return < BackSoon />; These are the ones I care most about, because the person clicking them did not choose a moment. They are 20 lines of \"this link cannot do anything right now, open it again in a little while\", with no form and no database read, and they are the reason the one-click endpoints answer 503 rather than pretending: a mail client that gets a 503 from a one-click unsubscribe will show the user that it failed, which is correct, instead of telling them they are unsubscribed when nothing was written. The refactor it forced The commit that added all this also changed a file that has nothing to do with maintenance, and that change is the most durable thing to come out of the feature: const PUBLIC_PREFIXES = [ ... - \"/login\", - \"/forgot-password\", - \"/reset-password\", - \"/auth/\", ]; +const SIGN_IN_PREFIXES = [\"/login\", \"/forgot-password\", \"/reset-password\", \"/auth/\"]; + export function isPublicPath(path: string): boolean { - return PUBLIC_EXACT.has(path) || PUBLIC_PREFIXES.some((p) => path.startsWith(p)); + return PUBLIC_EXACT.has(path) || [...PUBLIC_PREFIXES, ...SIGN_IN_PREFIXES].some((p) => path.startsWith(p)); +} + +// The sign-in flow: public, but it needs the database. +export function isSignInPath(path: string): boolean { + return SIGN_IN_PREFIXES.some((p) => path.startsWith(p)); } Before that commit, \"public\" meant one thing in this codebase: no session required. The auth boundary only ever asked that question, so one list was enough. Maintenance mode needs a different question: does this page need the database. Those two sets overlap but are not the same, and the login page is exactly where they come apart. It is public, anybody can open it, and it is useless while the database is down, because signing in writes a session and reads a profile. So now there are two predicates. isPublicPath answers the auth question and still includes the sign-in pages. isSignInPath carves out the four prefixes that are public but database-dependent. The proxy's maintenance branch is the only caller that needs both, and the line reads exactly like the sentence that justifies it: public, and not sign-in. I would not have found that distinction by thinking about it. I found it by needing the app to be half up. The page that refuses to exist while the app is up export default function MaintenancePage () { if ( ! MAINTENANCE ) redirect ( \" /login \" ); ... The maintenance page guards itself, which means the flag is checked twice on the same request: once in the proxy to decide to rewrite there, once in the page to decide whether it is allowed to render. That is not belt-and-braces for its own sake. Without the guard, /maintenance would be a real, reachable, indexable page claiming the app is down, at all times, for anybody who guessed the URL. With it, the URL only means anything during a window. You can check the current state from outside: $ curl -sI https://nakodo.app/maintenance | grep -i location location: /login?next = %2Fmaintenance That redirect is actually the other layer talking. /maintenance is not in the public path list, so a signed-out request to it is sent to the login page by the normal auth check before the page runs at all. A signed-in visitor gets there and the page's own guard sends them to the same place. Two different mechanisms, one destination, and either way the answer is \"there is nothing here right now\", which is the truth. Why a constant and not a flag service The obvious objection to a committed boolean is that turning it on requires a build. On this project that is a deploy of a couple of minutes, and it has a property I have come to want: the switch leaves a commit, with a timestamp and a message, in the same history as everything else. The two lines above are a complete incident record. The alternatives I did not take, and why: an environment variable would also need a redeploy on our host for a running deployment to see it, so it costs the same couple of minutes and leaves no record; a flag in Redis would be instant, and would put the switch in a second service that can have its own bad day, while the thing we are defending against is the database being unavailable; a flag in the database is obviously circular. What a constant cannot do is be flipped by somebody who cannot deploy, or be flipped automatically when the database goes down on its own. The second one is a real gap, and it is partly covered by the select 1 in cronSkipReason above: the background work stops by itself when the database stops answering, whether or not anybody set the flag. The pages behind the login do not, and a visitor during an unplanned outage gets an error boundary rather than the polite page. If I were to extend this, that is the piece I would build next, and it would not be a nicer switch: it would be the proxy noticing. What stays up The 76 pages in the sitemap are unaffected by any of this, and the schema comment that promises it is checkable: $ grep -rl \"@/db\" \"src/app/(marketing)\" src/content | wc -l 0 Not one file under the marketing routes or the content directory imports the database. The guides, the pricing page , how it works and every niche page are built from arrays in the repository at deploy time, so they are not \"up because the database is up\", they are up because they have never needed it. That is what the proxy's first branch is protecting: during the 23 minutes in October the public half of the site was serving exactly what it serves now. That is the real shape of a maintenance mode, and it is mostly not the switch. It is knowing, per route, which of the two questions you are asking: does this need a user, or does this need the data.",
+            "url": "https://dev.to/daniel_pertu/our-maintenance-mode-is-one-boolean-in-a-typescript-file-and-it-taught-us-that-our-sign-in-pages-5afd",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "programmation",
+                "typescript",
+                "web"
+            ],
+            "published_at": "2026-10-31T11:22:19+00:00",
+            "collected_at": "2026-10-31T11:29:37.102757+00:00"
+        },
+        {
+            "id": "54395dd4c194e5145bc44d5e544ed303c0ce91d238a243638a2d6c0d85863051",
+            "title": "The Role of Artificial Intelligence and Inkjet Printers in Smart 3D Panel Manufacturing: From Quality Control to Production Accuracy",
+            "description": "Introduction The construction industry is gradually moving toward smarter and more efficient manufacturing methods. As demand for lightweight, durable, and energy-efficient building materials increases, manufacturers are looking for technologies that can improve production accuracy while reducing waste and operational costs. One product that has gained attention in modern construction is the 3D wall panel, also known as the 3D panel. These panels typically consist of an expanded polystyrene (EPS) foam core positioned between two layers of welded steel wire mesh. Diagonal steel connectors pass through the foam core, creating a three-dimensional structure. Once installed, the panels are generally covered with concrete or shotcrete to form a strong building element. Although the basic manufacturing process is well established, modern technologies can make it more precise and easier to manage. Artificial intelligence (AI) and industrial inkjet printers are two technologies that offer valuable opportunities in this field. AI can support production monitoring and quality inspection, while inkjet printing provides an efficient method for marking products with important manufacturing information. Understanding how these technologies work together helps explain the potential of smart manufacturing in the 3D panel industry. Understanding the 3D Panel Manufacturing Process Before exploring the role of AI and inkjet printing, it is important to understand how 3D panels are manufactured. The production process usually begins with preparing the EPS foam core. The foam is cut into specific dimensions according to the required panel design. Steel wire mesh is then positioned on both sides of the foam, and diagonal connectors are installed to connect the two mesh layers. The final structure must meet several technical requirements, including accurate dimensions, appropriate wire spacing, reliable connections, and consistent foam density. Even small manufacturing variations can affect installation, material consumption, and the overall performance of the finished panel. For this reason, quality control is an essential part of the production process. Manufacturers need reliable methods to monitor each stage, identify defects, and maintain consistent product specifications. How Artificial Intelligence Improves 3D Panel Production Artificial intelligence can help manufacturers analyze production data, recognize patterns, and identify potential problems more efficiently. Instead of relying exclusively on manual inspections, production facilities can use AI-supported systems to monitor different manufacturing stages. 1. Automated Quality Inspection One of the most promising applications of AI is automated visual inspection. Cameras installed along production lines can capture images of finished panels and send them to computer vision systems for analysis. AI models trained on relevant production images may identify visible issues such as: Irregular foam dimensions Missing or misplaced wire connections Uneven wire mesh positioning Damaged foam surfaces Inconsistent panel geometry These systems can help operators detect defects earlier and reduce the likelihood of defective products reaching the packaging stage. However, AI inspection should complement, rather than replace, technical testing and established quality control procedures. Structural performance still requires appropriate engineering assessments and material testing. 2. Improving Cutting Accuracy The EPS foam core must be cut according to specific measurements. Inaccurate cutting can create difficulties during mesh installation and lead to unnecessary material waste. AI-based production systems can analyze cutting data and identify patterns associated with measurement errors. When integrated with suitable sensors and automated cutting equipment, these systems can support more consistent production. For example, a smart manufacturing system may detect repeated dimensional deviations and alert operators before the problem affects a large batch of panels. 3. Predictive Maintenance for Manufacturing Equipment Unexpected equipment failures can interrupt production and increase operational costs. Cutting machines, welding equipment, conveyors, and other production components require regular maintenance. AI-powered predictive maintenance systems can analyze information such as machine temperature, vibration, operating speed, and production history. By recognizing unusual patterns, they may help maintenance teams identify potential equipment problems before a breakdown occurs. This approach can improve production planning, reduce unexpected downtime, and support more stable manufacturing operations. 4. Reducing Material Waste Efficient material consumption is important for manufacturers working with EPS foam and steel wire. Incorrect cutting, defective welding, and repeated production adjustments can increase waste. AI can analyze production records and help identify the stages where material losses occur most frequently. Manufacturers can use these insights to adjust production settings, improve cutting plans, and reduce avoidable errors. The result can be a more controlled manufacturing process with better resource utilization. The Role of Industrial Inkjet Printers in 3D Panel Manufacturing While AI focuses on data analysis and production optimization, industrial inkjet printers provide a practical solution for product identification and traceability. During manufacturing, panels need to be identified using information that helps operators, distributors, and construction teams distinguish between different products and production batches. Industrial inkjet printers can print variable information directly onto suitable product surfaces, labels, or packaging materials without requiring physical contact with the printing surface. Depending on the production requirements, manufacturers can use these systems to print: Production dates Batch and serial numbers Product codes Manufacturer identification Technical specifications QR codes and barcodes This information makes it easier to organize inventory, track production batches, and manage product distribution. 1. Printing Production Dates and Batch Numbers Production date and batch identification are important for maintaining manufacturing records. When each batch receives a unique identification code, manufacturers can connect finished products to their corresponding production information. For example, if a quality issue is discovered after delivery, the manufacturer can use the printed batch number to identify the relevant production period and investigate the manufacturing records. An industrial inkjet printer can automate this marking process, reducing the need for manual labeling and helping maintain consistent identification across large production volumes. 2. Contactless Printing on Different Materials One advantage of industrial inkjet technology is its ability to print without direct contact with the product surface. This can be useful when marking packaging materials or suitable surfaces that are difficult to process using traditional contact-based printing methods. Manufacturers can select an appropriate ink and printing system according to the material, surface condition, production speed, and environmental requirements. For 3D panels { تری دی پنل }, printing on packaging, protective films, labels, or designated marking areas may be more practical than printing directly onto the foam or steel mesh. 3. Supporting Product Traceability Traceability allows manufacturers to follow products throughout the supply chain. A printed barcode or QR code can connect a physical panel or package to a digital record containing information such as product dimensions, production batch, manufacturing date, and inspection status. This approach can make warehouse operations more organized and help construction companies verify product information before installation. Combining AI and Inkjet Printing for Smart Manufacturing The real potential of these technologies becomes clearer when they are integrated into a connected production system. Imagine a manufacturing facility where AI-supported cameras inspect each panel after assembly. The system checks visible characteristics and sends inspection results to a production management platform. Once a panel passes the required checks, an industrial inkjet printer marks its packaging with a unique batch number or QR code. The printed code can then connect the physical product to its digital manufacturing record. This workflow offers several advantages: Improved production tracking: Each batch can be associated with manufacturing and inspection information. Faster identification: Operators can identify products without manually checking multiple documents. Better quality management: Inspection records can help manufacturers investigate recurring defects. More organized inventory: Product codes make warehouse classification and distribution easier. Reduced manual operations: Automated marking and inspection can reduce repetitive tasks. However, successful integration requires compatible software, reliable communication between equipment, suitable printing hardware, and a clearly defined data management process. Important Factors When Choosing an Industrial Inkjet Printer Selecting the right industrial inkjet printer depends on the specific requirements of the production facility. Not every printing system is suitable for every surface or manufacturing environment. Several factors should be considered before purchasing a machine. Printing Speed The printer must operate at a speed compatible with the production line. A system that cannot keep up with manufacturing output may create bottlenecks. Printing Surface Manufacturers should determine whether information will be printed on packaging film, cardboard, labels, or another material. Ink compatibility and adhesion are important considerations. Print Quality Small production codes, barcodes, and QR codes must remain readable. The printer should provide sufficient resolution and consistent printing performance for the intended application. Maintenance Requirements Industrial environments may contain dust, vibration, and changing temperatures. Choosing equipment with appropriate protection, accessible maintenance components, and reliable technical support can help reduce operational interruptions. Integration with Production Systems For smart manufacturing, the printer should be compatible with production management software and other automation equipment where required. This makes it easier to synchronize product identification with manufacturing data. The Future of Smart 3D Panel Manufacturing The development of smart manufacturing is creating new opportunities for producers of construction materials. Artificial intelligence, machine vision, industrial automation, and digital identification systems can help manufacturers improve visibility across their production operations. In the future, AI systems may become more capable of analyzing production conditions, identifying complex defects, and recommending adjustments based on historical manufacturing data. At the same time, industrial inkjet printers and digital coding systems can make product identification faster and more reliable. These developments do not eliminate the importance of skilled operators, engineering standards, or physical quality testing. Instead, they provide additional tools that help manufacturers make better decisions and maintain more consistent production processes. For companies producing 3D panels, investing in suitable automation technologies can be a practical step toward improving efficiency and strengthening quality management. Conclusion Artificial intelligence and industrial inkjet printing serve different but complementary purposes in modern 3D panel manufacturing. AI supports production analysis, automated inspection, predictive maintenance, and material optimization. Industrial inkjet printers simplify product marking by printing production dates, batch numbers, product codes, and other identification information. When these technologies are connected through a well-designed manufacturing system, they can improve traceability, reduce manual work, and provide better control over production operations. As construction material manufacturing continues to evolve, the combination of intelligent software and reliable industrial equipment is likely to become increasingly valuable for companies seeking greater accuracy, efficiency, and consistency.",
+            "url": "https://dev.to/mehrnaz/the-role-of-artificial-intelligence-and-inkjet-printers-in-smart-3d-panel-manufacturing-from-2mm4",
+            "source": "DEV Community",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "developpement",
+                "git",
+                "intel",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-10-31T11:22:00+00:00",
+            "collected_at": "2026-10-31T11:29:37.103624+00:00"
+        },
+        {
+            "id": "1f67e42779eb1bd7ce4b94a0e652f0fa9c8dcdaa2c145d8fdc9cc7223293a06a",
+            "title": "Aggressor-Side Classification in Order-Flow Indicators: Quote Rule, Tick Rule, and Unknown Trades",
+            "description": "A trade print tells us that a transaction occurred at a particular price and size. It does not always tell us whether the buyer or seller initiated it. Yet footprint charts, bid/ask volume displays, and cumulative delta all depend on assigning trades to a side. A classification error made at ingestion can propagate into every downstream visualization. There is no universally correct fallback for missing or stale quote data. The useful engineering question is not simply “Was this a buy or a sell?” It is “What evidence supports this classification, and what do we do when that evidence is incomplete?” Aggressor side is not trade direction Every executed trade has a buyer and a seller. “Buyer-initiated” generally means an incoming order crossed the spread to execute against resting sell liquidity; “seller-initiated” means the analogous action against resting buy liquidity. It does not mean that the buyer knows the future direction of the market or that a buy signal has appeared. Some feeds provide an aggressor-side indicator. Others provide trades and quotes that let you infer one. Verify the feed's documented semantics before treating either as ground truth. Equities may require a consolidated best bid/offer; a futures feed may supply venue-specific inside quotes. These inputs are not interchangeable without a data-policy decision. Method 1: The quote rule When an appropriate bid/ask snapshot can be aligned with the trade, a common classification rule is: Trade at or above the contemporaneous ask: buyer-aggressed candidate. Trade at or below the contemporaneous bid: seller-aggressed candidate. Trade inside the spread, or with inconsistent quotes: unknown. “Contemporaneous” does a lot of work here. Quote and trade messages may be delivered on different channels, arrive out of order, or use timestamps with different precision. Comparing a trade with the quote that happens to be most recently received can silently contaminate the result. Validate source, ordering, quote age, and whether the quote was actually applicable at execution time. If both comparisons appear true because the market is locked or crossed, do not let branch order arbitrarily pick a winner: flag the quote as unusable under your documented policy. Method 2: The tick rule When reliable quote context is unavailable, the tick rule uses the change from the previous trade price: Higher than the previous print → buy candidate. Lower than the previous print → sell candidate. Same price → apply an explicit zero-tick policy, such as retaining the previous nonzero price-change direction, or mark unknown. This is a heuristic, not a substitute for a contemporaneous quote or an exchange-provided aggressor flag. It can behave poorly when spreads are wide or the tape contains gaps or reordering. In a report or indicator settings panel, name the method rather than simply labeling the output “true buy volume.” A classification function with an honest third state The example below is standalone C#-style application logic, not a drop-in NinjaScript indicator. It illustrates a deliberately conservative quote policy, an optional tick-rule fallback, and a separate unknown outcome. enum Side { Buy, Sell, Unknown } sealed class TradePrint { public double Price; public DateTime TimeUtc; } sealed class Quote { public double Bid; public double Ask; public DateTime TimeUtc; } static Side Classify( TradePrint trade, Quote quote, double? previousTradePrice, Side previousTickDirection, TimeSpan maxQuoteAge) { bool quoteUsable = quote != null && quote.Bid > 0 && quote.Ask > quote.Bid && trade.TimeUtc >= quote.TimeUtc && trade.TimeUtc - quote.TimeUtc <= maxQuoteAge; if (quoteUsable) { if (trade.Price >= quote.Ask) return Side.Buy; if (trade.Price <= quote.Bid) return Side.Sell; return Side.Unknown; // Inside spread: no forced side } if (!previousTradePrice.HasValue) return Side.Unknown; if (trade.Price > previousTradePrice.Value) return Side.Buy; if (trade.Price < previousTradePrice.Value) return Side.Sell; return previousTickDirection; // Configurable zero-tick policy } The time threshold is a policy input, not a universal constant. Timestamp checks cannot fix unsynchronized providers or missing quote changes. Also, previousTickDirection must be maintained from the previous nonzero price change, not accidentally overwritten with Unknown on every tied print. A production pipeline should preserve a classification method and ideally a confidence/provenance field alongside the side label. Otherwise, a chart may combine exchange flags, quote-rule guesses, and tick-rule guesses while making them look equally certain. What should delta do with unknown volume? For each print, aggregate its size into exactly one of three buckets: buy, sell, or unknown. Then define your displayed delta explicitly: classified_delta = buy_volume - sell_volume classified_volume = buy_volume + sell_volume all_traded_volume = classified_volume + unknown_volume Unknown volume should not disappear from total traded volume. Conversely, forcing all unknown prints into buy or sell overstates the certainty of delta. Showing an “unclassified %” beside delta can be more honest than a falsely precise histogram. A useful diagnostic is to compare classification rates by instrument, session, feed, and replay/live mode. A sudden rise in unknown volume may indicate a quote-availability change or timestamp alignment issue—not a change in market sentiment. Separate ingestion, classification, aggregation, and rendering Keep these stages independent: Ingestion: validate timestamps, ordering, trade sizes, and quote provenance. Classification: apply a selected policy and record the method used. Aggregation: map prices to integer tick indices and maintain buy/sell/unknown counters without floating-point price-key drift. Rendering: consume consistent snapshots rather than mutable accumulation buffers. This separation lets you replace a fallback method without rewriting the footprint renderer. It also makes feed comparisons testable: run the same recorded prints through two classification policies and inspect where they disagree. For wider context on order-book, tape, and delta concepts, see the ICF Market volume and order-flow education series. The classification policy described here is an educational design example, not a claim about any proprietary ICF Market implementation. The test I would run before shipping Build a small replay fixture with: normal at-bid and at-ask prints, an inside-spread trade, a locked quote, a stale quote, the first print of a session, and a sequence of same-price trades. Assert that all volume remains accounted for and that the output names its source policy. Discussion: If you have both a feed-supplied aggressor flag and the quote rule, do you treat one as authoritative, record the disagreement, or surface both? Disclosure: This article was prepared with AI assistance. The code is illustrative and has not been tested against a live market-data feed. This is educational material, not trading advice.",
+            "url": "https://dev.to/icf_market/aggressor-side-classification-in-order-flow-indicators-quote-rule-tick-rule-and-unknown-trades-53m4",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "csharp",
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-10-31T11:21:18+00:00",
+            "collected_at": "2026-10-31T11:29:37.104280+00:00"
+        },
+        {
+            "id": "029c75e8db45a783d43782da4450bbd0789d45698c8ac1acae116bf73b6dc213",
+            "title": "The biggest delete in our app is one line of raw SQL against a table our ORM does not manage",
+            "description": "Nakodo deletes an account like this: await db . execute ( sql `delete from auth.users where id = ${ user . id } ` ); One statement, written as raw SQL because the table it names is not in our schema file and not in any of our 32 migrations. It belongs to Supabase Auth. Everything the account owns goes with it, and what goes and what stays is decided entirely by 24 foreign keys declared elsewhere. I pulled all 24 out of the latest migration snapshot to see whether the rules were consistent. They are, more than I expected, so this is a census rather than a confession. Twenty-four keys, two rules, no third rule cascade 14 set null 10 restrict 0 no action 0 ( on delete ) no action 24 ( on update ) Every delete rule in the schema is one of two choices, and no primary key in this app is ever updated, so the update rule is uniform by default rather than by decision. The split is not arbitrary. Reading down the list, the rule follows from one question: is the child row a part of the parent, or a record of something that happened? Parts cascade (eight of the 14): Child Parent Rule profiles.id users cascade subscriptions.user_id users cascade campaigns.user_id users cascade keywords.campaign_id campaigns cascade campaign_channels.campaign_id campaigns cascade outreach_emails.thread_id threads cascade support_messages.ticket_id tickets cascade videos.channel_id channels cascade A profile with no user is nothing. A message with no ticket is nothing. There is no version of the product where you would want to keep it. Records of events set null (all ten of them): Child Parent Rule audit_log.user_id users set null email_preferences.user_id users set null notice_sends.sent_by users set null suppressions.thread_id threads set null outreach_threads.campaign_id campaigns set null usage_events.campaign_id campaigns set null support_tickets.campaign_id campaigns set null jobs.run_id runs set null searches.run_id runs set null channels.place_id places set null Each of those is a thing that happened, and it still happened after the row that caused it is gone. An audit entry saying an account was deleted must survive the account being deleted. An opt-out must survive the conversation it came from, because its whole job is to stop another conversation starting later. That last one is published, not just implemented. The privacy notice says, of a deleted campaign, that we keep \"a short record with your account\" of who was written to and \"no second try for 6 months after they say no\". The set null on suppressions.thread_id is that sentence as a schema constraint. The same page's \"deleting your account removes your profile, campaigns, conversations and plan straight away\" is the six cascades in the first table. You can read our delete rules off a page written for people who do not know what a foreign key is, which is the most useful thing a privacy notice has ever done for me as a developer. A check worth running on your own schema A set null rule on a NOT NULL column is a delete that fails at runtime, every time, for the whole statement. Postgres lets you declare it, because the constraint and the column are separate objects. I checked all ten: audit_log.user_id nullable email_preferences.user_id nullable notice_sends.sent_by nullable suppressions.thread_id nullable outreach_threads.campaign_id nullable usage_events.campaign_id nullable support_tickets.campaign_id nullable jobs.run_id nullable searches.run_id nullable channels.place_id nullable Ten for ten. That is one of those checks that is boring when it passes and is a production incident when it does not, and it takes one pass over a snapshot file to answer. The reverse is also worth noting. Two of the 14 cascades are on nullable columns, which means an orphan is a legal state rather than an impossible one: a campaign can exist with no owner at all (it is how a campaign created from the command line waits to be claimed), and a queued job can exist with no campaign. Nine of them point outside the migrations auth.users is Supabase's table. Nine foreign keys reference it, six cascading and three nulling, and none of the 32 migrations in this repository created it. That has a few consequences I had to get used to: the largest fan-out in the schema is triggered by code I did not write, whenever a user is deleted through the auth provider's dashboard or API, not only by my own action; so the cascade rules are the entire protection against orphans, because there is no application code in the path at all; and the audit row has to be written before the delete, which is exactly what the action does, because after it there is no user to attribute it to. The order in the account deletion is the part I would keep if I rewrote the feature. Cancel the paid plan and remove the saved card at the payment provider first, and bail out with a message if that fails, because the one unrecoverable mistake here is deleting the account and leaving a subscription that still bills. Then write the audit row. Then the one line of SQL. Then sign out and redirect, which is why the public home page has a notice that reads a ?deleted=1 query parameter. Four tables with no foreign key at all Out of 25 tables, four have no key in either direction: an inbound mail staging table, a log of place imports, and two tables that track outside services' daily usage. They are islands by design, each one written by one job and read by one other, and the two usage tables deliberately have no owner because a provider's limit is not a user's property. One more absence is worth naming because it was a deliberate trade rather than an oversight. The table holding creators and businesses uses a single text column as its primary key, with a prefix deciding what kind of ID it is, and the conversation table stores that ID without a foreign key to it. Reference data gets purged on a retention schedule while conversations are kept, so a key would either block the purge or delete the history. The honest cost is that the ID in a conversation row can point at nothing, and nothing in the database stops it. Postgres does not index the referencing side, and it shows A foreign key creates an index on the parent (it needs the unique key it points at) and nothing at all on the child. Deleting a parent therefore scans every child table that references it, unless you indexed the referencing column yourself. I checked which of the 24 referencing columns are the leading column of some index, unique constraint or primary key: COVERED 22 BARE 2 The two bare ones are email_preferences.user_id and notice_sends.sent_by , and both are reached by the account delete above. So the single most consequential statement in the application triggers a sequential scan on two tables, every time. In practice both tables are tiny and both are small on purpose: email preferences are keyed by address rather than by user, because consent belongs to the address, and the notice table holds one row per account that has been sent a particular notice. The 22 that are covered are covered for a reason that has nothing to do with deletes: they are the columns the app filters by, so the index was there before any delete needed it. Which is the general lesson. Index coverage of foreign keys is nearly free if your access patterns run along the same edges as your ownership graph, and the two gaps in this schema are precisely the two tables that are never queried by user. The whole delete surface, counted Besides that one raw statement, the application contains six db.delete(...) calls, all of them retention work rather than user intent: finished jobs and runs older than their keep window, purged reference data, a usage event being refunded, an inbound email removed after it is parsed. Campaign deletion is one transaction that removes conversations that never sent anything, then the campaign, and lets the rules above decide the rest. Twenty-four keys, two rules, six deletes and one line of SQL for the one that matters. If I were starting again the only thing I would change is the two missing indexes, and I would still not add a restrict anywhere: a rule that refuses a delete moves the decision to the moment a person is trying to leave, which is the worst possible time to discover you have an opinion about their data. What the app does with all of this, in words rather than DDL, is on how it works , and the retention windows that drive most of the deletes are on the privacy notice and in the terms .",
+            "url": "https://dev.to/daniel_pertu/the-biggest-delete-in-our-app-is-one-line-of-raw-sql-against-a-table-our-orm-does-not-manage-5617",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "web",
+                "windows"
+            ],
+            "published_at": "2026-10-31T11:20:21+00:00",
+            "collected_at": "2026-10-31T11:29:37.104988+00:00"
+        },
+        {
+            "id": "ca723dcdfba8b88136e977c04a37767f6f7a45f61d09a98daf088ec82d0635da",
+            "title": "How to price a B2B data subscription without racing to zero",
+            "description": "How to price a B2B data subscription without racing to zeroOctober 31, 2026Weighing pricing models for a data product Pricing a B2B data subscription feels like a race to zero: buyers compare you on cost per contact, competitors undercut, and margins evaporate. But the real problem isn't price level—it's pricing model. Choose the wrong structure and you train buyers to churn, hide your value, and turn your product into a commodity. Per-Row vs Per-Seat vs Outcome Pricing Per-row pricing charges for each contact or record delivered. It's simple to explain and feels fair to buyers who equate volume with value. But it turns your product into a metered utility and invites direct price comparison. Buyers will ask 'why does your row cost $0.10 when theirs costs $0.05?'—and you'll have no answer except discounts. Worse, per-row pricing punishes success: the more your data drives pipeline, the more rows they consume, and the more they push back on price. Per-seat pricing charges by user. It aligns with how sales teams already buy software and makes forecasting easy. The downside: it caps usage and discourages wider adoption. When only three reps have access, your data's impact on pipeline is limited, and churn risk rises if those seats go unused. Outcome pricing (e.g., pay per qualified lead or per closed deal) is the most defensible because it ties cost to value. But it's hard to administer and can create disputes over attribution. Most successful data products blend models: a platform fee (per-seat) plus usage credits, or a base subscription with outcome-based bonuses. Per-row: easy to compare, but commoditizes and discourages usage. Per-seat: predictable, but limits adoption and can hide unused licenses. Outcome: aligns value but requires clear attribution and trust. Blended models (seat + usage) often balance predictability and fairness. Why Credits Hide the Real Cost Credits feel buyer-friendly: 'buy 10,000 credits, use them however you want.' But credits obscure the true cost per contact, per search, or per verified email. Buyers can't easily compare your credits to a competitor's per-row price, so they either overestimate or underestimate value. Internally, credits let you mask discounting and avoid hard conversations about price. Externally, they create anxiety: buyers hoard credits, avoid using the product, and churn when unused credits expire. Instead, price in units buyers already understand: per verified contact, per enriched account, or per month of unlimited access. If you must use credits, publish a clear conversion rate (e.g., 1 credit = 1 verified email) and show the effective cost per outcome. Transparency builds trust and reduces the 'gotcha' feeling that drives churn. Credits make it hard for buyers to compare you to alternatives. They encourage hoarding and underuse, reducing perceived value. Publish clear conversion rates and effective cost per outcome. Consider unlimited-access tiers to remove usage anxiety. Simple pricing beats complex credits Structuring a Free Trial That Converts A free trial should let buyers experience the outcome, not just the interface. Instead of giving 500 free rows, give a time-boxed trial (7–14 days) with limited but meaningful access—e.g., 50 verified contacts and one export. The goal is to let them run a real prospecting workflow: search, build a list, reach out, and see replies. Gate the trial at the point of value: when they try to export a second list or add a teammate, that's when you ask for payment. Onboarding is critical. A trial without guidance becomes a data dump. Offer a 15-minute call to set up their first list, or provide a template campaign. Track activation: did they search, export, and contact at least 20 leads? Trials that hit that milestone convert at 3–5x the rate of those that don't. Follow up with a case study or a short email showing what similar teams achieved. Avoid extending trials repeatedly—it signals desperation and delays the buying decision. Time-box the trial (7–14 days) rather than giving a large row count. Gate at the point of value: exporting a second list or adding a seat. Guide activation with a short call or template campaign. Track whether they contacted at least 20 leads—a strong conversion predictor. Pricing that scales with delivered value What Buyers Actually Compare Buyers don't compare your price per row to your competitor's price per row in a vacuum. They compare total cost of ownership for a specific outcome: 'How much will it cost to generate 100 qualified leads?' That means they factor in data accuracy, ease of use, integration with their CRM, and the time their reps spend cleaning data. A cheaper per-row price often loses to a slightly higher price with better match rates and verified emails. They also compare risk. Free trials, money-back guarantees, and transparent privacy practices reduce perceived risk. Case studies from similar companies matter more than feature lists. And buyers talk to peers: references and reviews on sites like G2 or Capterra carry weight. So your pricing page should answer 'what will this do for my pipeline?' not just 'what does it cost?' Show effective cost per meeting or per opportunity, and you shift the conversation from commodity to value. Buyers evaluate total cost per outcome, not per-row price. Data accuracy and CRM integration often outweigh small price differences. Risk reducers (guarantees, trials) can justify a premium. Peer reviews and case studies strongly influence decisions. Structuring Your Pricing to Avoid the Race to Zero To escape the race to zero, anchor your pricing in value, not volume. Start with a base platform fee that covers access and support, then add usage tiers based on outcomes (e.g., number of verified contacts or active seats). Offer an annual discount but don't discount monthly plans—it trains buyers to wait for deals. Publish a clear pricing page with effective cost per outcome, and use a 'contact sales' tier for enterprise needs. Differentiate on data quality and workflow, not just price. If your contacts have higher deliverability, say so with numbers. If your product integrates natively with Salesforce or HubSpot, highlight the time saved. And be willing to walk away from buyers who only want the cheapest rows—they churn fastest and demand the most support. Focus on customers who value pipeline growth over penny-pinching. Use a base platform fee plus usage tiers tied to outcomes. Avoid monthly discounts; reserve discounts for annual commitments. Publish effective cost per outcome to shift the conversation. Target buyers who value quality and workflow over lowest price. Pricing your data product doesn't have to be a race to zero. Choose a model that reflects the value you deliver, be transparent about cost per outcome, and design trials that prove results. Start by auditing your current pricing against these three models and see where you can shift the conversation from rows to pipeline. Useful links G2 Capterra OpenView Pricing Guide FAQ Should I offer a free tier instead of a trial? A free tier can work for products with viral loops or low marginal cost, but for B2B contact data it often attracts hobbyists and creates support burden. A time-boxed trial with guided activation converts better because it creates urgency and lets you demonstrate value. How do I handle churn when buyers only need data occasionally? Offer a lower-cost 'maintenance' plan with limited monthly contacts or a pay-as-you-go option with a higher per-unit price. This keeps occasional users in the fold and upsells them when their needs grow. What's the best way to price verified vs unverified contacts? Charge a premium for verified contacts and make unverified contacts free or very cheap. This signals quality and encourages buyers to use the verified data for outreach, which improves their results and your retention. See the data behind this B2B data coverage by industry and country Verified contacts in United States Verified contacts in Germany Verified contacts in Poland The data behind this comparison with Apollo free search Originally published on BatScout — live B2B data: companies, suppliers and creators with verified contacts.",
+            "url": "https://dev.to/batscoutdotcom/how-to-price-a-b2b-data-subscription-without-racing-to-zero-297k",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-10-31T11:20:02+00:00",
+            "collected_at": "2026-10-31T11:29:37.105738+00:00"
+        },
+        {
+            "id": "041a6c7ac3eebec092f347a444303bde19167994ea257e30fea5159ffbc6b4bb",
+            "title": "TrashBench repurposes a trash 4-kW air conditioner radiator for his test bench to see how well it can cool a PC — achieves a shocking 28C on an Nvidia RTX 3080",
+            "description": "TrashBench repurposes a trash AC radiator for his test bench to see how well it can cool a PC — RTX 3080 didn't run much above ambient temperature",
+            "url": "https://www.tomshardware.com/pc-components/liquid-cooling/trashbench-repurposes-a-trash-4-kw-air-conditioner-radiator-for-his-test-bench-to-see-how-well-it-can-cool-a-pc-achieves-a-shocking-28c-on-an-nvidia-rtx-3080",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "nvidia",
+                "pc"
+            ],
+            "published_at": "2026-10-31T11:20:00+00:00",
+            "collected_at": "2026-10-31T11:29:38.694604+00:00"
+        },
+        {
+            "id": "87a4674f9463689a4265815836aa2d4416d819ef9d03b43b0e66247e835d0749",
+            "title": "This Niagara-inspired launcher could (eventually) be better than the original",
+            "description": "It's free, open-source, and just a little chaotic.",
+            "url": "https://www.androidauthority.com/niagara-launcher-vs-victoria-launcher-3728983/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-10-31T11:00:58+00:00",
+            "collected_at": "2026-10-31T11:29:42.425529+00:00"
+        },
+        {
+            "id": "9e07f828cbbb7522dbae735e0c793aa03669f795042ce668a28089138671e676",
+            "title": "Syrian Hacker Gets Prison Time in US After Over a Decade on the Run",
+            "description": "A US court sentenced Syrian hacker Ahmad Umar Agha to 42 months for pro-Assad attacks on media, businesses, and government entities. The post Syrian Hacker Gets Prison Time in US After Over a Decade on the Run appeared first on SecurityWeek .",
+            "url": "https://www.securityweek.com/syrian-hacker-gets-prison-time-in-us-after-over-a-decade-on-the-run/",
+            "source": "SecurityWeek",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "security",
+                "vulnerabilites"
+            ],
+            "published_at": "2026-10-31T11:00:00+00:00",
+            "collected_at": "2026-10-31T11:29:33.810828+00:00"
+        },
+        {
+            "id": "1a86510e062662af77375b329fef930a886278f0c80b6b11f094f355322ee1a3",
+            "title": "Amazon sends chills through its workforce with mixed message memo about AI use",
+            "description": "A lot of software engineers feel bleak about the future of the profession",
+            "url": "https://www.theregister.com/ai-and-ml/2026/10/31/amazon-sends-chills-through-its-workforce-with-mixed-message-memo-about-ai-use-corey-quinn/5306804",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-10-31T11:00:00+00:00",
+            "collected_at": "2026-10-31T11:29:35.817466+00:00"
+        },
+        {
+            "id": "2cd10be7e19051756dc96654b9eb2338d4235bd7562a3249a973a4a7cb24172a",
+            "title": "3D-printed ghost guns may now have a way to be traced to their source",
+            "description": "Researchers from Curtin University in Australia have come up with a way to potentially track down seized 3D-printed guns to their source by identifying differences in material properties in various PLA products.",
+            "url": "https://www.tomshardware.com/3d-printing/3d-printed-guns-may-now-have-a-way-to-be-traced-to-their-source-australian-researchers-correctly-identify-26-out-of-28-printed-pla-samples-to-their-filament-product",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "pc"
+            ],
+            "published_at": "2026-10-31T11:00:00+00:00",
+            "collected_at": "2026-10-31T11:29:38.694655+00:00"
+        },
+        {
+            "id": "5ed25e6820bef88cb34f4e5271d62a5e275755934d502e8c0f535523fba906b6",
+            "title": "Wall Street Downplays Binance Hack as Bitwise Sees ‘Recovery In a Week’",
+            "description": "Wall Street analysts are telling clients to buy the dip after the $6.3 billion Binance hack, and Bitwise CIO Matt Hougan expects bitcoin’s price to recover fairly soon. Hougan Calls the Hack a Mere ‘Blip’ Hougan, chief investment officer at crypto asset manager Bitwise, played down the damage, stating: This hack has not changed anything […]",
+            "url": "https://news.bitcoin.com/featured/wall-street-binance-hack-buy-dip-bitwise-hougan/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-10-31T10:30:32+00:00",
+            "collected_at": "2026-10-31T11:29:48.714812+00:00"
+        },
+        {
+            "id": "f4375dcc6390c5dfdd0c37345af3088565f58d4fd65ff0a68739a0ab33b6aa48",
+            "title": "The 10 best custom chat themes I made in Google Messages",
+            "description": "So many ways to spruce up your conversations.",
+            "url": "https://www.androidauthority.com/best-google-messages-custom-chat-themes-3728559/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-10-31T10:30:04+00:00",
+            "collected_at": "2026-10-31T11:29:42.425563+00:00"
+        },
+        {
+            "id": "f70b44b5822e23f939b7e874eb2891de7b30fa7e97c298376d4a5a73e2f54de3",
+            "title": "Molly(Signal fork) has not been updated since 3 months and is vulnerable",
+            "description": "Comments",
+            "url": "https://piefed.world/post/1503394",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-31T10:23:41+00:00",
+            "collected_at": "2026-10-31T11:29:36.801564+00:00"
+        },
+        {
+            "id": "9e9070e438511010b7d70dce88ab1bee362fc1d4ee4f91181c3329a315beabf3",
+            "title": "Serbia just elected the world's brainiest parliament",
+            "description": "Comments",
+            "url": "https://www.science.org/content/article/serbia-just-elected-world-s-brainiest-parliament",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-31T10:21:30+00:00",
+            "collected_at": "2026-10-31T11:29:36.801507+00:00"
+        },
+        {
+            "id": "37d01b45468d8a099fd19547a9aa3ddb3b94e860fbdf767d220eea1f81ad3f5f",
+            "title": "The Secret of Fast Programming: Stop Thinking »",
+            "description": "Comments",
+            "url": "https://www.codesimplicity.com/post/the-secret-of-fast-programming-stop-thinking/",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-10-31T10:20:48+00:00",
+            "collected_at": "2026-10-31T11:29:36.981965+00:00"
+        },
+        {
+            "id": "8a7662bec2e480a7a4962fea01ee9f2467b6cf7edc11ecf9843568dcc92c28da",
+            "title": "Skipped upgrading this year? 5 upcoming Android phones worth saving for",
+            "description": "The future is looking bright.",
+            "url": "https://www.androidauthority.com/upcoming-android-phones-worth-saving-for-2027-3725669/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-10-31T10:00:40+00:00",
+            "collected_at": "2026-10-31T11:29:42.425593+00:00"
+        },
+        {
+            "id": "5a7d7e5c7139cf9ec15e3aa9b044b59c87f81d8e947a1fc0e0af51a4496697d3",
+            "title": "Tech sleuth claims to have found the oldest GUI application that still works with Windows 11",
+            "description": "A technology enthusiast claims that the oldest GUI application that still runs on Windows 11 is CDPLAYER.EXE from November 1992.",
+            "url": "https://www.tomshardware.com/software/windows/tech-sleuth-claims-to-have-found-the-oldest-gui-application-that-still-works-with-windows-11-cdplayer-exe-from-windows-nt-in-november-1992-wins-the-prize",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "pc",
+                "windows"
+            ],
+            "published_at": "2026-10-31T10:00:00+00:00",
+            "collected_at": "2026-10-31T11:29:38.694694+00:00"
+        },
+        {
+            "id": "4e1c6b87eb64c11c0fc1c79d94e0e2b0fc4750583167bea63855278fa80900fe",
+            "title": "Talking Point: What Are You Playing This Weekend? (31st October)",
+            "description": "The spooky weekend is upon us. What's that? You thought the deluge of October news would slow down in its final week? Think again, my friends! As if the upcoming release of Ocarina of Time wasn't pressing enough, Nintendo dropped an Indie World Showcase this week, packed with even more titles to add to the backlog. One that won't be making the cut this year, however, is The Duskbloods , which was pushed to 2027 . The swanky new special edition Zelda Switch 2 hit store shelves, a new batch of Game Boy games landed on NSO, The Pokémon Company announced Unite 's impending closure , and 'Switch 2 Lite' speculation kicked off. Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/features/talking-point-what-are-you-playing-this-weekend-31st-october",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-10-31T10:00:00+00:00",
+            "collected_at": "2026-10-31T11:29:46.937873+00:00"
+        },
+        {
+            "id": "262403250916882642d77b7c42a6bc9feeb0c178d660d047d5e9e460cc3d3757",
+            "title": "I’d choose these earbuds over the Pixel Buds Pro 2 every time, for one simple reason",
+            "description": "If earbuds don't quite fit right, they quickly get annoying. OPPO has taken on Google, and for me, beaten it.",
+            "url": "https://www.androidauthority.com/oppo-enco-x4-over-google-pixel-buds-pro-2-every-time-3727969/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-10-31T09:30:49+00:00",
+            "collected_at": "2026-10-31T11:29:42.425636+00:00"
+        },
+        {
+            "id": "f2a844e48f17e250c03e809a1fc5d8dba66c3856f5346c1dc385c9b9616761f3",
+            "title": "Binance Starts Shopping for Stolen Coins as Ethena Ships $24M in ENA",
+            "description": "Binance has started buying back the tokens lost in its $6.3 billion hack, and onchain data shows wallets associated with Ethena sent 128.63 million ENA worth about $24 million to the exchange. Ethena Tokens Flow Into Binance Blockchain trackers flagged the transfers early on Oct. 31, writing: Binance is buying back the stolen assets through […]",
+            "url": "https://news.bitcoin.com/market-updates/binance-buys-back-stolen-tokens-ethena-ena/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-10-31T09:30:33+00:00",
+            "collected_at": "2026-10-31T11:29:48.714882+00:00"
+        },
+        {
+            "id": "db4c0924b125b403be1a9d5a587a41a9d352bc0d88158d83eae4fdb41eb19dbd",
+            "title": "Chocolate Caterpillar or Chocolate Teapot? Top up the disk space for Windows 10 to find out",
+            "description": "London's Oxford Street signage shows its underwear to passing tourists",
+            "url": "https://www.theregister.com/offbeat/2026/10/31/chocolate-caterpillar-or-chocolate-teapot-top-up-the-disk-space-for-windows-10-to-find-out/5306103",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "technologie",
+                "windows"
+            ],
+            "published_at": "2026-10-31T09:30:00+00:00",
+            "collected_at": "2026-10-31T11:29:35.817505+00:00"
+        },
+        {
+            "id": "78611c38f78eb2eaaea931fc2619481cf2103e794db8eb26b2cf3fccfddc9c6f",
+            "title": "I hate Samsung’s default camera app — here’s what I use instead",
+            "description": "I want more control over my shots.",
+            "url": "https://www.androidauthority.com/samsung-default-app-open-camera-comparison-3726024/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-10-31T09:00:52+00:00",
+            "collected_at": "2026-10-31T11:29:42.425668+00:00"
+        },
+        {
+            "id": "a0b8a5c9cd96ae5b1f833add8fe06d66ec3b33ea4b4d85469cb72fd7759850c3",
+            "title": "How long do you need to hold down the power button to turn off a PC?",
+            "description": "Comments",
+            "url": "https://www.osnews.com/story/146273/how-long-do-you-need-to-hold-down-the-power-button-to-turn-off-a-pc/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-31T08:43:32+00:00",
+            "collected_at": "2026-10-31T11:29:36.802127+00:00"
+        },
+        {
+            "id": "1ebace07281da3f990070a5f8125457d8428d414f709106f72d79cac6657d764",
+            "title": "Binance Inside Job Theories Explode Ahead of Monday’s Reserve Reports",
+            "description": "Claims that the $6.3 billion Binance hack was an inside job are spreading across X as the exchange holds back its proof-of-reserves results until Monday, Nov. 2. Skeptics Question the Timing of Monday’s Audit The doubts center on the order of events, as in its Oct. 30 update, Binance said it had covered about 80% […]",
+            "url": "https://news.bitcoin.com/security/binance-hack-inside-job-theories-proof-of-reserves/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-10-31T08:30:36+00:00",
+            "collected_at": "2026-10-31T11:29:48.714947+00:00"
+        },
+        {
+            "id": "c305d693e177d5ef64daf367acfc1e634711244980670e6d6392ac16514ee3d1",
+            "title": "Attackers Chain Three Ivanti Connect Secure Flaws to Gain Unauthenticated Root Access",
+            "description": "The U.S. Cybersecurity and Infrastructure Security Agency (CISA) on Friday added two security flaws impacting Ivanti Connect Secure (ICS) to its Known Exploited Vulnerabilities (KEV) catalog, following active exploitation in the wild. The vulnerabilities are listed below - CVE-2026-111357 (CVSS score: 8.8) - A missing authentication for a critical function vulnerability that could allow a",
+            "url": "https://thehackernews.com/2026/10/attackers-chain-three-ivanti-connect.html",
+            "source": "The Hacker News",
+            "category": "cybersecurite",
+            "tags": [
+                "aws",
+                "cve",
+                "cybersecurite",
+                "hacking",
+                "vulnerabilites"
+            ],
+            "published_at": "2026-10-31T08:27:43+00:00",
+            "collected_at": "2026-10-31T11:29:33.104982+00:00"
+        },
+        {
+            "id": "0426862bfd6e71a0cf92822c214f4fb6f548f1db580d54ad09401d60d9759542",
+            "title": "Backbone of a beast – charting Nvidia's rise to networking titan",
+            "description": "How a $6.9B bet on Mellanox made Nvidia bigger than Cisco, and the world's most valuable company to boot",
+            "url": "https://www.theregister.com/networks/2026/10/31/backbone-of-a-beast-charting-nvidias-rise-to-networking-titan/5306499",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "nvidia",
+                "technologie"
+            ],
+            "published_at": "2026-10-31T08:03:00+00:00",
+            "collected_at": "2026-10-31T11:29:35.817548+00:00"
+        },
+        {
+            "id": "17b11f98699dd6891e917f5102da52953696ed206edcc24a0ddef637ea1ccd2c",
+            "title": "A Spark Of Color In November’s Gray (2026 Wallpapers Edition)",
+            "description": "Let’s kick of November with a new collection of desktop wallpapers! Designed by creatives from across the globe, the wallpapers come in a variety of screen resolutions and can be downloaded for free. Enjoy!",
+            "url": "https://smashingmagazine.com/2026/10/desktop-wallpaper-calendars-november-2026/",
+            "source": "Smashing Magazine",
+            "category": "web",
+            "tags": [
+                "design",
+                "frontend",
+                "web"
+            ],
+            "published_at": "2026-10-31T08:00:00+00:00",
+            "collected_at": "2026-10-31T11:29:46.359940+00:00"
+        },
+        {
+            "id": "cd7e67f9df565a7a6c37269fe749b0ed6279109d33001bcee539a35ba0c8003c",
+            "title": "Video: Nintendo Highlights Eight New Things In Zelda: Ocarina Of Time (Switch 2)",
+            "description": "What are you most excited about? Zelda: Ocarina of Time returns next week, and if you're not already sold, Nintendo has now released a new video highlighting \"just some of the ways\" Link's quest has been remade for a whole new era. All up, there eight different things featured in the trailer above. While it's nothing we haven't already seen, if you have been avoiding Nintendo's coverage of the game so far, you might want to n avigate away from this page right now . With the spoiler warning out of the way, here's what you can expect to see in this remake of Ocarina of Time: Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/news/2026/10/video-nintendo-highlights-eight-new-things-in-zelda-ocarina-of-time-switch-2",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-10-31T08:00:00+00:00",
+            "collected_at": "2026-10-31T11:29:46.937957+00:00"
+        },
+        {
+            "id": "09c85ded7acbbb43f50308687a924cdc80899f85fa4895fafa2c6e1eef902b4e",
+            "title": "Israel Extradites Suspect to US Over $2.8M Crypto Hack",
+            "description": "An Israeli-Russian citizen accused of stealing $2.8 million in digital assets, has been extradited to the U.S. after Israel’s Supreme Court rejected his final appeals. Federal Indictment and Extradition Request Alexander Block, an Israeli-Russian citizen accused of exploiting a vulnerability in the Nomad blockchain bridge to steal $2.8 million in digital assets, has been extradited […]",
+            "url": "https://news.bitcoin.com/regulation-and-legal/israel-extradites-suspect-to-us-over-2-8m-crypto-hack/",
+            "source": "Bitcoin.com News",
+            "category": "cybersecurite",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto",
+                "git"
+            ],
+            "published_at": "2026-10-31T07:30:55+00:00",
+            "collected_at": "2026-10-31T11:29:48.715002+00:00"
+        },
+        {
+            "id": "ad4201e7afd7f986797dcf1f5a1d68b51bd66b66efcaf937f82f5e07171bdddd",
+            "title": "Clojure/Conj 2026",
+            "description": "Comments",
+            "url": "http://www.youtube.com/playlist?list=PLAkHRk3lgU_Q",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-10-31T06:25:34+00:00",
+            "collected_at": "2026-10-31T11:29:36.981579+00:00"
+        },
+        {
+            "id": "f0f610dcc806e76c1c6d418d4ba8253e905841ce9052199a1b5bf7cac3e41a08",
+            "title": "Digital Minimalism",
+            "description": "Comments",
+            "url": "https://vitalik.eth.limo/general/2026/10/31/digital_minimalism.html",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "git",
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-31T06:16:36+00:00",
+            "collected_at": "2026-10-31T11:29:36.801585+00:00"
+        },
+        {
+            "id": "584819efb2cba5755e7c02ef0d3bcb85733c35ba6dc0486972acabf5667d0234",
+            "title": "\"It's Absolutely Still In Progress\" - Yacht Club Shares An Update About Mina The Hollower's Physical Release",
+            "description": "The team is also working on \"more post-release features\". Mina The Hollower has been digitally available for Switch 1 & 2 since May, and if you're wondering about the status of the physical edition, you're not alone. During a chat with the Switch community on Reddit this week , developer Yacht Club Games has reassured fans it's \"still planned\". Company founder Sean Velasco says the team is working on finding the right publishing and distribution partner: Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/news/2026/10/its-absolutely-still-in-progress-yacht-club-shares-an-update-about-mina-the-hollowers-physical-release",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "git",
+                "nintendo"
+            ],
+            "published_at": "2026-10-31T05:55:00+00:00",
+            "collected_at": "2026-10-31T11:29:46.938029+00:00"
+        },
+        {
+            "id": "09f142bd2640f27254d9a6b271336ed0701f8abb81fc1d3f81cb660b2bf78370",
+            "title": "A Shared ChatGPT Link Could Run Attacker Code in Your Session and Read Private Chats",
+            "description": "A malicious ChatGPT share link could run an attacker's code in the logged-in session of anyone who opened it, allowing them to read their private conversations, researchers at the security firm Parameter showed. The researchers reported the flaw through OpenAI's bug bounty program on October 18, and OpenAI fixed it eight days later and rated it P1, its most serious category.",
+            "url": "https://thehackernews.com/2026/10/a-shared-chatgpt-link-could-run.html",
+            "source": "The Hacker News",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "hacking",
+                "openai",
+                "vulnerabilites"
+            ],
+            "published_at": "2026-10-31T05:33:41+00:00",
+            "collected_at": "2026-10-31T11:29:33.105067+00:00"
+        },
+        {
+            "id": "eac44bbc482e7dd32704f67e1cc29160e1350d422e34d8cee072dda3f35f1c19",
+            "title": "Australia Casts Doubt on Retail Prediction Markets, Calls Them Bets",
+            "description": "Australia’s corporate regulator cast doubt on the notion that prediction markets for retail clients are in the public interest, arguing the contracts have “all the features of a bet.” The statement stops short of a formal ban and came a day after ASIC Chair Sarah Court told senators that no prediction market operator has applied […]",
+            "url": "https://news.bitcoin.com/igaming/australia-casts-doubt-retail-prediction-markets-calls-them-bets/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-10-31T05:05:39+00:00",
+            "collected_at": "2026-10-31T11:29:48.715082+00:00"
+        },
+        {
+            "id": "5048d832d1e26795d252798123610c8749b4429894c31f131509b75eded66990",
+            "title": "Bitcoin stolen from Binance tops Tesla’s holdings and is over twice El Salvador’s reserve",
+            "description": "",
+            "url": "https://www.coindesk.com/markets/2026/10/31/bitcoin-stolen-from-binance-tops-tesla-s-holdings-and-is-over-twice-el-salvador-s-reserve",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-10-31T05:01:32+00:00",
+            "collected_at": "2026-10-31T11:29:48.385358+00:00"
+        },
+        {
+            "id": "293569318dde9da7ae44a07f3330bce40883d4ced65e6525e8d42d75ef80d154",
+            "title": "Cloudflare Reports 18.2 Million Network-Layer DDoS Attacks in Q3, Up 38%",
+            "description": "Threat actors are launching about 8,226 network-layer distributed denial-of-service (DDoS) attacks per hour, Cloudflare revealed Thursday. The web infrastructure and security company said it autonomously mitigated 18.2 million network-layer (L3) DDoS attacks and 14.4 trillion HTTP DDoS requests in the third quarter of 2026. That amounts to 197,400 attacks per day, or one attack every 0.44",
+            "url": "https://thehackernews.com/2026/10/cloudflare-reports-182-million-network.html",
+            "source": "The Hacker News",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "hacking",
+                "vulnerabilites"
+            ],
+            "published_at": "2026-10-31T04:56:12+00:00",
+            "collected_at": "2026-10-31T11:29:33.105128+00:00"
+        },
+        {
+            "id": "1f419414a2c31da6b6df8cbfd79f425fcd456bf77ce1652839a4506540c3c98a",
+            "title": "Pile-ins, payouts, and pacing pressure: the investors behind the VCs open up",
+            "description": "The money behind the money is thrilled, mostly.",
+            "url": "https://techcrunch.com/2026/10/30/pile-ins-payouts-and-pacing-pressure-the-investors-behind-the-vcs-open-up/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-10-31T04:16:50+00:00",
+            "collected_at": "2026-10-31T11:29:34.514756+00:00"
+        },
+        {
+            "id": "6c44809a7538f2e4dab653ed3f2d3973f18387e42728a3be08b552401eb056ea",
+            "title": "Final Fantasy XIV Online's Sixth Expansion 'Evercold' Launches February 2027",
+            "description": "New job and much more revealed. Now that the MMORPG Final Fantasy XIV Online is available on the Switch 2, Square Enix is looking towards the game's sixth expansion, Evercold . We previously heard how it would be coming in January 2027, and now at the Final Fantasy XIV Fan Fest in Tokyo this weekend, Square Enix has announced the date has been shifted to 23rd February 2027 . Pre-orders will begin on 4th November 2026 , with early access opening on 19th February 2027 . Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/news/2026/10/final-fantasy-xiv-onlines-sixth-expansion-evercold-launches-february-2027",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-10-31T03:55:00+00:00",
+            "collected_at": "2026-10-31T11:29:46.938105+00:00"
+        },
         {
             "id": "77be212fb12fde5ca9d2f1a4a4585b65bc1410feb3b78c444bea1fba793ff442",
             "title": "Production-Ready FastAPI Async JWT Authentication & Session Flow with Redis",
@@ -7666,6 +8365,21 @@
             "collected_at": "2026-10-29T22:15:15.860293+00:00"
         },
         {
+            "id": "91c09b5ec48641612475c2fc46e3414e4c090ce313e03d2aac34d90924e686a2",
+            "title": "What's on That Access Port?",
+            "description": "Comments",
+            "url": "https://danielmangum.com/posts/whats-on-that-access-port/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-29T17:35:57+00:00",
+            "collected_at": "2026-10-31T11:29:36.801972+00:00"
+        },
+        {
             "id": "aef342337ed8ac4ec3fb23a3d1eaeb43e5ce1430bbd40fbee5e1f77cef3cb6e6",
             "title": "Claude Duet is the first personal-assistant-type harness that feels useful",
             "description": "Comments",
@@ -8429,6 +9143,21 @@
             ],
             "published_at": "2026-10-29T15:30:00+00:00",
             "collected_at": "2026-10-29T22:15:21.050513+00:00"
+        },
+        {
+            "id": "7e8069f52fd9bcafc2e4544a8a28a26317fc00b916aaf423cfa3f6ec64370cef",
+            "title": "AI, Lean, and the Future of Formal Verification, with Lean Creator Leo de Moura",
+            "description": "Comments",
+            "url": "https://thedataexchange.media/leo-de-moura-lean-aws/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-29T15:29:48+00:00",
+            "collected_at": "2026-10-31T11:29:36.801720+00:00"
         },
         {
             "id": "763e2973953b7724f4d9091a3952215445f5a70a28e1bc177eae7ea81163e141",
@@ -14776,6 +15505,22 @@
             "collected_at": "2026-10-28T17:43:54.674979+00:00"
         },
         {
+            "id": "d415d3e609a9966e5de8645cf77cbb462ed335b56dfe9ccc33933aebe885be5e",
+            "title": "Longitudinal Changes InWearable-Captured PhysiologyBefore Sudden Cardiac Death",
+            "description": "Comments",
+            "url": "https://www.jacc.org/doi/epdf/10.1016/j.jaccas.2026.110397",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "git",
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-28T15:04:12+00:00",
+            "collected_at": "2026-10-31T11:29:36.801850+00:00"
+        },
+        {
             "id": "62c46063309807cc011f2eb3c54119b5feb482cb45247dea451f6e6118ffde5b",
             "title": "Amazon’s new Echo Studio speaker is also a home surveillance camera",
             "description": "Like a smart display, minus the display.",
@@ -17435,6 +18180,21 @@
             ],
             "published_at": "2026-10-28T03:56:49+00:00",
             "collected_at": "2026-10-28T11:54:39.912716+00:00"
+        },
+        {
+            "id": "f11a2fcd3eaa7469e4235b645e768d4bf65a53bc5e2c2f47f5bf5809fb50cbe8",
+            "title": "Sneezecount (2018)",
+            "description": "Comments",
+            "url": "https://sneezecount.joyfeed.com",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-28T03:31:07+00:00",
+            "collected_at": "2026-10-31T11:29:36.801909+00:00"
         },
         {
             "id": "534aaa5a21c702c3fbd6406b87addf4b689322ec81d2566e81b7d9698b11d0b2",
@@ -20828,6 +21588,21 @@
             ],
             "published_at": "2026-10-27T15:25:00+00:00",
             "collected_at": "2026-10-28T22:03:52.732715+00:00"
+        },
+        {
+            "id": "d9b54a915c19f75e099d2baa3f853edaeee504f85cb591c9518e54b71589ceb2",
+            "title": "Show HN: Marelleo, an open-source story box I built for my kids using ESP32",
+            "description": "Comments",
+            "url": "https://zebra.rodeo/en/blog/marelleo/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-27T15:24:36+00:00",
+            "collected_at": "2026-10-31T11:29:36.801609+00:00"
         },
         {
             "id": "ec4053628a648a224cf60a5adfaf934d5a67ba1c3141ae0fa17558d4d4b2f244",
