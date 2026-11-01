@@ -1,7 +1,745 @@
 {
-    "updated_at": "2026-11-01T03:37:38.898833+00:00",
-    "count": 24112,
+    "updated_at": "2026-11-01T12:27:17.680965+00:00",
+    "count": 24169,
     "articles": [
+        {
+            "id": "35f20a4f146a4a23e77139fdec57732ea79a231354573c2171b847392d72a322",
+            "title": "Contact Form to CRM: A Failure Proof Brief for Developers",
+            "description": "Connecting a form to a CRM is easy to demo and easy to get wrong in production. The demo covers the happy path. Production covers double submissions, CRM outages, unknown routing values, interrupted responses and credentials that expire. A brief that covers those cases before code starts saves most of the rework. Start with definitions, not endpoints Define what received, saved and assigned mean. A visitor message that says \"message sent\" should match the system state. If the CRM must confirm the record, say so. If the request is stored durably and processed later, the confirmation should describe receipt, and the team needs a way to find requests that stay unprocessed. Map fields by business meaning. A person, a company and an enquiry are different records. An existing contact with a new enquiry needs a new activity or lead, not an overwritten message. Routing fields need allowed values and a controlled fallback for unknown values, not free text matching for an important assignment. Design for the uncertain outcomes The hard cases are worth naming in the brief. A submission identifier helps stop duplicate deals and tasks from double clicks and retries, but a duplicate delivery is not the same as a new enquiry from the same person. Using only an email address as a permanent suppression rule can discard a legitimate second request. Also test the case where the CRM saved the record but the website did not receive the response. Retrying the whole flow without reconciliation can repeat actions. The right result is one preserved enquiry, with the agreed contact relationship, task and notification. For errors, list each failure point, what the visitor sees, whether the request is preserved, whether retry is safe, and who is notified by name. Keep credentials server side, with only the permissions the integration needs, never in website JavaScript or a public repository. Use test and production webhook URLs correctly, and confirm the deployed site points to the published workflow, not a temporary listener. An acceptance matrix covering new and existing contacts, missing and empty fields, unknown values, duplicates and failures turns this brief into a test plan. That is the difference between an integration that works in a demo and one that works when a real lead depends on it. Originally published on Pixel2Tech: https://pixel2tech.com/blog/contact-form-crm-integration-brief",
+            "url": "https://dev.to/pixel2techhq/contact-form-to-crm-a-failure-proof-brief-for-developers-30dk",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "git",
+                "java",
+                "javascript",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-11-01T12:20:59+00:00",
+            "collected_at": "2026-11-01T12:26:58.795694+00:00"
+        },
+        {
+            "id": "6199b77e098e5c9c7c9a94104cc46bb9b110adfefadde6a1b8908ccb39c7693b",
+            "title": "Your AI Agent Doesn't Belong Inside an HTTP Request",
+            "description": "A user sends a message to your AI application. Your server receives: POST /api/chat So you do what seems natural: app . post ( ' /api/chat ' , async ( c ) => { const result = await runAgent ( await c . req . json ()); return c . json ( result ); }); It works. Then your Agent gets smarter. Instead of one LLM call, it starts doing this: User │ ▼ Agent │ ├── LLM call ├── search ├── database query ├── tool call ├── another LLM call ├── file generation └── final LLM call The request that used to take 5 seconds now takes 30 seconds, then 2 minutes, then 10. The HTTP request is still there, but the HTTP connection is a poor place to represent the lifetime of an Agent. The Problem With Connection-Bound Agents Consider this architecture: Browser │ │ POST /api/agent ▼ Node.js │ │ await ▼ Agent │ ├── LLM ├── Tool ├── LLM ├── Tool └── LLM │ ▼ HTTP response The entire Agent run is coupled to one HTTP request. That raises an uncomfortable question: What happens when the browser disconnects? A server can detect a client disconnect through the request's AbortSignal and combine it with a server timeout: const signal = AbortSignal . any ([ timeoutSignal , c . req . raw . signal , ]); Then it passes the signal into the upstream LLM request: await fetch ( LLM_URL , { signal }); For a normal streaming chat response, this is what you want. If the user closes the tab halfway through, continuing to generate is wasteful. An Agent is different. A Chat Response Is Not an Agent Run Compare two operations. Operation A: Generate an answer User │ ▼ POST /chat │ ▼ LLM │ ▼ stream response The operation exists to serve the current connection. If the user leaves, cancelling the generation makes sense. Operation B: Run an Agent User │ ▼ POST /agents │ ▼ Agent │ ├── search web ├── inspect documents ├── call tools ├── write files ├── run code └── generate final report This is no longer a response. It is a task , and tasks have their own lifecycle. The Browser Is Not the Owner of the Task Tying an Agent to the connection says: \"This Agent exists as long as this browser connection exists.\" What the user actually asked is: \"Perform this task for me.\" Those are different lifetimes. The browser connection might last 10 seconds while the task takes 10 minutes: Browser connection │ │ short-lived ▼ HTTP request Agent task │ │ long-lived ▼ Task lifecycle This is the same boundary the previous article ran into with cancellation. A client disconnect does not prove the server cancelled the work, and a server cancellation does not prove the provider stopped inference. Each of those is a separate fact. Now take it one step further. Suppose the Agent has already searched, queried the database, and generated a file, and then the user closes the browser. If the request was: \"Research these 20 documents and generate a report.\" you probably don't want: Browser closed ↓ Agent killed ↓ report lost The user didn't cancel the task. They closed the UI. The Task Gets Its Own Identity Instead of running the Agent inside the request, the request creates a task and returns: POST /api/agents { \"taskId\" : \"task_01J...\" } The HTTP request is finished. The Agent continues on its own: HTTP request │ ▼ create task ──────────► task_123 │ │ ▼ ▼ HTTP response Agent │ ├── LLM ├── Tool └── LLM The task ID is an identity for the work itself: Before: HTTP request = work After: task ID = work That lets you store the task and make the database, not the connection, the source of truth: type AgentTask = { id : string ; status : ' queued ' | ' running ' | ' completed ' | ' failed ' | ' cancelled ' ; createdAt : Date ; startedAt ?: Date ; completedAt ?: Date ; error ?: string ; }; The browser stops owning the Agent. It owns a subscription to the Agent's progress : POST /api/agents → task_123 GET /api/agents/task_123 → current status GET /api/agents/task_123/events → live progress A client can connect, disconnect, and reconnect. The task doesn't care. Reconnection becomes ordinary. The user starts an Agent at 12:00 and the browser crashes at 12:01. At 12:05 the user reopens the app, and the frontend asks: GET /api/agents/task_123 { \"id\" : \"task_123\" , \"status\" : \"completed\" } Nothing required the original TCP connection to survive five minutes. The code for this article is a runnable demo: aiengineering-book/agent-task-demo . It runs the same simulated Agent bound to a request and as a task, drops the connection partway through, cancels at different points, evicts a subscriber that stops reading, and checks what survives each time. Streaming Becomes a Subscription This doesn't mean you should stop streaming. Streaming is still the right way to deliver progress. What changes is what the stream represents: Streaming becomes a view of a task, not the task itself. The task emits events: task.started tool.started tool.completed llm.started llm.delta llm.completed task.completed and any number of browsers can render them as they arrive: Agent task │ │ events ▼ ┌───────────────┐ │ Event stream │ └───────┬───────┘ │ ┌───────┴────────┐ ▼ ▼ Browser A Browser B An SSE response is a subscription to task_123 . It is not where the Agent lives: Task lifecycle ───────────────────────────────────────► Agent running Browser A ───────────────X Browser B ────────────────► The subscription can disappear without destroying the work. The LLM stream itself moves one level down: it feeds the task's event stream instead of feeding the HTTP response directly. Once the task is independent of HTTP, the server no longer has to execute it either. The API accepts the request, validates input, creates the task, and hands it to a worker. The worker owns execution. Disconnect and Cancel Are Different Operations With a task, \"the browser went away\" and \"the user wants this stopped\" stop being the same event. Disconnect Browser X │ ▼ subscription ended Agent continues Cancel POST /api/agents/task_123/cancel Now the user has said explicitly: stop this task. That is a different semantic, and it lets you keep several policies side by side: Event What happens User disconnects The subscription ends. The Agent continues. User presses Stop The task is cancelled. Task runs longer than its limit (for example 30 minutes) The task is cancelled. Server shuts down (SIGTERM) Task state is persisted. The task resumes later. These are four different events. Collapsing them into one AbortSignal hides the difference between them. A cancel request also needs a precise answer. \"Cancelled\" can mean different things depending on how far the work had got, and a status that hides the difference is misleading: Outcome Meaning Client detached The subscription ended. Nothing was cancelled. Queued work cancelled The task had not started. Nothing ran. Tool call cancelled A running step stopped before it finished. Side effect already committed A step finished before the cancel arrived and cannot be undone. Return which of these happened. In the demo, the cancel endpoint answers step_cancelled or side_effect_committed . Give the task an ID that appears in every log line across the browser, the API, the worker, and the provider call, so the sequence can be reconstructed afterwards. What You Take On Decoupling the task from the connection doesn't make the hard parts disappear. It moves them somewhere you have to design for. Dead subscribers. A subscription that goes quiet without a clean close can leave a stale connection holding resources, and proxies and load balancers close idle connections. Send periodic heartbeats on the event stream so a healthy connection stays open. Heartbeats do not help you spot a dead one. On a one-way stream the server never hears back, and its own writes keep the socket looking active, so an idle timer cannot tell a quiet client from a gone one. What gives a stuck reader away is backpressure: its socket stops draining, writes back up, and the server can drop that subscription after a short drain timeout. The demo does exactly that, and the task keeps running. Task state. A task moves through queued , running , and one of completed , failed , cancelled . The task decides these states, not the HTTP connection. Worker failure. If a worker crashes mid-task, the task is still running in the database. Something has to notice that the worker disappeared, and then retry, resume, or mark the task failed. Durable steps. An Agent that searches, writes a file, calls an API, updates a database, and sends an email can crash after step four. Restarting blindly repeats work, so the task has to record which steps are done. Idempotency. If the Agent sends an email and crashes before recording that it did, a retry sends it twice. Steps with side effects need idempotency keys or a record of completion. Tools that outlive the abort. If the model has emitted a tool call, cancelling the LLM stream does nothing for the work that tool already started. Tools need to check the task's cancellation signal themselves, and be safe to run twice. None of these are specific to AI. They are the standard problems of background work, and Agents run into them early because a single Agent run is already many asynchronous steps. Each deserves more space than this article can give it. When to Bind Work to HTTP Not every operation needs a task. For plain chat: request ↓ LLM ↓ stream ↓ response binding the work to the connection is reasonable, and cancelling when the user leaves is often exactly right. The previous article measured one provider on one day: DeepSeek, streaming chat requests, aborted at two points. Billing followed the abort point and stayed far below the cost of running each request to its token limit. For plain chat in that test, cancel-on-disconnect was cheap and effective. That is one provider, not a general statement, but it points to where the real reason to decouple Agents lies. It isn't cost. It is that an Agent run has side effects and results the user still wants after the tab is gone. Ask one question: If the user closes the browser, should the work still exist? If the answer is no, use connection cancellation. If the answer is yes, create a task and return its ID. You can sort most AI operations into three patterns: Pattern Shape Examples Disconnect Request-bound HTTP → LLM → HTTP response chat completion, short transformations, simple streaming Can cancel the work Persisted HTTP → create work → storage → background processing document indexing, file processing, generation written to history Should not cancel the work Resumable Agent task HTTP → task ID → worker (LLM, tools, checkpoints, state) research agents, coding agents, multi-step workflows The UI is just a client of the task The rule isn't \"never run an Agent inside an HTTP request\". It is: Don't bind the lifetime of durable work to the lifetime of an ephemeral connection. Final Takeaway The first generation of AI applications looked like this: HTTP request → LLM → HTTP response That is fine for chat. Agents introduce something different: HTTP request → create task → Agent → many asynchronous operations → durable result Once work can outlive the browser connection, the connection should no longer own it: ┌──────────────────┐ │ Connection │ │ │ │ short-lived │ │ disposable │ │ reconnectable │ └────────┬─────────┘ │ │ subscribes to ▼ ┌──────────────────┐ │ Task │ │ │ │ durable │ │ cancellable │ │ resumable │ └────────┬─────────┘ │ ▼ ┌──────────────────┐ │ Agent Runtime │ │ │ │ LLMs │ │ Tools │ │ State │ │ Checkpoints │ └──────────────────┘ The browser connection is ephemeral. The Agent task is the thing that matters. The rule If the work should survive the connection, don't make the connection own the work. Further Reading This is the third article in a series about what happens when a user closes the tab. Part 1 covers how a disconnect reaches your server and how to propagate it upstream with AbortSignal . Part 2 measures whether aborting the request actually stops the provider. The demo code is in aiengineering-book/agent-task-demo . The server-side patterns this article builds on, including the difference between non-persisted chat work, persisted work, and long-running Agent tasks, are covered in Chapter 3 of 《AI Engineering with TypeScript — A Comprehensive Guide to Building AI Agents》 at Leanpub . The book's companion code is at github.com/aiengineering-book/code .",
+            "url": "https://dev.to/kristinz/your-ai-agent-doesnt-belong-inside-an-http-request-399b",
+            "source": "DEV Community",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "developpement",
+                "git",
+                "javascript",
+                "llm",
+                "programmation",
+                "typescript",
+                "web"
+            ],
+            "published_at": "2026-11-01T12:20:56+00:00",
+            "collected_at": "2026-11-01T12:26:58.797236+00:00"
+        },
+        {
+            "id": "e56ccc2ca6aa90c282ef8f2ebd124d62d69f7472d731867e1fc70f468fadf278",
+            "title": "Building a Reliable Trade Calculator with TypeScript and BigInt",
+            "description": "Imagine comparing two offers worth 98 and 100 units. Your calculator calls that fair. Now change the first offer to 97.999999. Both comparisons can display a rounded difference of 2.00% , but only one falls inside an inclusive 2% fairness band. That small boundary captures a lot of what makes a calculator interesting to build. The interface needs to explain a decision that depends on precise arithmetic, complete inputs, and a particular version of the data. I built Adopt Me Value Calculator to compare bundles of virtual pets and items. The application uses Next.js, React, and TypeScript, with Payload CMS and PostgreSQL for editorial data. Visitors calculate offers against published snapshots and keep saved trades in their browser. This post focuses on three decisions behind that design: how values are represented, when a result is allowed, and what happens when prices change. The examples below use illustrative values and simplified versions of the calculation helpers. 1. Keep decimal quotes exact from the moment they enter the system The familiar JavaScript example is easy to reproduce: 0.1 + 0.2 === 0.3 ; // false A formatted total can hide that difference. A comparison near a decision boundary still needs a defined arithmetic rule. The calculator accepts quotes with up to six decimal places. It stores those quotes as decimal strings and converts them into scaled integers for calculation: const SCALE = 1 _000_000n ; const MAX_QUOTE = 1 _000_000_000_000n * SCALE ; function parseValue ( input : string ): bigint { if ( typeof input !== \" string \" || ! /^ (?: 0| [ 1-9 ][ 0-9 ]{0,12})(?:\\.[ 0-9 ]{1,6})? $/ . test ( input ) ) { throw new Error ( \" Expected a non-negative decimal with up to 6 places \" ); } const [ whole , fraction = \"\" ] = input . split ( \" . \" ); const value = BigInt ( whole ) * SCALE + BigInt ( fraction . padEnd ( 6 , \" 0 \" )); if ( value > MAX_QUOTE ) { throw new Error ( \" Quote exceeds the supported maximum \" ); } return value ; } parseValue ( \" 0.1 \" ) + parseValue ( \" 0.2 \" ) === parseValue ( \" 0.3 \" ); // true Here, \"12.345678\" becomes 12_345_678n . An offer total is the sum of each scaled quote multiplied by its validated integer quantity. BigInt represents integer values ; the decimal behavior comes from our chosen scale. That choice also defines the smallest supported increment: one millionth of a unit. The parser rejects scientific notation, negative values, extra precision, and out-of-range quotes. Those are explicit input rules, so an importer cannot silently round a seventh decimal place away. Keep decimal strings at JSON boundaries and convert them directly into scaled integers. Passing through Number first would lose the benefit of preserving the original decimal text. Persisted evaluation totals use strings too, since ordinary JSON.stringify cannot serialize a BigInt value directly. 2. Make the fairness decision before rounding the display The site's published methodology defines the gap as: gap = abs(receive - give) / max(give, receive) An offer is fair when that gap is at most 2%. This is a product policy, so the denominator and inclusive boundary both need to be deliberate. Two percent is 200 basis points. Cross multiplication lets us compare the gap without division: abs(receive - give) × 10,000 <= max(give, receive) × 200 The helper becomes: type Verdict = \" win \" | \" fair \" | \" lose \" ; // Call only after both offers and every required quote are validated. function classifyCompleteTrade ( give : bigint , receive : bigint , fairnessBasisPoints = 200 n , ): Verdict { const difference = receive - give ; const absoluteDifference = difference < 0 n ? - difference : difference ; const larger = give > receive ? give : receive ; if ( larger === 0 n || absoluteDifference * 10 _000n <= larger * fairnessBasisPoints ) { return \" fair \" ; } return difference > 0 n ? \" win \" : \" lose \" ; } For 98 versus 100, the gap is exactly 2%. For 97.999999 versus 100, it is 2.000001%. The second comparison receives a Win from the perspective of the person receiving 100, even if the displayed percentage rounds to 2.00%. That gives the interface an extra responsibility: explain close results. A rounded percentage should not make an exact verdict look arbitrary. More display precision near the boundary, or a short explanation of the cutoff, can help. The full engine reads the fairness threshold from the selected release. The helper above accepts it as an argument so the policy stays separate from the arithmetic. 3. Give unknown prices their own state Consider an offer containing two items. One has a reviewed quote of 20. The other has no quote. Code such as total += quote ?? 0n would produce a total of 20 and let the application continue toward a verdict. A user could mistake a known subtotal for the value of the whole offer. The data model distinguishes reviewed values from unpriced entries. A simplified TypeScript representation is: type Quote = | { status : \" reviewed \" ; value : string } | { status : \" unpriced \" ; value : null }; The evaluation also has a status separate from its Win/Fair/Lose result: empty : neither offer contains items. one-sided : an offer is still missing. incomplete : at least one selected variant has no reviewed quote. invalid : validation failed, including a release mismatch. complete : both offers are present and every required quote is available. Only a complete evaluation can produce a verdict. An incomplete evaluation can show known subtotals and identify missing quotes, while leaving the comparison undecided. A reviewed zero remains a valid value. Two populated offers whose reviewed totals are both zero can be fair; two empty offers remain an empty state. The totals alone cannot tell you which situation exists. These rules make uncertainty visible all the way from the imported data to the interface. 4. Identify the exact variant and value system In Adopt Me, a pet can have Normal, Neon, or Mega status, along with Fly and Ride combinations. The item name alone does not identify the selected asset precisely enough. The engine looks up quotes using a variant identifier and a value system. Quantities refer to that exact variant. The distinction matters because an interface should not invent a missing variant quote by multiplying another quote. Any source-specific transformations belong in the ingestion process, where their rules and provenance can be checked. The calculation engine consumes the resulting explicit records. Value systems need the same care. RP and Shark quotes are maintained separately, so a total from one cannot be compared directly with a total from the other. For releases using a shared Shark-to-Frost benchmark conversion, the engine keeps the comparison in the underlying units and converts the display afterward. Direct Frost quote releases use their own recorded values. Demand is separate context as well. Showing a demand label does not silently add an undocumented premium to the arithmetic. 5. Save the data release alongside the trade A saved offer needs more context than its item list. Suppose a comparison is fair today. Next week, new quotes make the same bundle uneven. Opening the saved trade should make it clear which data the original result used. Each trade therefore records a releaseId , its value system, and both offers. Each published snapshot contains the item and quote records, benchmarks, and settings needed for evaluation. Saving a trade also stores its snapshot and original evaluation in the browser. The engine rejects a trade whose release identifier does not match the supplied snapshot. Recalculating with the latest release is an explicit action. Publication follows an ordered process: Validate the candidate and compare it with the active release. Check that the active release and reviewed draft have not changed. Write a new release in a staging directory. Verify its checksum and record the publication audit. Move the completed release into place, then atomically replace the active manifest. The filesystem operations run under a publication lock. On this single-host design, readers can resolve a complete old or new release while publication proceeds. That approach fits the deployment's persistent filesystem. Moving to multiple hosts or object storage would require a publication mechanism with appropriate concurrency and consistency guarantees. There is another boundary to reproducibility: a data snapshot preserves inputs and settings. If a future application changes the evaluation algorithm, that rule would need versioning too. 6. Keep the calculator independent from visitor accounts The public application reads published snapshots. Editorial work happens through Payload CMS and PostgreSQL, while visitor inventories, favorites, and saved trades use IndexedDB through Dexie. Saving a trade writes the trade and its snapshot in one browser database transaction. The application can retain the data needed for the original comparison without creating a visitor account. Shared offers encode their selected fields as UTF-8 JSON, then base64url, in a URL fragment. The fragment is handled by the client and excluded from the HTTP request . It is still readable by anyone holding the link, so encoding provides portability rather than secrecy. Decoding enforces size limits and validates the resulting trade before evaluation. Browser storage has a practical cost: clearing site data can remove saved records. Backup import and export matter. Cached releases help when an update request fails, but they do not establish full offline support for a first visit. Test the boundary users cannot see These assertions exercise the simplified helpers above: import assert from \" node:assert/strict \" ; assert . equal ( parseValue ( \" 0.1 \" ) + parseValue ( \" 0.2 \" ), parseValue ( \" 0.3 \" ), ); assert . equal ( classifyCompleteTrade ( parseValue ( \" 98 \" ), parseValue ( \" 100 \" )), \" fair \" , ); assert . equal ( classifyCompleteTrade ( parseValue ( \" 97.999999 \" ), parseValue ( \" 100 \" )), \" win \" , ); assert . equal ( classifyCompleteTrade ( parseValue ( \" 100 \" ), parseValue ( \" 97.999999 \" )), \" lose \" , ); The application tests also cover missing quotes, legitimate zero values, mismatched releases, exact variant selection, and historical evaluations after a newer release is published. Exact arithmetic preserves the recorded quotes. Their quality still depends on source accuracy, review, and freshness. A calculator should expose enough context for someone to understand what its result means. Which boundary would you test first in a pricing tool: a decimal cutoff, a missing value, or a saved calculation reopened after a data update?",
+            "url": "https://dev.to/rohan_arora_d57b2eb634f98/building-a-reliable-trade-calculator-with-typescript-and-bigint-3fbg",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "git",
+                "java",
+                "javascript",
+                "programmation",
+                "typescript",
+                "web"
+            ],
+            "published_at": "2026-11-01T12:20:52+00:00",
+            "collected_at": "2026-11-01T12:26:58.798617+00:00"
+        },
+        {
+            "id": "9e1ebd4a3da16c38cf6e16cb06e1df257f9971bbe92d263b9b718d360a92d337",
+            "title": "The 18 FEC columns and the 10 errors that fail a French tax audit",
+            "description": "Every French company that keeps its books on a computer must be able to hand the tax administration one file: the FEC , Fichier des Écritures Comptables . Accounting software exports it in one click, so everyone assumes it is correct. It often isn't. A FEC that is late or does not follow the required format costs a €5,000 fine under article 1729 D of the French tax code (CGI). For a remote audit ( examen de comptabilité ), the administration's own guidance, updated in January 2026, applies it once per audit (BOI-CF-DG-40-20 § 390). Worse than the fine, a file the auditor cannot read is a bad start to an audit. This guide lists the 18 columns, then ten errors I see in real exports, each with a bad line, why it fails and the fix. Every example below comes from synthetic files and from the output of two checkers I wrote; the rules are checked against the official text. What a FEC is Since 2014, a company under audit must hand over its accounting entries as a file at the start of the audit (article L47 A of the Livre des procédures fiscales , LPF). For a remote audit, it has 15 days from the notice. The format is fixed by article A47 A-1 LPF and explained in the administration's guidance BOI-CF-IOR-60-40-20. The file holds every entry recorded during the fiscal year, opening balances included, one line per entry line. Most companies send a flat text file; an XML format also exists, but this guide covers the flat file. The 18 columns For a company taxed on commercial profits (BIC or corporate tax), the file has exactly these 18 columns, in this order . Cash-basis non-commercial and agricultural filers add columns (22 and 21); they are out of scope here. # Column Content Example 1 JournalCode Journal code VE 2 JournalLib Journal name Ventes 3 EcritureNum Entry number, on a continuous sequence 000039 4 EcritureDate Accounting date, AAAAMMJJ 20250610 5 CompteNum Account number 411000 6 CompteLib Account name Clients 7 CompAuxNum Sub-ledger account (customer, supplier); may be empty CLI001 8 CompAuxLib Sub-ledger account name; filled when 7 is Atelier Durand 9 PieceRef Supporting document reference F2025-06 10 PieceDate Document date, AAAAMMJJ 20250610 11 EcritureLib Entry label Facture F2025-06 Atelier Durand 12 Debit Debit amount, decimal comma 3960,00 13 Credit Credit amount, decimal comma 0,00 14 EcritureLet Matching (lettrage) code; may be empty AA 15 DateLet Matching date; filled when 14 is 20250712 16 ValidDate Date the entry was validated 20250610 17 Montantdevise Amount in foreign currency; may be empty 1200,00 18 Idevise Currency code; filled when 17 is USD A full line looks like this (pipe-separated): VE|Ventes|000039|20250610|411000|Clients|CLI001|Atelier Durand|F2025-06|20250610|Facture F2025-06 Atelier Durand|3960,00|0,00|||20250610|| If your software has no separate debit and credit, the text allows Montant and Sens (D/C or +1/-1) instead of columns 12 and 13. Most exports use Debit/Credit. The 10 errors 1. Wrong file name FEC_2025.txt Why it fails: the name is part of the format: the company's SIREN, the letters FEC , then the fiscal year's closing date as AAAAMMJJ (A47 A-1, IX). Fix: 123456782FEC20251231.txt for SIREN 123456782 and a year closing on 31 December 2025. The text fixes the name, not the extension; .txt is the usual choice for the flat file. Also check that the SIREN is right: it has a Luhn check digit, so a typo is often detectable. 2. Mixed or wrong separator VE|Ventes|000002|20250310|411000|Clients|||F000002|20250310|Facture F1|120,00|0,00|||20250310|| VE;Ventes;000002;20250310;706000;Prestations;;;F000002;20250310;Facture F1;0,00;120,00;;;20250310;; Why it fails: fields are separated by a tab or a pipe ( | ), the same one for the whole file (A47 A-1, VI). Semicolons, the default of many spreadsheets in France, are not allowed. The second line above has 1 field instead of 18 for a pipe reader, so the checker reports field_count on line 5, and the entry then looks unbalanced because half of it cannot be read. Fix: export the FEC from the accounting software, never through a spreadsheet. If you must edit it, save as \"text (tab-separated)\" and check that no label contains the separator. 3. Broken accents VE|Ventes|000002|20250310|411000|Clients|||F000002|20250310|Facture rÃ©glÃ©e|120,00|0,00|||20250310|| Why it fails: the allowed encodings are ASCII, ISO 8859-15 and UTF-8 (A47 A-1, XII). rÃ©glÃ©e is \"réglée\" encoded twice: someone opened a UTF-8 file as Latin-1 and saved it as UTF-8 again. The labels are now wrong in the copy the auditor reads. Fix: pick one encoding and never re-save the file in a text editor or spreadsheet. A file in UTF-16 (\"Unicode text\" in Excel) is outside the list too: re-export it as UTF-8. Be aware: no automatic check can be sure here. A double-encoded label is still valid UTF-8, so both tools below accept it. Search the file for Ã before sending it. 4. Misspelled or reordered headers JournalCode|JournalLib|EcritureNum|DateEcriture|CompteNum|CompteLib|CompAuxNum|CompAuxLib|PieceRef|PieceDate|EcritureLib|Credit|Debit|EcritureLet|DateLet|ValidDate|Montantdevise Why it fails: three problems in one line. DateEcriture instead of EcritureDate , Credit before Debit , and Idevise missing. The checker reports: error header_count x1: The header must contain exactly 18 columns. error header_missing x2: Mandatory column missing from the header: EcritureDate. error header_unknown x1: Header column not defined by article A47 A-1. error header_order x1: The header columns are not in the required order. Fix: copy the header from the table above, exactly, case included. Empty optional columns stay in the header. 5. Dates not in AAAAMMJJ AC|Achats|000009|20250230|613200|Locations immobilieres|||FL02|20250205|Facture FL02 SCI Les Tilleuls|1200,00|0,00|||20250205|| AC|Achats|000026|12/04/2025|626000|Frais postaux et telecom|||FT04|20250411|Facture FT04 Telecom Ouest|89,90|0,00|||20250411|| Why it fails: dates are AAAAMMJJ with no separator (A47 A-1, XII). 12/04/2025 has the wrong format. 20250230 has the right format but does not exist (there is no 30 February), which a format check alone misses: error date_invalid x3: Non-existent date in EcritureDate. - line(s) 21, 22, 23 error date_format x3: Wrong date format in EcritureDate (expected AAAAMMJJ). - line(s) 64, 65, 66 Fix: set the export's date format in the software. A non-existent date usually comes from a manual entry: correct the entry, then export again. 6. Decimal point or thousands separators in amounts VE|Ventes|000002|20250310|411000|Clients|||F000002|20250310|Facture F1|120.00|0,00|||20250310|| VE|Ventes|000002|20250310|411000|Clients|||F000002|20250310|Facture F1|1 200,00|0,00|||20250310|| Why it fails: the comma separates units from decimals, and no thousands separator is accepted (A47 A-1, XII). 120.00 and 1 200,00 both fail. Fix: 120,00 and 1200,00 . One detail people get wrong in the other direction: a negative amount may carry its sign as the first character on the left or the last on the right ( -150,00 or 150,00- ), both are legal. 7. Unbalanced entries VE|Ventes|000039|20250610|411000|Clients|CLI001|Atelier Durand|F2025-06|20250610|Facture F2025-06 Atelier Durand|3960,00|0,00|||20250610|| VE|Ventes|000039|20250610|706000|Prestations de services|||F2025-06|20250610|Facture F2025-06 Atelier Durand|0,00|3200,00|||20250610|| VE|Ventes|000039|20250610|445710|TVA collectee|||F2025-06|20250610|Facture F2025-06 Atelier Durand|0,00|660,00|||20250610|| Why it fails: double-entry bookkeeping. The lines of one entry (same EcritureNum ) must have total debit = total credit, and so must the whole file. Here 3960,00 debit against 3860,00 credit: error entry_unbalanced x1: Unbalanced entry: debit - credit difference of 100,00. error file_unbalanced x1: The file is unbalanced: total debit 193104,48, total credit 193004,48, difference 100,00. Fix: software does not book unbalanced entries, so this almost always means the export lost or changed lines: a filter on accounts, a truncated label that shifted a column, or a manual edit. Find the entry by its number and compare with the ledger. 8. Gaps or duplicates in EcritureNum AC|Achats|000046|20250704|401000|Fournisseurs|FOU002|SCI Les Tilleuls|FL07|20250704|Facture FL07 SCI Les Tilleuls|0,00|1440,00|||20250704|| VE|Ventes|000050|20250710|411000|Clients|CLI002|Boulangerie Martin|F2025-07|20250710|Facture F2025-07 Boulangerie Martin|4140,00|0,00|||20250710|| Why it fails: EcritureNum is \"the number on a continuous sequence\" (A47 A-1, VII). Entries 47 to 49 are missing, which is exactly what an auditor looks for: deleted entries. error num_gap x1: Numbering gap: 3 number(s) missing, from 47 to 49. The sequence can be global or per journal ( VE0001 , AC0001 …); a checker has to work out which one the file uses before counting gaps. The same number used twice for two different entries is the opposite error. Fix: if entries were really deleted, the file shows it and you need an explanation. More often, the export left out a journal or a period: export the whole fiscal year, all journals. 9. Missing ValidDate or validation out of order VE|Ventes|000002|20250310|411000|Clients|||F000002|20250310|Facture F1|120,00|0,00||||| Why it fails: ValidDate is the date the entry became final and can no longer be changed. The file is sorted in chronological order of validation (A47 A-1, VII), so an empty ValidDate means a draft entry was exported. Dates going backwards against the numbering are a red flag too: error validdate_not_chronological x1: Validation date earlier than that of entry no. 71 (20251020): validation must follow numbering order. Fix: validate (close) the draft entries for the year in the software, then export again. 10. Opening entries missing or misplaced VE|Ventes|000001|20250310|411000|Clients|||F000001|20250310|Facture F1|120,00|0,00|||20250310|| VE|Ventes|000001|20250310|706000|Prestations|||F000001|20250310|Facture F1|0,00|120,00|||20250310|| AN|A-nouveaux|000002|20250101|512000|Banque|||AN2025|20250101|Reprise des soldes|15000,00|0,00|||20250315|| AN|A-nouveaux|000002|20250101|101000|Capital|||AN2025|20250101|Reprise des soldes|0,00|15000,00|||20250315|| Why it fails: the file must include the entries that record the opening balance sheet ( à-nouveaux ), and they normally take the first entry numbers of the year (A47 A-1, VII). The administration accepts them later in the file only if they cannot come first and the auditor can still identify them (BOI-CF-IOR-60-40-20). A file with no opening entries at all does not let the auditor check the balances. Fix: include the opening journal (usually AN ) in the export and number it first. Be aware: I know of no automatic checker, including mine, that verifies this today; check it by eye in the first lines of the file. A 20-line header check in Python The header causes a large share of rejections and is the easiest thing to check. This is the header logic of fec-lint , reduced to plain Python with no dependency: EXPECTED = [ ' JournalCode ' , ' JournalLib ' , ' EcritureNum ' , ' EcritureDate ' , ' CompteNum ' , ' CompteLib ' , ' CompAuxNum ' , ' CompAuxLib ' , ' PieceRef ' , ' PieceDate ' , ' EcritureLib ' , ' Debit ' , ' Credit ' , ' EcritureLet ' , ' DateLet ' , ' ValidDate ' , ' Montantdevise ' , ' Idevise ' ] def check_header ( path , encoding = ' utf-8 ' ): with open ( path , encoding = encoding ) as f : header = f . readline (). lstrip ( ' ﻿ ' ). rstrip ( ' \\r\\n ' ) sep = ' \\t ' if ' \\t ' in header else ' | ' if ' | ' in header else None if sep is None : return [ ' no tab or pipe separator in the header ' ] names = [ n . strip () for n in header . split ( sep )] errors = [] if len ( names ) != 18 : errors . append ( f ' { len ( names ) } columns instead of 18 ' ) errors += [ f ' missing column: { n } ' for n in EXPECTED if n not in names ] errors += [ f ' unknown column: { n } ' for n in names if n not in EXPECTED ] found = [ n for n in names if n in EXPECTED ] if found != [ n for n in EXPECTED if n in found ]: errors . append ( ' columns are not in the required order ' ) return errors On the header from error 4 it returns: 17 columns instead of 18 missing column: EcritureDate missing column: Idevise unknown column: DateEcriture columns are not in the required order Two details matter. The order check compares only the columns that were found, so a missing column does not hide a swap. And lstrip('﻿') removes the byte-order mark some Windows tools add, which would otherwise make the first column ﻿JournalCode . How to check your own file Test Compta Demat , the administration's free tool, checks the file the way the DGFiP reads it. Start there; it is the reference. fec-lint , free and open source (MIT): errors 1, 2, 4, 5 and 6, a UTF-16 file for error 3 and an empty ValidDate for error 9, as a command line tool and an MCP server for AI assistants. It runs on your machine and the file never leaves it. pipx install fec-lint fec-lint 123456782FEC20251231.txt FEC Checker , the full pre-audit: everything above plus balance, numbering, validation order, risk signals (weekend postings, round amounts, Benford's law, cash and suspense accounts) and an optional AI-written fix list, in French or English: FEC Checker on Apify . None of these replaces reading the first and last lines of the file yourself, especially for errors 3 and 10. Technical guide, not tax advice. It describes the published file format; it does not tell you how the administration will judge your accounts. For that, ask your accountant (expert-comptable).",
+            "url": "https://dev.to/highfiddle/the-18-fec-columns-and-the-10-errors-that-fail-a-french-tax-audit-28g5",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "git",
+                "programmation",
+                "python",
+                "web",
+                "windows"
+            ],
+            "published_at": "2026-11-01T12:20:33+00:00",
+            "collected_at": "2026-11-01T12:26:58.800462+00:00"
+        },
+        {
+            "id": "25d1c255529d5890a18ce13d1a6bacb736700cda404c2029b9ff15406b08f83b",
+            "title": "If/Else in Compose Is Not View.GONE: Where Your State Goes When a Branch Flips",
+            "description": "You ship a filter screen. QA toggles between “List” and “Grid”, scrolls the list, types into a search box, switches back, and everything is reset. The code looks harmless: @Composable fun Conditional ( showA : Boolean ) { Column { if ( showA ) { ComponentA () // owns remember { } state } else { ComponentB () // owns remember { } state } } } When showA flips from true to false , ComponentA is not hidden. It is disposed . Every remember , every LaunchedEffect , every DisposableEffect inside it is torn down, and ComponentB is composed from scratch with initial state. This post covers why, the failure modes that bite in production, and the five tools you actually have for controlling it. The mental model: hidden means deleted In the View system, visibility = GONE keeps the node in the tree. The object, its fields, and its listeners all survive. Compose inverts that: the composition describes what exists right now , and anything not described is gone. What actually happens at the slot table The Compose compiler wraps each branch of a conditional in its own replace group , keyed by call site. Recomposition after showA flips goes like this: The Column group is still there, so it is reused. The group for the if branch no longer matches the group the runtime expects at that position. The runtime sees a different key and treats it as a different node, not as an update. The old group (and everything nested under it) is removed from the slot table. Each RememberObserver receives onForgotten() , DisposableEffect s run onDispose , and LaunchedEffect coroutines are cancelled. The else group is inserted and its remember blocks run their initializers. One detail that surprises people: this is keyed by call site, not by composable function . Calling the same composable from both branches still resets state, because each branch is a distinct group: // Looks like \"the same Player\", but state resets on every flip. if ( isCompact ) { Player ( modifier = Modifier . fillMaxWidth ()) } else { Player ( modifier = Modifier . size ( 320 . dp )) } Failure modes you will meet in production 1. Scroll position and text drafts vanish. rememberLazyListState() and rememberTextFieldState() are backed by rememberSaveable , but that only protects them from configuration change and process death. A branch swap disposes their entries in a live process, so the user is back at the top with an empty field. A plain remember { TextFieldState() } or remember { mutableStateOf(\"\") } fails the same way, just with less protection. 2. Effects re-fire and double your network traffic. Flipping back re-enters the branch, so LaunchedEffect(Unit) { repository.load() } runs again. Rapid toggling produces a burst of cancelled and restarted requests, plus loading spinners that flash on every flip. 3. Heavy resources are rebuilt. An ExoPlayer created in remember and released in onDispose is released and recreated each time. Users hear audio restart; you see MediaCodec init cost in traces. 4. rememberSaveable does not save you here. It survives configuration change and process death, but a branch swap within a live process disposes its entry. People assume \"saveable\" means \"survives anything\". It does not. 5. AnimatedVisibility is not a state preserver. This is the most common wrong fix. AnimatedVisibility plays the exit transition and then removes the content from composition . After the exit finishes, remember state is gone, same as if . It is a visual transition, not a lifetime extension. // Does NOT preserve ComponentA's remember state after the exit animation ends. AnimatedVisibility ( visible = showA ) { ComponentA () } 6. Passing a different key() resets by design. key() is often described as a way to preserve state. It does the opposite: a different key means a different identity, hence fresh state. It is a tool for forcing a reset, or for keeping identity stable when position changes (reordering list items). What survives what The pattern is clear: if the state lives inside the subtree, anything that removes the subtree removes the state. To keep it, either move the state out, or stop removing the subtree. The toolbox 1. Hoist the state (default choice) State that must outlive visibility does not belong inside the thing that gets hidden. Lift it to a state holder owned by a stable parent: @Stable class ListPaneState ( initialQuery : String = \"\" , firstVisibleItemIndex : Int = 0 , firstVisibleItemScrollOffset : Int = 0 , ) { var query by mutableStateOf ( initialQuery ) val listState = LazyListState ( firstVisibleItemIndex , firstVisibleItemScrollOffset ) companion object { // Constructing LazyListState directly is fine, but nothing persists it // unless you save index and offset yourself. val Saver : Saver < ListPaneState , Any > = listSaver ( save = { listOf ( it . query , it . listState . firstVisibleItemIndex , it . listState . firstVisibleItemScrollOffset , ) }, restore = { ListPaneState ( it [ 0 ] as String , it [ 1 ] as Int , it [ 2 ] as Int ) }, ) } } @Composable fun rememberListPaneState (): ListPaneState = rememberSaveable ( saver = ListPaneState . Saver ) { ListPaneState () } @Composable fun Conditional ( showA : Boolean ) { val paneState = rememberListPaneState () // lives in the parent, outlives the branch Column { if ( showA ) ComponentA ( paneState ) else ComponentB () } } For anything that must survive configuration change, put it in a ViewModel and expose it as StateFlow collected with collectAsStateWithLifecycle() . This is also what makes the UI trivially testable. 2. SaveableStateProvider for tabs and switchers If the content is “one of N screens” and each screen owns its own rememberSaveable state, give each a keyed saveable registry. This is what Navigation Compose does per back-stack entry: @Composable fun < K : Any > KeyedSwitcher ( current : K , // must be saveable: String, Int, enum name, Parcelable... liveKeys : Set < K >, // every key that can still be navigated to; must contain `current` modifier : Modifier = Modifier , content : @Composable ( K ) -> Unit , ) { val holder = rememberSaveableStateHolder () val seen = remember { mutableSetOf < K >() } // Without this, saved state for dead keys accumulates for the whole session. LaunchedEffect ( current , liveKeys ) { seen += current ( seen - liveKeys ). forEach { holder . removeState ( it ) } seen . retainAll ( liveKeys ) } Box ( modifier ) { holder . SaveableStateProvider ( key = current ) { content ( current ) } } } Each key’s rememberSaveable values are stashed when that content leaves composition and restored when it returns. Plain remember is still lost, so use rememberSaveable inside the content. Two operational notes: Cleanup is your job. The holder never evicts anything on its own. For dynamic keys (a tab per open document, say), wire removeState(key) to the moment a key is truly gone, as above. Skipping this is a slow leak that only shows up in long sessions. The holder’s lifetime is the switcher’s lifetime. It is created with rememberSaveableStateHolder() , so if KeyedSwitcher itself leaves composition, the stashed entries go with it. Place the switcher above whatever boundary you need to survive, or hoist the holder. 3. Keep it composed, but not drawn When the subtree is expensive to rebuild and you must keep everything (animations, scroll, player), keep it in composition and skip placement: /** * Keeps the subtree composed (state and effects alive) but invisible and inert. * collapse = false behaves like View.INVISIBLE: the space stays reserved. * collapse = true behaves like View.GONE: the subtree takes 0x0. */ fun Modifier . hidden ( hidden : Boolean , collapse : Boolean = false ): Modifier = if (! hidden ) this else this . layout { measurable , constraints -> val placeable = measurable . measure ( constraints ) val w = if ( collapse ) 0 else placeable . width val h = if ( collapse ) 0 else placeable . height // Measured but never placed: nothing is drawn, nothing is hit-tested. layout ( w , h ) {} } . clearAndSetSemantics {} // defensive: keep TalkBack out of the hidden subtree @Composable fun Conditional ( showA : Boolean ) { Column { // collapse = true, otherwise the hidden one leaves a blank gap in the Column. ComponentA ( Modifier . hidden ( hidden = ! showA , collapse = true )) ComponentB ( Modifier . hidden ( hidden = showA , collapse = true )) } } Pick the collapse mode deliberately. The default reserves space, which is right for toggling something in place, and wrong for a swap, where it leaves a blank hole. The trade-off is real: a hidden subtree still composes, still measures, and its LaunchedEffect s keep running. A polling loop or a Lottie animation inside it keeps burning battery. Pair it with a visible parameter that your effects respect: LaunchedEffect ( visible ) { if ( visible ) feed . collect { /* ... */ } } Avoid Modifier.alpha(0f) as the whole solution: it still lays out and, depending on version and parent, can remain reachable by touch and by accessibility services. Verify with TalkBack before shipping. 4. movableContentOf when the same content changes parent For the “same Player, different container” case, a branch swap loses state but moving content preserves it: @Composable fun AdaptivePlayer ( isWide : Boolean , url : String ) { val player = remember ( url ) { movableContentOf { Player ( url ) } } if ( isWide ) { Row { player () } } else { Column { player () } } } remember state inside Player follows it between the Row and the Column . This only applies when the content is moved ; if it is absent from both parents for a frame, it is disposed. 5. key() to reset on purpose When you want the opposite, such as clearing a form when the selected entity changes, use key : key ( userId ) { ProfileEditor ( userId ) // new userId = new identity = fresh state } This is the correct replacement for hand-written “reset on id change” LaunchedEffect logic. Proving it: a test that guards the behavior Do not trust your memory of this. Encode it: @Composable fun Counter ( tag : String ) { var count by remember { mutableIntStateOf ( 0 ) } Text ( text = count . toString (), modifier = Modifier . testTag ( tag ). clickable { count ++ }, ) } class ConditionalStateTest { @ get : Rule val rule = createComposeRule () // androidx.compose.ui.test.junit4 @Test fun counterResetsWhenBranchSwaps () { val showA = mutableStateOf ( true ) rule . setContent { if ( showA . value ) Counter ( tag = \"a\" ) else Counter ( tag = \"b\" ) } rule . onNodeWithTag ( \"a\" ). performClick () rule . onNodeWithTag ( \"a\" ). assertTextEquals ( \"1\" ) rule . runOnIdle { showA . value = false } rule . onNodeWithTag ( \"b\" ). assertTextEquals ( \"0\" ) rule . runOnIdle { showA . value = true } rule . onNodeWithTag ( \"a\" ). assertTextEquals ( \"0\" ) // state was lost } } This needs androidx.compose.ui:ui-test-junit4 as an androidTestImplementation (or testImplementation with Robolectric) and ui-test-manifest as debugImplementation . For quick debugging, drop a lifecycle probe into the suspect composable. Seeing onDispose fire on every toggle ends the argument immediately: @Composable fun LifecycleProbe ( name : String ) { DisposableEffect ( Unit ) { Log . d ( \"Probe\" , \"$name entered composition\" ) onDispose { Log . d ( \"Probe\" , \"$name left composition\" ) } } } Rules of thumb Treat every if that gates a composable as a lifetime boundary, not a visibility switch. State that must outlive a boundary lives above it: a hoisted holder, a ViewModel , or a SaveableStateProvider . AnimatedVisibility animates the boundary; it does not remove it. Keeping content composed is a performance decision, not a free lunch. Gate its effects. Reach for key() to reset, movableContentOf to relocate, and neither to preserve across hiding. The View-era instinct says “hide it and the state will be fine”. In Compose, the question to ask is different: who owns this state, and does that owner outlive the branch? 📱 Go Beyond Using Jetpack Compose If you’re building on Android, understanding what happens under the hood separates developers who use Compose from those who master it. I highly recommend “Mastering Jetpack Compose Internals” . It’s a deep, architecture-first walkthrough of the composition tree, the slot table, snapshot state, and the runtime that powers modern Android UI — capped off with a full case study building a real app called Mosaic. E-book: Available on Google Play Kindle Edition: Available on Amazon Topmate: Available on Topmate Also available in Paperback & Hardcover Originally published on Medium .",
+            "url": "https://dev.to/sivavishnu_r_1ee8971ed42d/ifelse-in-compose-is-not-viewgone-where-your-state-goes-when-a-branch-flips-42cb",
+            "source": "DEV Community",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "android",
+                "developpement",
+                "llm",
+                "programmation",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-11-01T12:19:32+00:00",
+            "collected_at": "2026-11-01T12:26:58.802213+00:00"
+        },
+        {
+            "id": "2dc01ffa372da2a25d085e6141dfbf5eb64de2e8dbd2606b6c43c75e0fb9cd5f",
+            "title": "Brand Identity for Startups: What Founders and Builders Should Agree First",
+            "description": "If you build products for startups, you have seen this pattern. A founder wants a logo quickly, the team designs one, and six months later the whole identity is redone because the early decisions were never made. For developers, the cost shows up as rework, in the UI, the marketing site, the app icon and every template that used the old system. A brand identity process in five phases prevents most of that rework. Discovery gathers customer language, competitor patterns and founder constraints. Strategy turns that into a positioning statement, personality traits and a messaging hierarchy that design reviews can be judged against. Verbal identity covers name, tagline and tone, with do and do not examples. Visual identity then builds the logo system, colour, type and imagery, with accessibility checks from the start. WCAG asks for at least 4.5 to 1 contrast for normal text and 3 to 1 for large text, and brand colours will end up behind buttons and body text, so test pairs early. Guidelines and launch assets are the handover. A focused guide plus editable templates, website header, social templates, deck master and email header, plus a small component library if there is a product UI, is what lets other builders use the system without asking the original designer every time. Two checks matter most for technical teams. First, name checks before design, trademark records, internet use, business name rules, domain and handles, because redesigning around a name you cannot use wastes design and code time alike. Second, files and licensing, vector logo files, colour codes for screen and print, licensed fonts, guidelines and editable sources, with copyright ownership clear on payment. Budget by scope and hours. A lean identity can take three to five weeks, a standard one six to ten weeks, and a full programme ten to sixteen weeks or more in planning estimates. Agree the phases first, and the visual work that follows will be far more stable. Originally published on Pixel2Tech: https://pixel2tech.com/blog/brand-identity-process-for-startups",
+            "url": "https://dev.to/pixel2techhq/brand-identity-for-startups-what-founders-and-builders-should-agree-first-4mk0",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-11-01T12:19:10+00:00",
+            "collected_at": "2026-11-01T12:26:58.802495+00:00"
+        },
+        {
+            "id": "5c4bec5bfaccdf4900a1c7297859c0f8acbe1340917987ec5f79423d0fc54649",
+            "title": "An app. Without AI. Imagine that.",
+            "description": "An app that doesn't use AI. Can you believe that? No AI. No LLMs. No agents. No RAG. Not even a desperate attempt to squeeze in a chatbot. Just a bunch of random predictions, wrapped in an unnecessarily dramatic experience. Yes, I know. In 2026, building an app without AI almost feels like forgetting to add a README. The idea was pretty simple. Take something utterly pointless, make it look reasonably nice, add a little anticipation, and let people discover what the day supposedly has in store for them. That's it. No grand vision. No business model. No plans to disrupt the prediction industry (if such a thing exists). Built it, had some fun with it, and got it deployed in about two hours. Probably spent more time worrying about the little details than the actual usefulness of the app. Not that there was much usefulness to begin with. Anyway, here's the result: \"Make My Day\" Give it a spin. It might make your day. Or it might not. At least it won't ask you to upgrade to a premium AI plan to find out.",
+            "url": "https://dev.to/vishdevwork/an-app-without-ai-imagine-that-254l",
+            "source": "DEV Community",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "developpement",
+                "llm",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-11-01T12:17:57+00:00",
+            "collected_at": "2026-11-01T12:26:58.802629+00:00"
+        },
+        {
+            "id": "027cdad7216c6cfd90f9e841d1f69e4addc2c45834735d09cfaf1c03136fa7c4",
+            "title": "My reflections on raising a daughter in the age of AI",
+            "description": "I'm raising a daughter, and I keep coming back to a question: what do I want her to learn to do for herself when a machine can produce an answer for her? I use AI. I understand the appeal of asking for an explanation, a draft, or help getting past a problem. As a developer, I can see plenty of reasons to welcome tools that make difficult work more approachable. Then I imagine a conversation I may eventually have with my daughter: “If you ask AI for help, why do I have to do this myself?” I think that question deserves a better answer than “because you're a child.” For a developer trying to deliver a working feature, saving effort can be useful. For a child learning to write, explain an idea, or solve a problem, some of that effort is the activity we care about. A completed assignment and an acquired skill are two different things. That distinction gives me somewhere to start. It also leaves me with a lot of questions. A 2025 study by Bastani and colleagues makes this tension concrete. In a mathematics experiment at one high school in Turkey, students using a basic GPT-4 assistant did better during assisted practice, then performed worse than the control group when they had to work without it. A version designed with learning safeguards, including hints and teacher-provided information, did not show the same statistically significant decline. The experiment took place in 2023 and measured short-term outcomes in a specific setting. It cannot settle the question of how every child should use every AI tool. What I take from it is a reason to ask what happens after the assistant is closed. Could my daughter explain the idea in her own words? Could she try a similar problem? Could she tell me which decisions were hers? I would find those answers more useful than the quality of the finished document. The question of when to introduce AI needs more precision, too. Watching a parent demonstrate a tool, exploring it together, and having independent access are different experiences. UNESCO's 2023 guidance proposes thirteen as the minimum age for independent conversations with generative AI platforms. I would treat that as a policy recommendation, alongside the rules of the particular service. A birthday alone cannot tell me whether my daughter is ready for a particular kind of access. I would also want to understand what she wants to do, whether she knows that answers can be wrong, and whether she knows when to ask a person for help. We would need to talk about the information she shares, including information about other people. The question I'm trying to answer is what a gradual introduction could look like, and how I would recognize that it was helping. One thing I would like to practice together is checking a confident answer. “Think critically” sounds sensible, but it leaves a child with a lot to figure out. What does checking actually involve? Which part of an answer is a factual claim? Where should you look? How do you know that the page you found supports it? In a discussion on r/Parenting , a parent described looking at answers about a film their child already knew well. The answers mixed up actors and included incorrect details about the characters. Familiarity with the subject gave them something concrete to examine together. That seems like a useful place to begin. A child can notice that a polished answer conflicts with something they know. The next step is harder: checking an answer about an unfamiliar subject. For that, I would practice a small sequence: Pick a specific claim. Find where it came from. Open the source and see whether it actually supports the claim. Look for independent confirmation when the claim matters. Asking another chatbot could suggest a different explanation or help locate a source. Two agreeing answers still wouldn't be enough to settle the question for me. There is relevant research beyond AI. A school study of lateral reading found that teaching students to leave an unfamiliar website and investigate it elsewhere improved their ability to judge digital content. The study concerned online information evaluation, rather than chatbot answers specifically, but it offers a practical direction to explore. I would also want to apply that habit to answers I find reassuring or agree with. If I only investigate things I dislike, I am teaching my daughter something about defending a position. The Reddit stories are useful here as examples of what families describe trying. They are personal accounts, with no way for me to establish how well they work or how typical they are. In another discussion on r/daddit , a parent described a child beginning to use AI at school and then using it more frequently. The family started discussing it at home and reviewing questions and answers together. Those conversations brought up both factual errors and the use of AI for creative tasks. The part I would take from that story is making room to discuss the process. What were you trying to do? Which suggestion helped? Which part did you change? What would you try differently? For a task intended to teach a skill, I would like to experiment with a rhythm: a first attempt, some help, then another attempt with the assistant closed. That is a starting idea I would expect to adjust to the task and to my daughter. Help can also make an activity possible in the first place. An explanation in simpler language, support with unfamiliar vocabulary, or a hint at the right moment might open a door. I would want to notice those benefits as well. The same question comes up with creativity. If she wants to invent a story, I want there to be room for her own strange plot, uncertain sentences, and ending that surprises me. I would happily explore how AI could help her develop an idea while keeping her decisions visible. This is also why books remain part of what I hope for her. A summary can tell you what happens. Reading a book gives you time with the language, the characters, and your own reactions. I want her to have the experience of disagreeing with an author, rereading a passage, abandoning a book she dislikes, and finding one she wants to talk about. That is an experience I value in its own right, and one I want her to have the chance to enjoy. In a thread about children growing up with AI , some parents described prioritizing, or planning to prioritize, hiking, gardening, fishing, and other activities away from screens. Those comments reminded me to leave space for experiences that have their own pace. You can talk about a seed growing, but you can also plant one and wait. You can ask for a story, and you can make one up together while walking. I want technology to fit into a life that has room for those things. The most uncomfortable part of all this is my own example. If I expect my daughter to check a claim, she needs opportunities to see me checking one. If I want her to admit uncertainty, I need to be able to say “I don't know.” If I hope she will change her mind when the evidence changes, I need to make that look ordinary. One comment in the same r/daddit discussion about AI use stayed with me: a parent described their child challenging their reliance on an AI search summary and insisting on a more authoritative source. I would be glad if my daughter did that to me. I also hope I would remember to be glad in the moment. For now, the question I want to keep asking is what she understands, chooses, and wants to explore after using the tool. I expect my answer to change as she grows and as we learn what works for us. If you're already navigating this with your children, what has happened in practice? Was there a moment that made you change a rule, relax one, or introduce a boundary you hadn't expected to need?",
+            "url": "https://dev.to/p0rt/i-use-ai-what-should-i-teach-my-daughter-3efp",
+            "source": "DEV Community",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "developpement",
+                "git",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-11-01T12:17:36+00:00",
+            "collected_at": "2026-11-01T12:26:58.803520+00:00"
+        },
+        {
+            "id": "c84f2ad8da2a9259daf9b399a1c449274a89b48c2d0b22928345298055b79ea0",
+            "title": "Why a multi-agent system must not average",
+            "description": "We shipped four analysis personas, then deleted every vote and every weighted mean from the codebase. Every multi-agent framework has the same first bug Look at how most multi-agent projects are built. Three roles read the same material, each writes a conclusion, an orchestrator merges them into one answer. The merge is usually a weighted mean, or a majority vote. It seems obviously right — isn't that what ensembles do? Random forests average, voting classifiers vote, bagging reduces variance. Same word, so the same move should apply. The analogy is wrong, and the cost is not small. An ensemble averages homogeneous weak learners with independent noise on a shared objective. Averaging cancels the noise. A multi-agent team is heterogeneous judges whose value is precisely that they disagree: one reads the shape of a distribution, one reads whether consensus has drifted, one exists to find the dissent nobody else produces. Average those three and you do not get a steadier answer. You get a sentence sanded down until it has no position. Averaging is loudest exactly where it is most destructive This is the part worth its own section. When the members agree, averaging is the identity operation. Nothing happens, nothing is lost. When the members disagree, averaging is at full strength — because at that moment the only informative fact in the run is that two informed readers disagreed . The operation activates precisely in the case where you most need the disagreement kept. Two members read the same record: A: narrow and low B: wide and high The average is medium-width and centred. That shape was proposed by nobody and would be defended by nobody . You manufactured a conclusion no participant believes, and destroyed the one real signal in the run. I call that a fabricated consensus. It is not even a compromise — a compromise at least admits the disagreement happened. Independence has to be structural, not encouraged The second trap is subtler: shared context. As the system runs, the members' outputs start to look alike, and they converge nicely. It reads like maturity. It is B having seen A's draft. The moment B reads A's conclusion before reading the material, B's output stops being an independent estimate and becomes a revision of A's. Two correlated estimates look like agreement and carry the information of one. You paid for four members and received one. So each member gets the same canonical record and nothing else. No shared draft, no rolling summary, no \"here is what the others think\". The cost is real: independent members produce messier, more contradictory output. That mess is the signal. It is what you paid for. If voting is out, escalate Disagreement cannot be averaged, so how does a run end? It escalates to a challenge stage with one rule: A challenge is a citation contest, not a vote. A challenged claim has two exits: cite two independent figures and stand; fail to cite, and withdraw explicitly . There is no third path. The withdrawal must be recorded, because the withdrawal is the actual output of that round. If both sides stand, neither is decided. Both are marked unresolved , and that marking travels into the published result. An honest \"we could not settle this\" beats a fabricated midpoint. The distinction matters: a vote asks who has more support . A challenge asks who can point at their evidence . The first rewards confident phrasing. The second rewards having actually checked. The reviewer must be able to overturn — with mechanical checks The final stage reads the whole transcript and can change the conclusion , not merely comment on it. Reviewers without authority produce advisory notes, and advisory notes get ignored under deadline. That is failure mode one. Grant authority instead and failure mode two arrives: reviewers with authority kill good conclusions , especially when their check is \"this feels off\". So the reviewer's checks are fixed: five audits, fixed order, each producing a diff against a named sentence. No scores, no general impressions, no \"consider reviewing this further\". Either show that the sentence does not support the conclusion, or pass it. One more rule that feels wrong until you need it: a run is allowed to end with no conclusion , and that outcome is published as-is. The alternative — shipping a conclusion the reviewer could not defend — is the failure mode most analysis products actually have. Five failure modes we hit The table below is the useful part of our architecture doc. The diagram is not. Failure Symptom Cause and fix Leaky independence Members converge suspiciously often Context leaked through the runtime , not the prompts Reviewer rubber-stamp Zero overturns over many runs Reviewer read the draft after it was formatted for output Persona collapse Two \"different\" members write near-identical text Both priors were restatements of \"be careful, consider many factors\" Confidence inflation High confidence on single-source claims Confidence was member-reported , never calibrated against the citation audit Challenge theatre Disagreements resolve in one turn, always The challenger had no evidence standard, so it always yielded first Four of the five were prompt problems, not code problems. Only the first was structural. That ratio is worth remembering when you debug your own team. Where the line is We run this in production. The public repository is source-available, not open source . Public: the four personas, the orchestration schema, the client, and the reasoning above. Not public: the training prompts, the evaluation weights, the live data adapters, the settlement logic. We say this in the first line rather than letting you install it and discover it. A repository that looks complete and is not damages a project more than the missing code ever would. If you remember one thing It is not \"use more models\", and not \"add a reviewer\". It is this: when two informed judges disagree, the disagreement is the asset. Do not wash it out with a mean. Any operation that smooths a disagreement deserves one question first — am I removing noise, or destroying evidence? github.com/SoccerDreamAI/soccerdream-experts — the four personas, the orchestration schema, and the architecture rationale behind the table above, in English and Chinese. Source-available: read it, fork it, and keep the attribution. This is an analysis framework. It does not predict outcomes, is not advice, and is not intended for wagering.",
+            "url": "https://dev.to/soccerdreamai/why-a-multi-agent-system-must-not-average-3p5d",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "git",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-11-01T12:17:10+00:00",
+            "collected_at": "2026-11-01T12:26:58.804461+00:00"
+        },
+        {
+            "id": "af30124edb0a6c4f818deb2b434b2be5ac9ff952a551dd45899b33aa4fdd80a2",
+            "title": "LLM-as-Judge Position Bias: Swapping A/B Flipped 87 of 300 Verdicts",
+            "description": "In a head-to-head eval, my new system prompt beat the old one in 66% of comparisons. I already had the \"we're shipping v2\" message typed. Then I swapped which answer went first and reran the exact same 300 pairs. The new prompt won 43%. The judge, the answers, the rubric and temperature 0 were all the same. The only change was which answer sat in the slot labeled \"A\". That is LLM-as-judge position bias , and if your eval script calls judge(new, old) in a fixed order, your headline number is probably measuring it too. TL;DR LLM-as-judge position bias means a pairwise judge prefers whichever answer sits in a particular slot (usually the first) regardless of quality. In my run, swapping A and B flipped 87 of 300 verdicts (29%) , and 78 of those flips went to whichever answer was in slot A. The bias shows up in close calls. When two answers are near-equal, slot position acts as the tiebreaker. Fix: judge every pair in both orders . Count a win only when both runs agree, and treat disagreement as a tie. Before trusting a judge, run the mirror test : put the identical answer in both slots. A fair judge has no reason to prefer either one. What is LLM-as-judge position bias? LLM-as-judge position bias is a judge model's tendency to pick an answer because of where it appears in the prompt, not because of what it says. It's one of the first biases documented for LLM judges (the MT-Bench / Chatbot Arena paper from Zheng et al. called it out back in 2023), and it's still easy to walk straight into. It hits pairwise evals hardest, the \"here are Answer A and Answer B, which is better?\" setup. That's the setup most of us use to compare prompts, models or RAG configs, because it's easier than defining an absolute 1-10 scale. How I caught it My eval script looked like every eval script: for q in questions : verdict = ask_judge ( q . text , new_answer [ q . id ], old_answer [ q . id ]) wins += verdict == \" A \" The new answer always went in slot A. I didn't pick that order for any reason. It was just the order of the function arguments. A coworker asked \"did you swap them?\" and I had no good answer. So I ran it again with the old answer in slot A. Here is what the 300 pairs did across both runs: Outcome across both orders Pairs New prompt won both times 120 Old prompt won both times 93 Slot A won both times (verdict flipped) 78 Slot B won both times (verdict flipped) 9 Count the slot picks: slot A won 369 of 600 judgments, or 61.5%. A judge with no position preference would land somewhere near 50%. The 66% headline was really 120 consistent wins plus 78 pairs where the new prompt just happened to sit in the favored seat. Why does an LLM judge prefer the first answer? An LLM judge prefers the first answer mostly because of how it reads: one token at a time, left to right. Answer A gets evaluated with nothing to compare it to. By the time the model reaches Answer B, it has already formed a picture of what \"good\" looks like for this question, and that picture came from A. A few things stack on top of that: Close calls get decided by the seat. I read the 87 flipped pairs myself. In most of them I couldn't pick a winner either: both answers were correct, worded differently, and about the same length. With no real quality signal to go on, the position prior decides. Temperature 0 doesn't help. It makes the bias reproducible, which is worse in a way, because rerunning the same order gives you the same wrong answer and feels like confirmation. The direction isn't universal. Some judge and prompt combinations favor slot B, especially with long answers where the most recent text is freshest. My judge favored A. Yours might favor B. Measure it before you assume a direction. Format priors. \"A\" is the first option in countless multiple-choice examples the model has seen. Label tokens carry their own baggage before the model reads a word of the answers. None of this means the judge is useless. On the 213 pairs where it agreed with itself, its picks matched mine on almost every one I spot-checked. The judge is fine at clear differences. On near-ties it isn't measuring quality at all. How do you test an LLM judge for position bias? Run the mirror test: build pairs where Answer A and Answer B are the exact same text, then ask the judge to pick. A fair judge has no basis to prefer either, so it should say TIE or split close to 50/50. I ran 50 mirror pairs. My judge picked A 34 times, B 9 times and TIE 7 times. It was confidently picking a winner between two copies of the same text, and it usually picked the first one. This takes ten minutes and tells you more about your judge than a week of reading verdicts. I now run it every time I change the judge model or the judge prompt. How do you fix position bias in pairwise LLM evals? Judge every pair twice, once in each order, and count a win only when both runs agree. If the judge contradicts itself, call it a tie. That's the whole fix: JUDGE_PROMPT = \"\"\" You are comparing two answers to the same question. Question: {question} Answer A: {a} Answer B: {b} Briefly list the strengths and weaknesses of each answer. Then end with exactly one line: VERDICT: A, VERDICT: B, or VERDICT: TIE \"\"\" def ask_judge ( question , a , b ): out = call_llm ( JUDGE_PROMPT . format ( question = question , a = a , b = b ), temperature = 0 ) return parse_verdict ( out ) # \"A\" | \"B\" | \"TIE\" def judge_pair ( question , new , old ): run1 = ask_judge ( question , new , old ) # new in slot A run2 = ask_judge ( question , old , new ) # new in slot B if run1 == \" A \" and run2 == \" B \" : return \" new \" if run1 == \" B \" and run2 == \" A \" : return \" old \" # Self-contradiction, or a TIE in either run: no signal. return \" tie \" Then report three numbers instead of one: results = [ judge_pair ( q . text , new [ q . id ], old [ q . id ]) for q in questions ] n = len ( results ) new_wins = results . count ( \" new \" ) old_wins = results . count ( \" old \" ) ties = results . count ( \" tie \" ) print ( f \" new { new_wins / n : . 0 % } old { old_wins / n : . 0 % } tie { ties / n : . 0 % } \" ) print ( f \" new win rate on decisive pairs: { new_wins / ( new_wins + old_wins ) : . 0 % } \" ) The tie rate is the important number here. It tells you how much of your eval set the judge can't actually separate. If it's 30%, a 5-point swing in your headline doesn't mean much. Some other things that helped: Give the judge a TIE option. Without it, you're forcing a coin flip on every near-equal pair, and the position prior is what decides the flip. Ask for reasoning before the verdict. Put the verdict line last so the model writes its comparison before it commits to a letter. It doesn't remove the bias, but it cut my flip rate. Use logprobs if your API exposes them. Take P(\"A\") in one order and P(\"B\") in the swapped order, then average. You get a soft score that's symmetric by construction. Isn't randomizing the A/B order enough? Randomizing the order per pair is better than a fixed order, but it doesn't fix the problem. Random assignment spreads the position bias evenly across both systems, so your aggregate win rate stops being skewed in one direction. That's real progress. What it hides is the noise. Those 87 coin-flip pairs are still in your data, now split randomly between \"new won\" and \"old won.\" Your headline drifts toward 50% and looks like an honest close race, when actually a third of your eval set says nothing at all. Rerun it with a different random seed and the number moves. Running both orders costs twice the judge calls. On 300 pairs, that's 300 extra API calls. Shipping a prompt that was never better costs more. Which other LLM judge biases show up alongside position bias? Position bias rarely travels alone. Watch for these two: Verbosity bias. Judges tend to favor the longer answer, even when the extra length is padding. If your new prompt makes answers 40% longer, some of its \"wins\" are word count. Check the win rate split by length difference. Self-preference. A judge can favor outputs that sound like its own writing. If you're comparing Model X against Model Y and Model X is also the judge, be suspicious of a big X win. Swapping the order fixes neither of these. They need their own checks. So was my new prompt actually better? Yes, a little. On the 213 pairs where the judge agreed with itself, the new prompt won 120 to 93, which is 56%. That's a real but modest improvement. It isn't the 66% blowout I nearly announced. I shipped it with a much quieter message and a note that 29% of the eval set was a toss-up. How does LLM-as-judge position bias distort pairwise evals? LLM-as-judge position bias makes a pairwise judge favor whichever answer occupies a particular slot, usually the first. It mostly decides near-tie comparisons, which can quietly inflate or deflate a win rate by double digits. In my eval, swapping A and B flipped 87 of 300 verdicts and turned a 66% win into 43%. The fix is to judge every pair in both orders, count only verdicts that agree, treat contradictions as ties, and report the tie rate next to the win rate. Run the mirror test, with the identical answer in both slots, before you trust any judge. Written by the developer behind Preterview , an interview prep platform.",
+            "url": "https://dev.to/ji_ai/llm-as-judge-position-bias-swapping-ab-flipped-87-of-300-verdicts-42hf",
+            "source": "DEV Community",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "developpement",
+                "git",
+                "llm",
+                "programmation",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-11-01T12:15:13+00:00",
+            "collected_at": "2026-11-01T12:26:58.805368+00:00"
+        },
+        {
+            "id": "08064c56e3f583d6bd98b02ef2232652c58541fecba7bd95d99d02086e83bf1f",
+            "title": "Automating API Authentication in Postman: How to Store and Reuse Bearer Tokens",
+            "description": "When developing REST APIs, authentication is one of the important things developers need to understand. Imagine you are building a restaurant management system using Laravel. You have endpoints for managing menu categories, menu items, products, customers, and sales. Some endpoints are public, while others should only be accessible to authenticated users. For example: POST /api/login GET /api/menu-categories POST /api/menu-categories PUT /api/menu-categories/1 DELETE /api/menu-categories/1 You might notice that when you try accessing a protected endpoint using Postman, Laravel returns: { \"success\" : false , \"message\" : \"Unauthenticated.\" } Why does this happen? The endpoint requires authentication, but your request does not contain a valid authentication token. In this article, we will learn how to authenticate with a Laravel API, automatically extract an access token from the login response, store it in Postman environment variables, and reuse it when accessing protected endpoints. 1. Understanding API Authentication Before writing any code, let's understand what API authentication means. API authentication is the process of verifying the identity of a client before allowing it to access protected resources. For example, when a user logs into a restaurant management application, Laravel checks their credentials. If the credentials are valid, the application can issue an access token. The client then uses this token when making subsequent requests to protected endpoints. A typical authentication workflow looks like this: The client sends login credentials. Laravel validates the credentials. Laravel generates an access token. Laravel returns the token in a JSON response. The client includes the token in subsequent API requests. Laravel validates the token before allowing access. This is commonly implemented using Bearer Token authentication. 2. Understanding Bearer Token Authentication A Bearer Token is an authentication credential sent in the HTTP request header. For example: GET /api/menu-categories HTTP / 1.1 Host : localhost:8000 Accept : application/json Authorization : Bearer YOUR_ACCESS_TOKEN The important part is: Authorization: Bearer YOUR_ACCESS_TOKEN The Authorization header tells Laravel that the client is providing an authentication token. The word Bearer identifies the authentication scheme, while YOUR_ACCESS_TOKEN represents the actual token. Without a valid token, protected endpoints will reject the request. 3. Authenticating with Laravel In Laravel, authentication middleware can be used to protect API routes. For example, consider the following code in routes/api.php : Route :: middleware ( 'auth:sanctum' ) -> group ( function () { Route :: apiResource ( 'menu-categories' , MenuCategoryController :: class ); }); Let's understand what is happening. What does auth:sanctum mean? auth:sanctum is Laravel authentication middleware that requires a valid authenticated user. It protects the routes inside the middleware group. In this example, all menu category operations require authentication. That includes: GET: Retrieve menu categories. POST: Create a menu category. PUT/PATCH: Update a menu category. DELETE: Delete a menu category. If an unauthenticated user attempts to access these endpoints, Laravel returns an authentication error. Important: Sanctum supports both SPA cookie-based authentication and personal access tokens. This article focuses on personal access tokens when using Postman. 4. Logging into the API Using Postman Before accessing protected endpoints, we need to authenticate. Assume your Laravel application has a login endpoint: POST http://127.0.0.1:8000/api/login In Postman: Select POST as the HTTP method. Enter your login endpoint. Open the Body tab. Select raw. Choose JSON. Provide your login credentials. Example: { \"email\" : \"developer@example.com\" , \"password\" : \"password123\" } When you send the request, Laravel validates the credentials. If authentication succeeds and your login controller issues a Sanctum personal access token, you might receive a response like this: { \"success\" : true , \"message\" : \"Login successful\" , \"data\" : { \"access_token\" : \"eyJhbGciOiJIUzI1NiJ9...\" , \"token_type\" : \"Bearer\" , \"expires_in\" : 3600 } } The important fields are: Field Purpose access_token Authentication credential token_type Authentication scheme expires_in Token validity duration, if provided Now that we have an access token, we can use it to authenticate other requests. However, manually copying and pasting tokens every time can become repetitive. This is where Postman environment variables become useful. 5. Understanding Postman Environment Variables Environment variables allow developers to store reusable values that can be accessed across multiple API requests. For example, instead of repeatedly writing: Authorization: Bearer eyJhbGciOiJIUzI1NiJ9... We can store the token in a variable: access_token Then reference it using: {{access_token}} This makes API testing easier because when the token changes, we only need to update the environment variable. Postman provides a JavaScript API for managing these variables. For example: pm . environment . set ( \" access_token \" , \" YOUR_TOKEN \" ); This saves the token in the currently selected Postman environment. 6. Automatically Extracting the Access Token Using JavaScript Instead of manually copying the access token from the login response, we can write a JavaScript script that extracts it automatically. In Postman, open your login request and navigate to: Scripts → Post-response Add the following code: // Parse the JSON response body var jsonData = pm . response . json (); console . log ( \" Full response: \" , jsonData ); // Check if the response has the expected structure if ( jsonData . data && jsonData . data . access_token ) { // Save the access token pm . environment . set ( \" access_token \" , jsonData . data . access_token ); console . log ( \" Access token saved successfully \" ); // Save token type pm . environment . set ( \" token_type \" , jsonData . data . token_type || \" Bearer \" ); // Save token expiration duration pm . environment . set ( \" expires_in \" , jsonData . data . expires_in || 3600 ); } else { console . log ( \" No access token found in response \" ); pm . expect . fail ( \" Access token not found in response \" ); } Let's break down the important parts. A. Reading the API response var jsonData = pm . response . json (); pm.response.json() reads the API response and converts the JSON body into a JavaScript object. For example, if Laravel returns: { \"data\" : { \"access_token\" : \"abc123\" , \"token_type\" : \"Bearer\" } } We can access the token using: jsonData . data . access_token B. Checking whether the token exists if ( jsonData . data && jsonData . data . access_token ) { This condition checks whether the response contains a data object and an access_token . The && operator means both conditions must be true. This prevents the script from trying to access a missing property when login fails. C. Saving the token pm . environment . set ( \" access_token \" , jsonData . data . access_token ); This is where the token is saved. The first argument is the environment variable name. The second argument is the value being stored. In this case: Variable: access_token Value: abc123 D. Saving the token type pm . environment . set ( \" token_type \" , jsonData . data . token_type || \" Bearer \" ); This saves the authentication scheme. The || operator provides a fallback value. If the API response does not contain token_type , Postman uses Bearer as the default. E. Saving the expiration duration pm . environment . set ( \" expires_in \" , jsonData . data . expires_in || 3600 ); This saves the token's validity duration when the API provides it. For example: expires_in = 3600 This represents 3,600 seconds, equivalent to one hour. Note that storing the expiration duration does not automatically refresh the token when it expires. 7. Reusing the Access Token in Other API Requests Now comes the interesting part. We have successfully saved the access token in Postman's environment variables. Let's use it to access our protected menu category endpoint. For example: GET http://127.0.0.1:8000/api/menu-categories In Postman: Open the menu categories request. Navigate to the Authorization tab. Select Bearer Token as the authentication type. Enter the following variable: {{access_token}} Postman automatically retrieves the saved token and attaches it to the request. Alternatively, you can add the following headers manually: Accept: application/json Authorization: Bearer {{access_token}} When the request is sent, Laravel receives the token and checks whether it is valid. If authentication succeeds, the controller executes and returns the menu categories. 8. Understanding the Complete Authentication Workflow Let's bring everything together. The following diagram illustrates how Laravel and Postman work together: flowchart TD A[\"Send POST login request\"] --> B[\"Laravel validates credentials\"] B --> C[\"Laravel generates access token\"] C --> D[\"Laravel returns JSON response\"] D --> E[\"Postman reads JSON response\"] E --> F[\"JavaScript extracts access_token\"] F --> G[\"Save token in environment variable\"] G --> H[\"Send GET menu-categories request\"] H --> I[\"Postman attaches Bearer token\"] I --> J[\"Laravel validates token using Sanctum\"] J --> K[\"Return menu categories\"] This workflow eliminates the need to manually copy authentication tokens every time you test an endpoint. 9. Common Problems Developers Encounter While implementing API authentication, you might encounter some common problems. Problem 1: Unauthenticated error Response: { \"success\" : false , \"message\" : \"Unauthenticated.\" } Possible causes: You did not provide an authentication token. The token is invalid. The token has been revoked. The token has expired, if expiration is configured. You are using the wrong authentication mechanism. Solution: Check your Authorization header and ensure that Postman is sending a valid token. Problem 2: Access token not found Your Postman Console might display: No access token found in response This could happen because your login response has a different JSON structure. For example, your API might return: { \"access_token\" : \"abc123\" } Instead of: { \"data\" : { \"access_token\" : \"abc123\" } } You must adjust your JavaScript to match the actual API response structure. Problem 3: Token saved but authentication still fails Saving a token in Postman does not automatically make it valid. For Laravel Sanctum, ensure your login controller generates a personal access token correctly. For example: $token = $user -> createToken ( 'postman-token' ) -> plainTextToken ; The createToken() method requires the Sanctum HasApiTokens trait on your User model. You should also ensure that your Postman request uses: Authorization: Bearer YOUR_ACCESS_TOKEN Problem 4: Wrong Postman environment selected Postman environment variables belong to the selected environment. If you save the token in one environment but send requests using another, the variable might not be available. Check the active environment before testing your endpoints. 10. Best Practices When Working with API Tokens As developers, we should follow good security practices when handling authentication credentials. Never hardcode tokens: Store reusable credentials in environment variables. Avoid exposing tokens: Do not publish real access tokens in GitHub repositories, screenshots, or public documentation. Use HTTPS: Protect authentication credentials when communicating with production APIs. Handle expired tokens: Implement an appropriate reauthentication or token renewal strategy. Validate authentication on the backend: Never assume that a request is authenticated simply because it contains a token. Use separate environments: Keep development, staging, and production configurations separate. Conclusion Automating API authentication in Postman makes backend development and API testing much easier. By combining Laravel authentication middleware, Bearer Tokens, Postman environment variables, and JavaScript scripts, developers can automatically retrieve and reuse authentication tokens across multiple API requests. The most important concepts to remember are: Laravel middleware protects API endpoints. Bearer Tokens provide authentication credentials. Postman JavaScript can extract values from API responses. Environment variables allow us to reuse those values. {{access_token}} makes the saved token available across requests. Once you understand this workflow, testing protected REST API endpoints becomes much more efficient, especially when developing larger applications with multiple API resources. Keep building, keep testing, and keep learning!",
+            "url": "https://dev.to/vincenttommi/automating-api-authentication-in-postman-how-to-store-and-reuse-bearer-tokens-570k",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "git",
+                "java",
+                "javascript",
+                "php",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-11-01T12:14:47+00:00",
+            "collected_at": "2026-11-01T12:26:58.807162+00:00"
+        },
+        {
+            "id": "9683bafe08ef4508826aba205206d452741089b7fdd3aa6ebf7ee522b3d5090e",
+            "title": "Release 0.6.0 · buzz-language/buzz",
+            "description": "Comments",
+            "url": "https://buzz-lang.dev/0.6.0",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-11-01T12:14:21+00:00",
+            "collected_at": "2026-11-01T12:26:58.491293+00:00"
+        },
+        {
+            "id": "b8f4ecf56d8897eed33a5b4b9620678831d9067b2af6790e13d47d0329098379",
+            "title": "Design WhatsApp: A Mobile System Design Walkthrough",
+            "description": "\"Design WhatsApp\" is one of the most common mobile system design questions. It looks simple: one person sends a message, another receives it. On a phone, it runs into most of the hard problems in mobile engineering. The app needs two-way real-time streaming that doesn't drain the battery. Messages must stay in order when phone clocks disagree. Nothing can be lost when the network drops mid-send. And people still need to be reached when the app is closed. This walkthrough answers the question the way you would in a 45-minute interview, in five steps: Clarify the requirements Design the API and data model Sketch the client architecture Deep dive into the hard problems Wrap up with trade-offs The focus is the mobile client. The backend appears only where the app depends on it. Step 1: Clarify the Requirements Don't start drawing. \"Chat\" could mean one-to-one texting, group channels, voice calls, or all of them. Agree on the scope with the interviewer first. Functional requirements For a 45-minute session, a sensible scope is: A chat list showing recent conversations, newest first, with unread counts One-to-one text messages, sent and received in real time Online status and a typing indicator inside a conversation Message status ticks: sent, delivered, and read Message history available offline Push notifications when the app is in the background or closed Non-functional requirements Requirement Target What it means for the client Scale About 30 million daily users Keep payloads small and reconnects cheap Latency Messages appear in under a second on a good network A persistent connection, not polling Reliability Zero lost messages Every outgoing message is saved to disk before sending Battery No noticeable drain while idle One connection, no timers waking the radio Data ownership The phone holds the real history The local database is the source of truth Data ownership shapes the rest of the design. WhatsApp uses the server mainly as a relay, so storage, ordering, and sync logic live on the phone. Out of scope To leave time for the hard parts, set these aside: sign-up and contacts sync, group chats, media and voice notes, calls, and the details of end-to-end encryption. Mention that each is a natural extension. Step 2: Design the API and Data Model Traffic in a chat app flows both ways. The client starts some actions: sending a message, syncing missed ones. The server starts others: a new message arrives, someone is typing, a message was read. HTTP alone can't deliver server-started events, because the app never asked for them. Choosing the protocol Option Verdict for chat on mobile Short polling Rejected. Constant requests keep the radio awake and drain the battery Long polling Workable, but millions of held requests are hard to balance across servers Server-Sent Events Rejected. Server-to-client only, so sending still needs another channel WebSocket Chosen. One persistent two-way connection with tiny per-message overhead The design uses a hybrid : HTTPS REST for sending and syncing, and one encrypted WebSocket for server-pushed events. REST gives sends clear success and failure codes, retries, and auth. The socket stays small and focused, which makes it easier to scale and to reconnect. REST endpoints POST /v1/messages Authorization: Bearer <token> { \"requestId\": \"6f1c...e2\", // client-generated UUID (idempotency key) \"toUserId\": \"u_482\", \"content\": \"See you at 7\", \"clientCreatedAt\": 1761980400000 } → 201 Created { \"requestId\": \"6f1c...e2\", \"messageId\": \"1853920018473312256\", \"serverCreatedAt\": 1761980400412 } GET /v1/messages?afterMessageId=1853920018473312256&limit=100 → 200 OK { \"messages\": [ ... ], \"hasMore\": false } POST /v1/messages/receipts { \"messageIds\": [\"...\"], \"type\": \"DELIVERED\" | \"READ\" } WebSocket events wss://chat.example.com/v1/socket { \"type\": \"new_message\", \"payload\": { \"messageId\": \"...\", \"fromUserId\": \"...\", \"content\": \"...\" } } { \"type\": \"receipt\", \"payload\": { \"messageIds\": [\"...\"], \"status\": \"DELIVERED\" | \"READ\" } } { \"type\": \"typing\", \"payload\": { \"userId\": \"...\", \"isTyping\": true } } { \"type\": \"presence\", \"payload\": { \"userId\": \"...\", \"online\": false, \"lastSeenAt\": 1761980400000 } } Explain these three decisions to the interviewer: The client generates requestId . If a send times out and the app retries, the server recognises the duplicate and returns the original result instead of storing the message twice. The server generates messageId and the timestamp. Phone clocks can be wrong or changed by the user, so the server is the authority on order. Sync is cursor-based. afterMessageId asks for everything after the last message the phone has, so a reconnect fetches exactly what was missed. Message states Every outgoing message moves through one state machine, and the UI simply renders the current state: PENDING ──send ok──▶ SENT ──receipt──▶ DELIVERED ──receipt──▶ READ │ └──retries exhausted──▶ FAILED ──user taps retry──▶ PENDING State UI PENDING Clock icon SENT One grey tick DELIVERED Two grey ticks READ Two blue ticks FAILED Red warning with \"Tap to retry\" Step 3: Sketch the Client Architecture The app splits into a UI layer and a data layer, with data flowing one way: actions go down, state comes up. UI LAYER ChatListScreen → ChatListViewModel ConversationScreen → ConversationViewModel │ actions ↓ ↑ state (Flow / Combine) DATA LAYER ConversationsRepository (chat list, unread counts) MessagesRepository (history, sending, receipts) PresenceRepository (online + typing, memory only) │ ├─ MessagesApi REST: send, sync, receipts ├─ SocketClient WebSocket: events in, typing out ├─ ChatDatabase SQLite via Room / GRDB └─ SendScheduler background worker for the outbox The local database is the source of truth The screens never read from the network. They observe the local database, and everything else writes into it: A message the user sends is written to the database first, then sent. A message arriving over the socket is written to the database, then shown. A sync after reconnecting writes the missed messages to the database. The UI reacts to database changes, so one code path draws every message, whatever its origin. Offline history works automatically, and two screens can never disagree. class MessagesRepository ( private val dao : MessageDao , private val scheduler : SendScheduler , ) { fun conversation ( peerId : String ): Flow < List < Message >> = dao . observeConversation ( peerId ) // the only thing the UI reads suspend fun send ( peerId : String , text : String ) { dao . insertOutgoing ( OutgoingMessage ( requestId = UUID . randomUUID (). toString (), toUserId = peerId , content = text , status = Status . PENDING , createdAt = System . currentTimeMillis (), ) ) scheduler . kick () // send in the background } } Why presence lives in memory Online status and typing indicators change every few seconds and are useless a minute later. Writing them to disk wastes battery and flash storage. PresenceRepository keeps them in memory only, and they're rebuilt from socket events after every reconnect. Threading All database work, JSON parsing, and socket handling run off the main thread: Dispatchers.IO on Android, actors and background tasks on iOS. The main thread only renders state. When a busy conversation receives many messages at once, they're written in a single transaction, so the list updates once instead of fifty times. Step 4: Deep Dive into the Hard Problems Choose the problems that matter most for this app and lead the discussion. For WhatsApp, I'd raise these six. 1. Message ordering Messages can arrive out of order because of network delays, offline sends, and phones whose clocks disagree. Sorting by the phone's clock shows messages instantly, but clocks drift and users can change them. Sorting by server ID is consistent everywhere, but an offline message has no server ID yet. The fix combines both. Confirmed messages are ordered by a time-sortable server ID, such as a 64-bit Snowflake ID, where a newer message always has a higher number. Pending messages are ordered by local time and pinned to the bottom with a clock icon. When the server confirms one, it takes its real ID and settles into its correct position. SELECT * FROM messages WHERE peer_id = : peer ORDER BY CASE WHEN server_id IS NULL THEN 1 ELSE 0 END , -- pending last server_id , local_created_at ; 2. The send pipeline A message must survive the app being killed, the phone rebooting, or the network dropping mid-request. So it's written to disk before anything is sent: The user taps send. A row is inserted with status PENDING and a new requestId . The bubble appears instantly. The background SendScheduler (WorkManager on Android, BGTaskScheduler plus a URLSession background task on iOS) picks up pending rows in order. It sends POST /v1/messages with the same requestId on every attempt. On 201 Created , one transaction stores the server's messageId and sets the status to SENT . On a network error, the row stays PENDING , its retry count increases, and the scheduler waits with exponential backoff and jitter: about 1, 2, 4, then 8 seconds, up to a cap. After too many attempts, the row becomes FAILED and the bubble shows \"Tap to retry\". fun backoffDelayMs ( attempt : Int ): Long { val base = 1_000L shl attempt . coerceAtMost ( 6 ) // 1s, 2s, 4s ... 64s val jitter = Random . nextLong ( 0 , base / 2 ) // spread retries out return ( base + jitter ). coerceAtMost ( 60_000L ) } The jitter matters at scale. Without it, every phone that lost connection in the same outage retries at the same instant and overloads the server again. The requestId makes retries safe. If the first request actually reached the server but the response was lost, the retry returns the original messageId instead of creating a second message. 3. Delivery and read receipts The ticks come from receipts flowing back from the recipient: When the recipient's phone stores an incoming message, it sends a DELIVERED receipt. When the conversation is on screen and the message is visible, it sends a READ receipt. Receipts are batched. Opening a chat with 40 unread messages sends one request with 40 IDs, not 40 requests. When a receipt arrives for the sender, the client updates the status column, and the ticks change through the normal database flow. A receipt can only move a message forward, never back. A late DELIVERED that arrives after READ is ignored. 4. The socket lifecycle A WebSocket on a phone dies often: tunnels, Wi-Fi handoffs, the OS suspending the app. The client must manage it carefully: Connect only while the app is in the foreground. In the background, rely on push notifications to save battery. Detect dead connections with heartbeats. Send a ping every 30–60 seconds. If no pong comes back, assume the connection is half-open, close it, and reconnect. Reconnect with backoff and jitter , the same as message retries, and immediately when the OS reports the network is back. Sync after every reconnect. Events sent while the socket was down are lost, so call GET /v1/messages?afterMessageId=<last> to fill the gap. Then flush the outbox. The socket delivers new events quickly, and the sync endpoint makes sure none are missing. 5. Presence and typing indicators These are the noisiest events in the system, so throttle them on the client: Send isTyping: true at most once every 3 seconds while the user types, and false when they stop or send. On the receiving side, hide the indicator if no update arrives within about 5 seconds. A lost false event never leaves \"typing...\" on screen forever. Subscribe to presence only for the open conversation, not the whole contact list. 6. The local schema Three tables cover the scope: CREATE TABLE users ( user_id TEXT PRIMARY KEY , name TEXT NOT NULL , avatar_url TEXT ); CREATE TABLE conversations ( peer_id TEXT PRIMARY KEY REFERENCES users ( user_id ), last_message_preview TEXT , last_activity_at INTEGER NOT NULL , unread_count INTEGER NOT NULL DEFAULT 0 ); CREATE TABLE messages ( local_id INTEGER PRIMARY KEY AUTOINCREMENT , request_id TEXT UNIQUE , -- set for messages this phone sent server_id INTEGER UNIQUE , -- NULL until the server confirms peer_id TEXT NOT NULL , is_outgoing INTEGER NOT NULL , content TEXT NOT NULL , status TEXT NOT NULL , -- PENDING, SENT, DELIVERED, READ, FAILED retry_count INTEGER NOT NULL DEFAULT 0 , local_created_at INTEGER NOT NULL ); CREATE INDEX idx_messages_peer ON messages ( peer_id , server_id ); The conversations table is denormalised on purpose. The chat list is the most-opened screen, and reading a preview and unread count from one row is far cheaper than scanning every message. The UNIQUE constraint on server_id protects against duplicates. If the same message arrives over the socket and again in a sync, the second insert is ignored. Bonus: push notifications When the app isn't in the foreground, there's no socket. The server sends a push through Firebase Cloud Messaging (Android) or APNs (iOS). A push only signals that something new exists. It wakes the app or shows a banner, and the app then fetches the messages from the sync endpoint, because pushes can be delayed, collapsed, or dropped by power-saving modes. Step 5: Wrap Up In the last few minutes, summarise the decisions and be honest about what each one costs: Decision Why Trade-off REST for sends, WebSocket for events Clear errors and retries for sends; a small, focused socket Two channels to maintain Local database as source of truth Offline history, one rendering path, no inconsistent screens More sync and migration logic on the client Outbox with requestId and backoff No lost or duplicate messages Pending messages need their own UI states Server IDs for ordering, local time for pending Instant feedback plus a consistent final order A message can shift position once confirmed Socket only in the foreground Saves battery Background delivery depends on push, which can be delayed Then name what you'd add with more time: Group chats: fan-out on the server, per-member receipts, and member roles Media: compress on the phone, upload to object storage first, then send a message that references the file End-to-end encryption: keys stored on the device, so the server only relays encrypted content Multiple devices: syncing history and read state between a phone and a desktop Encrypted local storage: SQLCipher or the platform's file protection for the message database Don't call the design perfect. Each choice above has a cost, and naming it shows you understand the design.",
+            "url": "https://dev.to/shakibaenur/design-whatsapp-a-mobile-system-design-walkthrough-4ici",
+            "source": "DEV Community",
+            "category": "cloud",
+            "tags": [
+                "android",
+                "aws",
+                "developpement",
+                "ios",
+                "programmation",
+                "web",
+                "wifi"
+            ],
+            "published_at": "2026-11-01T12:13:57+00:00",
+            "collected_at": "2026-11-01T12:26:58.808868+00:00"
+        },
+        {
+            "id": "5f36799138a217b056ffcd9bff435de5709b5f9961972e57bf3931cd421d82f2",
+            "title": "This Android gaming benchmark app does something I’ve never seen before",
+            "description": "Evolve is a new gaming benchmark that shows you where mobile GPUs are hitting a bottleneck.",
+            "url": "https://www.androidauthority.com/evolve-android-gaming-benchmark-app-3724465/",
+            "source": "Android Authority",
+            "category": "hardware",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-11-01T12:00:26+00:00",
+            "collected_at": "2026-11-01T12:27:07.909162+00:00"
+        },
+        {
+            "id": "280cc759cd0986e713a977643481b9a1abd13dfc4029d761f8bc1806bb1cd31a",
+            "title": "Voyager 1 probe to hit historic one light-day distance from Earth in 17 days — 49-year-old spacecraft travels 16 billion miles",
+            "description": "It took the space probe nearly 50 years to get to one light-day, with NASA scientists and engineers going through lengths to ensure that it could keep operating for as long as possible.",
+            "url": "https://www.tomshardware.com/tech-industry/space/voyager-1-probe-to-hit-historic-one-light-day-distance-from-earth-in-17-days-49-year-old-spacecraft-travels-16-billion-miles-and-survives-nearly-ten-times-the-length-of-its-original-five-year-mission",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "pc"
+            ],
+            "published_at": "2026-11-01T12:00:00+00:00",
+            "collected_at": "2026-11-01T12:27:01.628659+00:00"
+        },
+        {
+            "id": "e99ca1eba4eca776242a22c2d73d4994951f1cadf7490163847a048c35ae41b1",
+            "title": "'Mother of all editors' Emacs is 50",
+            "description": "By a startling coincidence, so is its arch-rival Vi",
+            "url": "https://www.theregister.com/applications/2026/11/01/mother-of-all-editors-emacs-is-50/5306727",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-11-01T11:51:00+00:00",
+            "collected_at": "2026-11-01T12:26:56.823854+00:00"
+        },
+        {
+            "id": "e9a6c03efdbb03841ec65eb0863a4e424acd1b144c17009b12dad989f2527adf",
+            "title": "YouTube’s redesign brings one annoying change, but I found a workaround",
+            "description": "YouTube messed with my muscle memory, took away my filters, and made me work harder just to watch the creators I love.",
+            "url": "https://www.androidauthority.com/youtube-redesign-annoying-change-workaround-3728901/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-11-01T11:30:50+00:00",
+            "collected_at": "2026-11-01T12:27:07.909242+00:00"
+        },
+        {
+            "id": "464cc6e6021d0d91a439879322212faad4b5400ff7b0e54ee24de0319d74cd90",
+            "title": "A Family Paid $3 for a Bowl at a Yard Sale and Used It as Decor for Years. It Sold for $2.2 Million",
+            "description": "A $3 tag-sale find from upstate New York turned into a $2.2 million payday when a roughly 1,000-year-old Northern Song dynasty Ding ware bowl sold at Sotheby’s in New York on March 19, 2013. The five-inch bowl had sat on display in the family’s living room for about five to six years before it was […]",
+            "url": "https://news.bitcoin.com/featured/a-family-paid-3-for-a-bowl-at-a-yard-sale-and-used-it-as-decor-for-years-it-sold-for-2-2-million-49201/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-11-01T11:30:28+00:00",
+            "collected_at": "2026-11-01T12:27:16.110795+00:00"
+        },
+        {
+            "id": "4dde0a3b923349ec1753546dcc4b644b272b51b0d89f7c8992181768e3ec4546",
+            "title": "USAF successfully tests dropping SpaceX Starfall cargo drop pods from space",
+            "description": "The Rocket Cargo capability should allow U.S. forces to resupply quickly without risking aircrews and equipment, especially in contested areas.",
+            "url": "https://www.tomshardware.com/tech-industry/space/usaf-successfully-tests-dropping-spacex-starfall-cargo-drop-pods-from-space-2-200-pound-capsule-drops-military-supplies-in-the-pacific-to-test-starcraft-like-supply-drops",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "pc"
+            ],
+            "published_at": "2026-11-01T11:30:00+00:00",
+            "collected_at": "2026-11-01T12:27:01.628730+00:00"
+        },
+        {
+            "id": "d674dea922625d0be8d169c80e7fc00d224380481e4361c2f53c93f42e67013b",
+            "title": "noyb win: French electronics retailer Fnac Darty fined €7M",
+            "description": "Comments",
+            "url": "https://noyb.eu/en/noyb-win-french-electronics-retailer-fnac-darty-fined-eu7-million",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-01T11:17:15+00:00",
+            "collected_at": "2026-11-01T12:26:58.386990+00:00"
+        },
+        {
+            "id": "20e411a0cb2bc19ecffc1bbae778215a58df90a2187ae4a597f061a830524d63",
+            "title": "Northstar Security Exits Stealth With $7M to Expose Toxic Risk Combinations",
+            "description": "The startup maps how identities, assets and vulnerabilities connect, and uses AI agents to find and fix risky combinations of issues. The post Northstar Security Exits Stealth With $7M to Expose Toxic Risk Combinations appeared first on SecurityWeek .",
+            "url": "https://www.securityweek.com/northstar-security-exits-stealth-with-7m-to-expose-toxic-risk-combinations/",
+            "source": "SecurityWeek",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "security",
+                "vulnerabilites"
+            ],
+            "published_at": "2026-11-01T11:15:00+00:00",
+            "collected_at": "2026-11-01T12:26:54.750785+00:00"
+        },
+        {
+            "id": "4795bef954c08a17202bd3249684e93362059263703dd00c39fa3ca5d425fc4c",
+            "title": "The Pixel 11 Pro’s 5x zoom portrait mode is mind-blowing, and you have to try it",
+            "description": "From cars to cats, the Pixel 11 Pro's portrait mode and telephoto camera combo is so much fun.",
+            "url": "https://www.androidauthority.com/pixel-11-pro-5x-portrait-mode-mind-blowing-3728510/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-11-01T11:00:26+00:00",
+            "collected_at": "2026-11-01T12:27:07.909312+00:00"
+        },
+        {
+            "id": "ede9dc4f9e82738fe373df6020f075f9d083a664f68f7dc29dcf2459c32330e7",
+            "title": "College student unofficially breaks world record for fastest jet-powered drone with 491 mph aircraft built in his dorm",
+            "description": "An undergraduate student from Georgia Tech is trying his hand at an $800k prize for the fastest jet-powered RC aircraft, achieving 790 km/h (491 mph) and breaking the previous world record.",
+            "url": "https://www.tomshardware.com/tech-industry/drones/college-student-unofficially-breaks-world-record-for-fastest-jet-powered-drone-with-491-mph-aircraft-built-in-his-dorm-reaper-aims-to-grab-the-usd800-000-boom-prize",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "pc"
+            ],
+            "published_at": "2026-11-01T11:00:00+00:00",
+            "collected_at": "2026-11-01T12:27:01.628801+00:00"
+        },
+        {
+            "id": "9dd6d1c9d966beb00c7643132e9f8244a894d02de32777b0d00f363da071d94d",
+            "title": "XKCD and Fourier",
+            "description": "Comments",
+            "url": "https://leancrew.com/all-this/2026/10/xkcd-and-fourier/",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-11-01T10:50:56+00:00",
+            "collected_at": "2026-11-01T12:26:58.491166+00:00"
+        },
+        {
+            "id": "d6ba8a3f25c046f749f27059f93e110578a21df464c6106d5a06d1a4e9854350",
+            "title": "Norway makes shithouses great again",
+            "description": "Comments",
+            "url": "https://www.visitnorway.com/plan-your-trip/travel-tips-a-z/norwegian-scenic-routes/worlds-best-toilets/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-01T10:47:58+00:00",
+            "collected_at": "2026-11-01T12:26:58.385697+00:00"
+        },
+        {
+            "id": "0ace657c49d31ee4629907678f96c7b2dc852a854671d3dbd7356aced8e3f28b",
+            "title": "INIU Outdoor Rugged 20000 power bank — Heavy-duty power for phones, drones, and laptops",
+            "description": "Fast and easy charging, with enough capacity for multi-day hikes, camping trips, and more.",
+            "url": "https://www.androidauthority.com/iniu-outdoor-rugged-20000-power-bank-3729047/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-11-01T10:45:28+00:00",
+            "collected_at": "2026-11-01T12:27:07.909380+00:00"
+        },
+        {
+            "id": "d3539383f6612ca8ab0d7fce3060fad6cac261ae8506921389205b6d90d7dad2",
+            "title": "Domain hacks with unusual Unicode characters (2018)",
+            "description": "Comments",
+            "url": "https://xn--69f31l4t57c0mag4b613h.xn--7uh4898msjaso/🆆🆃🅵/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-01T10:44:20+00:00",
+            "collected_at": "2026-11-01T12:26:58.386133+00:00"
+        },
+        {
+            "id": "e43243d6c9fe36744aa63bb99fa591fd651ba059a4d048bab994130d776187b7",
+            "title": "Binance opens crypto withdrawals in phases starting with bitcoin following $6.3 billion hack",
+            "description": "",
+            "url": "https://www.coindesk.com/markets/2026/11/01/binance-opens-crypto-withdrawals-in-phases-starting-with-bitcoin-following-usd6-3-billion-hack",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-11-01T10:35:42+00:00",
+            "collected_at": "2026-11-01T12:27:15.895678+00:00"
+        },
+        {
+            "id": "2f607ae3dbf627b2f182ec2044cd80299f868f603dc21242d32eb9e2c75a6654",
+            "title": "Record Breaking Binance Hack Hits Markets, Kalshi Hits New Valuation, And More – Weekly Recap",
+            "description": "This week’s stories spanned exchange security, prediction markets, bitcoin treasury risk, earnings and tokenization. Binance investigated a potential multibillion-dollar hack, while Kalshi raised another $1 billion at a $40 billion valuation. Datavault AI said it could not access 817.6 BTC, Coinbase returned to profit with $719 million in Q3 net income, and DTCC launched a […]",
+            "url": "https://news.bitcoin.com/featured/record-breaking-binance-hack-hits-markets-kalshi-hits-new-valuation-and-more-weekly-recap/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-11-01T10:30:45+00:00",
+            "collected_at": "2026-11-01T12:27:16.110917+00:00"
+        },
+        {
+            "id": "321d87268219805cca3f319cab9111c4bde0cc638eddde4441cd0d83237b87a1",
+            "title": "Should you repair your phone or replace it? We did the math",
+            "description": "Sometimes, spending hundreds on repairs is the smarter financial decision.",
+            "url": "https://www.androidauthority.com/is-phone-repair-worth-it-3728938/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-11-01T10:30:16+00:00",
+            "collected_at": "2026-11-01T12:27:07.909434+00:00"
+        },
+        {
+            "id": "902369e96d611611e95aa40843bef1c8f21ad0bdb4a5653711e73fde7d2a51e0",
+            "title": "A tiny Pacific country rolls out universal basic income",
+            "description": "Comments",
+            "url": "https://www.economist.com/asia/2026/10/29/a-tiny-pacific-country-rolls-out-universal-basic-income",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-01T10:05:09+00:00",
+            "collected_at": "2026-11-01T12:26:58.385797+00:00"
+        },
+        {
+            "id": "1ba741dd2dfcd479ec168284ccb006858fa5ee79df564122e880a7372fa3cb24",
+            "title": "Here are the easiest ways to share your live location on Android",
+            "description": "Chances are you already have one of these apps, even if you didn't realize you could use it for location sharing.",
+            "url": "https://www.androidauthority.com/ways-share-live-location-android-3727606/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-11-01T10:00:57+00:00",
+            "collected_at": "2026-11-01T12:27:07.909492+00:00"
+        },
+        {
+            "id": "d137f919c787440a57b906542448a558eaa397dbed024ae7b3c4f3859f7ff814",
+            "title": "Feature: Box Art Brawl - Duel: Revenge Of The 'Gator",
+            "description": "See ya later. It's time for another edition of Box Art Brawl , can you believe it! Last week , we took a look at two very different covers for NSO newbie Avenging Spirit on the Game Boy. The disparate designs did the North American variant no favours, as it wound up with only 30% of the vote, leaving the cuter Japanese and European cover to take the remaining 70%. Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/features/box-art-brawl-duel-revenge-of-the-gator",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-11-01T10:00:00+00:00",
+            "collected_at": "2026-11-01T12:27:13.910151+00:00"
+        },
+        {
+            "id": "050a65187be42e9504e77ae2618f1a9b6c289136d26e4cf8c6f55eada8eaad55",
+            "title": "That Rusty Cast Iron Skillet at a Garage Sale Could Be Worth Up to $3,000",
+            "description": "Not all vintage cast iron is created equal: at the February 2025 Air Works Consignment Auction, a Griswold No. 13 (14-inch) skillet sold for $2,600 to $3,300, squarely in the garage-sale jackpot range. The biggest tell is the branding, with Griswold’s earliest ERIE-era marks and the ultra-rare Erie Spider logo standing out from the far […]",
+            "url": "https://news.bitcoin.com/featured/that-rusty-cast-iron-skillet-at-a-garage-sale-could-be-worth-up-to-3000-49201/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto",
+                "rust"
+            ],
+            "published_at": "2026-11-01T09:30:30+00:00",
+            "collected_at": "2026-11-01T12:27:16.111050+00:00"
+        },
+        {
+            "id": "139a849f227a2e9eb62832d576cf4d80ddf1ba63b1ee1b9ab762cd0bbf2b3fd5",
+            "title": "Landline phones will switch off across Britland in 100 days, no extensions – Openreach",
+            "description": "Legacy public switched telephone network service is to be retired on January 31, 2027",
+            "url": "https://www.theregister.com/networks/2026/11/01/landline-phones-will-switch-off-across-britland-in-100-days-no-extensions-openreach/5306673",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-11-01T09:04:00+00:00",
+            "collected_at": "2026-11-01T12:26:56.823933+00:00"
+        },
+        {
+            "id": "47c9e2c2f127bea1bcf0c5f44636d9c44b68172ada4adef1e638898910c582f5",
+            "title": "CVSS 10.0 LXD, MicroCloud Flaw Lets Attackers Impersonate Trusted Clients Without a Private Key",
+            "description": "A critical flaw in Canonical's LXD and MicroCloud let an attacker log in as a trusted client without holding that client's private key. To do it, the attacker had to reach their HTTPS API over the network and have the trusted client's public certificate. Once in, the attacker would act as that client, with access to the cluster and its virtual machines. If the impersonated account is",
+            "url": "https://thehackernews.com/2026/11/critical-lxd-and-microcloud-flaw-cvss.html",
+            "source": "The Hacker News",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "hacking",
+                "rust",
+                "vulnerabilites"
+            ],
+            "published_at": "2026-11-01T08:51:31+00:00",
+            "collected_at": "2026-11-01T12:26:53.430150+00:00"
+        },
+        {
+            "id": "39b49cc866e800a22659c837015477da4a550e41990d4b84e071e3733ba2fdb9",
+            "title": "AI/Tech Selloff Drives Massive Crypto Tailwind, Experts Say",
+            "description": "Despite the recent hack that affected Binance, causing over $6 billion in losses to the company, industry leaders still believe that the cryptocurrency market might benefit from a downturn in the U.S. tech/AI equity sector, with investors pivoting liquidity to digital assets. Defiance Capital CEO Is Still Bullish on Crypto Despite Binance’s Hack While the […]",
+            "url": "https://news.bitcoin.com/finance/ai-tech-selloff-drives-massive-crypto-tailwind-experts-say/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto",
+                "git"
+            ],
+            "published_at": "2026-11-01T08:30:12+00:00",
+            "collected_at": "2026-11-01T12:27:16.111157+00:00"
+        },
+        {
+            "id": "a46cef743bf575f034e09ea1351853cebd7297c722130f33a25c9b5544fcc994",
+            "title": "Capcom Officially Reveals Fourth Mega Man: Dual Override Robot Master",
+            "description": "\"He's cooking up a storm\". Capcom continues to build excitement for Mega Man: Dual Override , and following the official reveal of Tank Man earlier this week, it's now lifted the lid on Cook Man. He is one of the many Robot Masters coming to the game. This master chef is ready to slice and dice Proto Man and the Blue Bomber when his game launches on the Switch 1 & 2 in 2027 . Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/news/2026/11/capcom-officially-reveals-fourth-mega-man-dual-override-robot-master",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-11-01T08:00:00+00:00",
+            "collected_at": "2026-11-01T12:27:13.910263+00:00"
+        },
+        {
+            "id": "1aa01f61f49057bda4b5771bb73bdaa0e5406afac7e49c5aaf0adf1932d46fe2",
+            "title": "Non-Determinism and Overcount on Modern Hardware Performance Counter Implementations",
+            "description": "Abstract: Ideal hardware performance counters provide exact deterministic results. Real-world performance monitoring unit (PMU) implementations do not always live up to this ideal. Events that should be exact and deterministic (such as retired instructions) show run-to-run variation and overcount on x86_64 machines, even when run in strictly controlled environments. These effects are non-intuitive to casual users and cause difficulties when strict determinism is desirable, such as when implementing deterministic replay or deterministic threading libraries. We investigate eleven different x86_64 CPU implementations and discover the sources of divergence from expected count totals. Of all the counter events investigated, we find only a few that exhibit enough determinism to be used without adjustment in deterministic execution environments. On these machines it appears that the iret interrupt return instruction counts as a userspace instruction despite running in kernel space, which keeps the counts from being deterministic. The deterministic events we find are those that do not count for iret, such as conditional branches and retired stores. We also briefly investigate ARM, IA64, POWER and SPARC systems and find that on these platforms the counter events have more determinism. We explore various methods of working around the limitations of the x86_64 events, but in many cases this is not possible and would require architectural redesign of the underlying PMU. Comments",
+            "url": "https://web.eece.maine.edu/~vweaver/projects/deterministic/deterministic_counters.pdf",
+            "source": "Lobsters",
+            "category": "hardware",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-11-01T07:55:47+00:00",
+            "collected_at": "2026-11-01T12:26:58.491728+00:00"
+        },
+        {
+            "id": "9029091c8770d21b0240ba8b259465a760c04f8a1a87d23add3bd10890388943",
+            "title": "Bitcoin’s Volatility Calendar: What Dates Matter, and What Are Myths",
+            "description": "As bitcoin traders brace for one scheduled event after another, the data suggests there is less to worry about unless you trade one-minute BTC charts. Volatility spikes right after an announcement, lasts about an hour in most cases, and then subsides, with the price usually hovering near where it started. Bitcoin.com News analyzed almost nine […]",
+            "url": "https://news.bitcoin.com/opinion-and-analysis/bitcoins-volatility-calendar-what-dates-matter-and-what-are-myths/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-11-01T07:30:18+00:00",
+            "collected_at": "2026-11-01T12:27:16.111262+00:00"
+        },
+        {
+            "id": "3c8da2a0b6d392cf59620f6eeb796c76462f9ae9345173c7b4bab28d90bdc65c",
+            "title": "Hackers Steal About $2.7 Million From Polymarket Traders via Hijacked DebugBear Script",
+            "description": "Malicious code on the website of prediction market Polymarket sold some signed-in traders' positions and moved their funds to the hackers on October 29. The code had replaced a page-speed script that the site loaded from an outside company. Polymarket says it is refunding about $2.7 million to 726 affected wallets. Blockchain records show crypto worth about $2.64 million reached",
+            "url": "https://thehackernews.com/2026/11/hackers-steal-about-27-million-from.html",
+            "source": "The Hacker News",
+            "category": "cybersecurite",
+            "tags": [
+                "blockchain",
+                "cybersecurite",
+                "hacking",
+                "vulnerabilites"
+            ],
+            "published_at": "2026-11-01T07:25:40+00:00",
+            "collected_at": "2026-11-01T12:26:53.430262+00:00"
+        },
+        {
+            "id": "e1dc1203c72851bbedcb84b0a5fe2133b5b039454675f92859fd709622eb74f7",
+            "title": "FBI Links North Korea's TraderTraitor to Record $6.43 Billion Binance Crypto Heist",
+            "description": "The U.S. Federal Bureau of Investigation (FBI) has officially attributed the theft of more than $6 billion in virtual assets to TraderTraitor, a North Korea-aligned elite hacking group also tracked as Jade Sleet, Pressure Chollima, PUKCHONG, Slow Pisces, and UNC4899. The FBI, along with the U.S. Secret Service (USSS) and the Internal Revenue Service Criminal Investigation (IRS-CI), said it",
+            "url": "https://thehackernews.com/2026/11/fbi-links-north-koreas-tradertraitor-to.html",
+            "source": "The Hacker News",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "hacking",
+                "vulnerabilites"
+            ],
+            "published_at": "2026-11-01T07:03:00+00:00",
+            "collected_at": "2026-11-01T12:26:53.430358+00:00"
+        },
+        {
+            "id": "4432f1dbea0caa5b7f06abe6b418d0f65477d6b9f093ef9d580abf58fec337eb",
+            "title": "NetamLoader Malware Targets Government Windows 10 Systems in Asia via .NET Injection",
+            "description": "Cybersecurity researchers have disclosed details of what has been described as a \"highly sophisticated infection chain\" targeting government organizations in Asia. The activity, detailed by Kaspersky this week, targeted a custom Windows 10 build used exclusively by government entities in Asia and involves the deployment of a previously undocumented .NET assembly-loading framework codenamed",
+            "url": "https://thehackernews.com/2026/11/netamloader-malware-targets-government.html",
+            "source": "The Hacker News",
+            "category": "cybersecurite",
+            "tags": [
+                "csharp",
+                "cybersecurite",
+                "hacking",
+                "malware",
+                "vulnerabilites",
+                "windows"
+            ],
+            "published_at": "2026-11-01T07:02:58+00:00",
+            "collected_at": "2026-11-01T12:26:53.430434+00:00"
+        },
+        {
+            "id": "d8fb6b9bb2725709c277b115befaf7b1e202dae8c03d147327ef8c22f67b9bcf",
+            "title": "Watch: Nintendo Treehouse Play Pikmin 4 - Nintendo Switch 2 Edition + Dandori Academy",
+            "description": "A special broadcast timed in with Pikmin Day. Apart from its Pikmin Day Direct, Nintendo has announced it's hosting a special Treehouse broadcast for Pikmin 4 - Nintendo Switch 2 Edition + Dandori Academy . Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/news/2026/11/watch-nintendo-treehouse-play-pikmin-4-nintendo-switch-2-edition-plus-dandori-academy",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-11-01T06:45:00+00:00",
+            "collected_at": "2026-11-01T12:27:13.910346+00:00"
+        },
+        {
+            "id": "7e9f318174ec7dbc8579d38dfb846d973fa1906cb1d51c32add19404156f6c0c",
+            "title": "The AI cost of JavaScript frameworks",
+            "description": "Comments",
+            "url": "https://nolanlawson.com/2026/10/28/the-ai-cost-of-javascript-frameworks/",
+            "source": "Hacker News",
+            "category": "web",
+            "tags": [
+                "java",
+                "javascript",
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-01T06:06:19+00:00",
+            "collected_at": "2026-11-01T12:26:58.385889+00:00"
+        },
+        {
+            "id": "e1fccf979ad7360ccd7e40dd85717000a92893e957c3a5dcf30e1d9a3dc83d1d",
+            "title": "Round Up: Pikmin Day 2026 - Updates, Demo And New Animated Shorts",
+            "description": "Happy Pikmin Day! Nintendo surprised us with a Pikmin -themed Direct this weekend, announcing Pikmin Day! If you haven't already watched the video, here's everything from the broadcast: Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/news/2026/11/round-up-pikmin-day-2026-updates-demo-and-new-animated-shorts",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-11-01T05:45:00+00:00",
+            "collected_at": "2026-11-01T12:27:13.910420+00:00"
+        },
+        {
+            "id": "ae210a19a9871e9af9d7481a7666472fcef341b6bb0eac96024ab63eb7f03f54",
+            "title": "Anchorpoint Taps Solana to Launch HKDAP Regulated Stablecoin",
+            "description": "The Standard Chartered-led consortium entered a strategic collaboration with the Solana Foundation, aiming to bring its HKDAP stablecoin to the Solana ecosystem and enable native minting and redemptions on the Solana blockchain, targeting retail, local, and international adoption. Anchorpoint To Bring HKDAP Stablecoin to Solana Anchorpoint, a consortium licensed by the Hong Kong Monetary Authority […]",
+            "url": "https://news.bitcoin.com/stablecoins/anchorpoint-taps-solana-to-launch-hkdap-regulated-stablecoin/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-11-01T04:30:24+00:00",
+            "collected_at": "2026-11-01T12:27:16.111371+00:00"
+        },
         {
             "id": "83f27e8c73898e0a3a68090f6cbdaf45c98d7207ea8f58ecc268474c8a908e46",
             "title": "An 89% Accurate Hiring AI Can Still Be Unfair. Here’s Why.",
@@ -266,6 +1004,21 @@
             "collected_at": "2026-11-01T03:37:22.488789+00:00"
         },
         {
+            "id": "0e356c09eb849e6e67cab0ece6bcb28c27af581a2c67e943376d82d66ec62885",
+            "title": "Brazilian Court Sanctions Lawyers for Prompt Injection in Court Filing",
+            "description": "Comments",
+            "url": "https://jetstream.security/insights/brazilian-court-sanctions-prompt-injection-filing/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-01T02:19:53+00:00",
+            "collected_at": "2026-11-01T12:26:58.385936+00:00"
+        },
+        {
             "id": "77e6ad95f86240850313fe57fb7168c3dfb3ff0d4a4ba8a0a2b4bfd5a6381e71",
             "title": "Hermantown approves controversial Google Data Center during late night meeting",
             "description": "Comments",
@@ -279,6 +1032,21 @@
             ],
             "published_at": "2026-11-01T02:15:59+00:00",
             "collected_at": "2026-11-01T03:37:24.125804+00:00"
+        },
+        {
+            "id": "39ee96f3b35f3b96f1c52dc3069f46ce398bb382958670ad152f9ce8974b4a83",
+            "title": "Leaking Secrets from Air-Gap Computers by Spelling Radio Signals from RAM (2024)",
+            "description": "Comments",
+            "url": "https://arxiv.org/abs/2409.02292",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-01T01:46:29+00:00",
+            "collected_at": "2026-11-01T12:26:58.386180+00:00"
         },
         {
             "id": "b63537f855766a4495465ab6cb5deb50e835c5c378c85a58a6dbc77635571a86",
@@ -475,6 +1243,22 @@
             ],
             "published_at": "2026-10-31T21:50:13+00:00",
             "collected_at": "2026-11-01T03:37:24.125764+00:00"
+        },
+        {
+            "id": "4ea2bbfbe1de5d96de469c0937caa4c73cb45faee514bdabee7a513e5408c10c",
+            "title": "ChatGPT and Codex usage limits merging",
+            "description": "Comments",
+            "url": "https://help.openai.com/en/articles/20001625-understanding-chatgpt-and-codex-usage-limits",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "openai",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-31T21:49:07+00:00",
+            "collected_at": "2026-11-01T12:26:58.386725+00:00"
         },
         {
             "id": "d9269f49d95d2fae76a04bff1948e028a8242ce76059301ddafb822fdc7e6b6e",
@@ -1849,6 +2633,21 @@
             ],
             "published_at": "2026-10-31T13:49:09+00:00",
             "collected_at": "2026-10-31T16:37:23.000091+00:00"
+        },
+        {
+            "id": "ca153a5d261a1ac61cd28375de369f4d38599e591831125b3ddccdd685f01eab",
+            "title": "The Ocean 'Was the Color of Chocolate.' Mexico Declares War on Seaweed.",
+            "description": "Comments",
+            "url": "https://www.nytimes.com/2026/10/28/world/americas/mexico-seaweed-navy.html",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-31T13:41:18+00:00",
+            "collected_at": "2026-11-01T12:26:58.386436+00:00"
         },
         {
             "id": "26ad248a14cd0c08c34bfb49f065282dcf51996ed90aa53fa798e0aa1978b046",
@@ -3890,6 +4689,21 @@
             "collected_at": "2026-10-30T21:51:01.077615+00:00"
         },
         {
+            "id": "e81663e12d4a32761b0f44a41bdc923e658a34065c36401afb3b39fa051c9cc9",
+            "title": "Understanding Email Encryption",
+            "description": "Comments",
+            "url": "https://www.fastmail.com/blog/email-encryption/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-30T20:55:56+00:00",
+            "collected_at": "2026-11-01T12:26:58.386308+00:00"
+        },
+        {
             "id": "30359d8c952988915d3ebb308c495f115e9a0a1cd890ca419334e887f6357946",
             "title": "Why VPNs Are Worth Defending",
             "description": "Developers of virtual private network (VPN) apps are reporting that their products are again being pulled from Apple’s App Store in Russia. This is an unacceptable crackdown on a vital tool to protect privacy and speech online. Why? VPNs give people a way to control their own online activities. When you visit a website through a VPN, that website only sees the VPN server's location (well, IP address) rather than your actual location. It's like sending a letter through a P.O. box so the recipient doesn't know where you really live. It can also disguise where you’re accessing information from, which can make it possible to access information banned by your government. This is an unacceptable crackdown on a vital tool to protect privacy and speech online. Going after tools that give people the space to communicate and access information freely is a common tactic from the totalitarian playbook. This latest demand comes after several steps the Russian government’s taken to surveil speech specifically on Apple products. In 2024, the Moscow Times reported that Russia’s state media watchdog, Roskomnadzor, went after VPN apps on the Apple App Store, after banning access to Western social media platforms and blacklisting opposition media sites. Russia then blocked Apple’s FaceTime software in 2025, according to Apple Insider. Bloomberg also recently reported that the Russian government has added Apple and Microsoft to its state surveillance registry. This gives Roskomnadzor access to local users’ correspondence, Apple Insider reported , and puts both companies in a position to turn over customer information to the country’s security services as required. With government control encroaching on their devices and less access to tools that give them alternate methods, people in Russia are left with shrinking options to communicate online or find information that isn’t state-sanctioned. While Russia’s actions offer a more extreme vision of what happens when the government tries to enforce speech rules by attacking vital privacy tools, it is far from the only government doing so. Several states in the U.S., bent on making it difficult to circumvent invasive age-gating laws, have suggested banning VPNs—either to access certain content or in some cases to simply ban them outright. EFF has publicly (and loudly) criticized these proposals, because going after VPNs is a dangerous step down the road of censorship. Attacks on speech and privacy online are deeply troubling, no matter where they happen. What those in power may see as a “loophole” in their invasive laws is actually an expression of user control. We’ll continue to speak out when we see governments going after them to take that control away.",
@@ -4193,6 +5007,21 @@
             ],
             "published_at": "2026-10-30T19:55:00+00:00",
             "collected_at": "2026-10-30T21:51:00.968206+00:00"
+        },
+        {
+            "id": "3c2f983bec81baf0bcd6e55bfdd91867ed6cb6c7d6763182b266728cf10b026f",
+            "title": "Pilot-wave hydrodynamics (Quantum phenomena in macroscopic hydrodynamic systems)",
+            "description": "Comments",
+            "url": "http://thales.mit.edu/bush/index.php/4801-2/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-30T19:52:56+00:00",
+            "collected_at": "2026-11-01T12:26:58.386269+00:00"
         },
         {
             "id": "007722a9ef580c3ef66ea52a198a6c7e924a007691f9fb6ad1bd4613bb5e6244",
@@ -6133,6 +6962,21 @@
             ],
             "published_at": "2026-10-30T14:00:00+00:00",
             "collected_at": "2026-10-30T17:34:51.025348+00:00"
+        },
+        {
+            "id": "c5f8a030d1d766b65f932f27910e2b929f03d75cf2d2d697f29f739d8e77f18f",
+            "title": "Running a bootstrapped SaaS for 20 years with my brother",
+            "description": "Comments",
+            "url": "https://blog.zamzar.com/2026/10/30/20-years-766-million-files-two-chameleons/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-30T13:58:42+00:00",
+            "collected_at": "2026-11-01T12:26:58.386091+00:00"
         },
         {
             "id": "baf2e8680ec92ea7a5c1fb842627bbfa119b0f4469128343da5b1e2607141102",
@@ -11492,6 +12336,21 @@
             "collected_at": "2026-10-29T22:15:11.051844+00:00"
         },
         {
+            "id": "a13302c36360f8b6a563fc1536c744be9e6381f23a7f90398c7f58c7c9b6f91e",
+            "title": "Show HN: Point your camera at a landscape to learn about its geology",
+            "description": "Comments",
+            "url": "https://outcrop.rocks/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-29T15:22:41+00:00",
+            "collected_at": "2026-11-01T12:26:58.386224+00:00"
+        },
+        {
             "id": "d9e7c9ddc0eb7fb8a152a482b9f1de6f3b5a1598bbb6e21338ded62dba8f7868",
             "title": "Fake ChatGPT and Claude Apps Abuse Signed Executables to Deploy Crypto Miners",
             "description": "Threat actors are delivering malicious loaders and cryptocurrency miners under the guise of artificial intelligence (AI) desktop applications for Anthropic Claude and OpenAI ChatGPT as part of a campaign dubbed Yoba. The activity involves creating fake GitHub projects that claim to be desktop applications like GPT-5.6 Sol, GPT-6 Astra, and Claude Opus, only to deliver a malware family called",
@@ -11510,6 +12369,22 @@
             ],
             "published_at": "2026-10-29T15:20:29+00:00",
             "collected_at": "2026-10-29T22:15:03.753929+00:00"
+        },
+        {
+            "id": "b46abb56cc855116ea9f0e3213539f79d9d09a73fe84632a33d337cf644db2d3",
+            "title": "No AI, 52 min. Build all Linux Files utils in C by Hand [video]",
+            "description": "Comments",
+            "url": "https://www.youtube.com/watch?v=gQRmSlcTq9c",
+            "source": "Hacker News",
+            "category": "linux",
+            "tags": [
+                "linux",
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-29T15:20:04+00:00",
+            "collected_at": "2026-11-01T12:26:58.386477+00:00"
         },
         {
             "id": "a1f8d24a51e36d46298d421e548d8eae69829234ac148f77efd2fa95ddfac22a",
@@ -11800,6 +12675,21 @@
             ],
             "published_at": "2026-10-29T14:34:54+00:00",
             "collected_at": "2026-10-29T22:15:11.051895+00:00"
+        },
+        {
+            "id": "a1a72ce8e57049308c6a849cea29a7e2ea8cb7cbe677fb6dc56170e51dcc6699",
+            "title": "A brief history of just-in-time: forty years of JIT work, from 1960–2000",
+            "description": "Comments",
+            "url": "https://dl.acm.org/doi/10.1145/857076.857077",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-10-29T14:30:25+00:00",
+            "collected_at": "2026-11-01T12:26:58.386608+00:00"
         },
         {
             "id": "82cbbc21f7dc8a2065c0d577b78e69dd941df524cae4187c1d4aed0c67a65ad6",
