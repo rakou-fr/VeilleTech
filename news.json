@@ -1,7 +1,1071 @@
 {
-    "updated_at": "2026-11-08T12:32:46.749047+00:00",
-    "count": 26608,
+    "updated_at": "2026-11-08T21:31:57.101119+00:00",
+    "count": 26691,
     "articles": [
+        {
+            "id": "8654b5b2c252df8b1215b0c2f3dc5b151452571ff0fd858bc86b990d043d6be4",
+            "title": "Nvidia CEO Jensen Huang admits to having an affair with suspected Chinese spy",
+            "description": "Nvidia's board of directors is investigating the report about Jensen Huang's alleged affair with a client, claims its confidence in Jensen and leadership team.",
+            "url": "https://www.tomshardware.com/pc-components/gpus/nvidia-ceo-jensen-huang-admits-to-having-an-affair-with-suspected-chinese-spy-jensen-apologizes-in-letter-to-staff-company-board-forms-independent-committee-to-investigate",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "nvidia",
+                "pc"
+            ],
+            "published_at": "2026-11-08T21:27:29+00:00",
+            "collected_at": "2026-11-08T21:31:43.174874+00:00"
+        },
+        {
+            "id": "485467c590ba256bafaef54347b1ae6dce3fa8e528e815f35a9a8d02f5bc9a5d",
+            "title": "Nextcloud Helm chart: Bitnami subcharts and Kapitan",
+            "description": "The Nextcloud Helm chart 9.4.1 packages Bitnami's PostgreSQL, MariaDB and Redis charts as optional subcharts, all switched off by default. Switched on, they run images from bitnamilegacy , a catalog Bitnami no longer updates. The chart can also use a database and a cache that run outside it, with credentials from existing Secrets. The nextcloud recipe rebuilds the chart for Kapitan and puts a CloudNativePG cluster and Valkey in place of the subcharts. What Bitnami changed is in the Bitnami PostgreSQL guide , and the replacements for other charts are in Bitnami chart alternatives . What chart 9.4.1 declares With Helm 4.3.1: helm show chart oci://ghcr.io/nextcloud/helm/nextcloud --version 9.4.1 The output lists four dependencies: dependencies : - condition : postgresql.enabled name : postgresql repository : oci://registry-1.docker.io/bitnamicharts version : 16.7.4 - condition : mariadb.enabled name : mariadb repository : oci://registry-1.docker.io/bitnamicharts version : 20.5.5 - condition : redis.enabled name : redis repository : oci://registry-1.docker.io/bitnamicharts version : 21.1.3 - alias : collabora condition : collabora.enabled name : collabora-online repository : https://collaboraonline.github.io/online version : 1.1.60 Three come from Bitnami's bitnamicharts repository on Docker Hub. The fourth is the Collabora Online office server from Collabora's own repository. The chart's values.yaml sets all four conditions to false . A default install keeps Nextcloud's data in SQLite ( internalDatabase.enabled: true ), which the chart's README does not recommend for production. The chart archive carries the three Bitnami charts under charts/ , so an install fetches nothing from bitnamicharts . Only their images come from Docker Hub. What the subcharts run today helm template nextcloud oci://ghcr.io/nextcloud/helm/nextcloud --version 9.4.1 \\ --set internalDatabase.enabled = false \\ --set postgresql.enabled = true --set redis.enabled = true | grep -o 'image: .*' | sort -u image: docker.io/bitnamilegacy/postgresql:17.5.0-debian-12-r3 image: docker.io/bitnamilegacy/redis:8.0.1-debian-12-r1 image: docker.io/library/nextcloud:35.0.2-apache The chart's values replace each subchart's image repository with bitnamilegacy/<name> and keep the subchart's tag. Both tags resolve in docker.io/bitnamilegacy . In docker.io/bitnami both returned manifest unknown on 2 November 2026, the registry's answer for a tag it does not have. The chart's README still names bitnami/postgresql and bitnami/mariadb as the defaults, but Helm uses what values.yaml says. The PostgreSQL subchart also comes without storage. The chart's values set postgresql.primary.persistence.enabled: false , and the rendered StatefulSet mounts the data directory from an emptyDir . The database is gone when the pod is deleted or moves to another node. The values give MariaDB the same default. The two Redis StatefulSets keep their claims. The chart with a database and cache of your own The chart reads an external PostgreSQL and an external Redis from existing Secrets. These values use the names that the recipes further down create: internalDatabase : enabled : false externalDatabase : enabled : true type : postgresql existingSecret : enabled : true secretName : postgresql-cluster-app usernameKey : username passwordKey : password hostKey : host databaseKey : dbname externalRedis : enabled : true host : valkey existingSecret : enabled : true secretName : valkey-auth passwordKey : default-password postgresql-cluster-app is the Secret the CloudNativePG operator writes for a Cluster named postgresql-cluster , with a password it generates. valkey is the Service of the Valkey instance, and valkey-auth holds its password. With these values helm template renders a Deployment, a Service and a Secret with the admin account. A server-side dry run of the three on kind with Kubernetes 1.37.0 passed. That shows the API server accepts them, not that Nextcloud installs against the database. The deploy test of the recipe below covers that part. The nextcloud recipe The nextcloud recipe in kadet-hub/recipes rebuilds chart 9.4.1 as Kapitan classes for the kubernetes generator 1.9.0. Its version 1.0.1 was published on 27 October 2026. It runs docker.io/library/nextcloud:35.0.2-apache , pinned by digest, as one replica. The chart's cron sidecar runs the background jobs in the same pod. One claim holds the config, custom apps and themes, the other the data directory, 8Gi each by default. In place of the subcharts the recipe includes two other recipes: postgresql , one CloudNativePG Cluster with PostgreSQL 18.6 and three instances by default. It is rebuilt from CloudNativePG's cluster chart 0.9.0 and rendered by the cloudnative-pg generator 1.1.0. The operator itself comes from the cnpg recipe, installed once per cluster in a target of its own before Nextcloud. valkey , Valkey 9.1.2 as one instance with ACL authentication and a claim, rebuilt from the Valkey project's own chart 0.12.0. Valkey is the BSD-3-Clause fork of Redis. The recipe keeps the chart's HTTPRoute. It attaches to a Gateway the cluster already runs, which owns TLS and the listener. Two rules redirect /.well-known/carddav and /.well-known/caldav to /remote.php/dav , and a third sends everything else to the Service on port 8080. A target sets the host, the Gateway's name and namespace, and the admin and Valkey passwords as refs . The recipe page has the snippet, the fetch inventory pinned by digest and the commands that verify and compile it. Apache in the image starts as root and serves as www-data , UID 33. The namespace therefore needs the Pod Security level baseline . The deploy test on kind The kadet-hub/recipes CI runs check nextcloud --level deploys from its ci workflow . Run 40481509900 on 27 October 2026 checked commit 21d393a , which the tag nextcloud-v1.0.1 points to. check first rendered the chart with the recipe's tests/values.yaml and compared its six objects with the recipe's: the Deployment, the Service, the Secret, the HTTPRoute and the two claims. They differ in the selector, where the recipe uses name and the chart app.kubernetes.io/name , instance and component . They also differ in defaults the recipe writes out, such as automountServiceAccountToken: true . Then check deployed the recipe on kind with kindest/node:v1.37.0 , after the CloudNativePG operator and Gateway API. The smoke test waited for the Cluster and read status.php through the Gateway until it reported \"installed\":true . It wrote a file over WebDAV as the admin and read it back, which needs the database, the data claim and file locking. Last, it checked that occ reports Redis as the file locking backend. The job ended with deploys: passed . The test target runs one PostgreSQL instance instead of three. The two DAV redirects are compared at renders only, because cloud-provider-kind, which serves the Gateway on kind, drops the path of a redirect. Nextcloud's admin manual for version 35 says Valkey is \"expected to work\" as a Redis-compatible backend. Its formal tests run Redis through the redis PHP extension and Valkey through Nextcloud's own keyvalue cache provider. The Docker image sets up the redis extension, so the recipe runs a pairing the manual expects to work but does not test. The smoke test above is the only test of that pairing in the recipe's CI. What the recipe leaves out The recipe's README says: \"SMTP, notify_push, an office server, imaginary, metrics and more than one replica are not part of this version.\" The single replica follows from the chart's Recreate strategy and its ReadWriteOnce claims. The recipe renders no backup. Its README lists what a target backs up: the database through the Barman Cloud Plugin, which no recipe installs, and the two claims, with Nextcloud in maintenance mode around both. Some settings stay with the target. TRUSTED_PROXIES has no default, and without it Nextcloud takes the proxy's address for the client's. PHP accepts uploads up to PHP_UPLOAD_LIMIT , 512M by default. Gateway API has no body limit of its own, so the Gateway implementation's policy has to allow that size. The image writes the host into config.php at install, so a later change of the host also needs occ config:system:set trusted_domains . Moving a running Helm release and its data to the recipe is not part of the recipe and has not been tested. Originally published at kadet-hub.org .",
+            "url": "https://dev.to/kadet-hub/nextcloud-helm-chart-bitnami-subcharts-and-kapitan-4g69",
+            "source": "DEV Community",
+            "category": "linux",
+            "tags": [
+                "developpement",
+                "docker",
+                "git",
+                "kubernetes",
+                "linux",
+                "php",
+                "programmation",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-11-08T21:21:37+00:00",
+            "collected_at": "2026-11-08T21:31:41.240117+00:00"
+        },
+        {
+            "id": "cd61788585dc0d11c906e973347f1ebfdc48d27a0ca7cd5a57335d7ffcce25fc",
+            "title": "Quand une vis de 2000 ans devient un moteur moléculaire : ce que j'ai compris en entrant dans la protéine avec NexoPeek 🧬⚡️…",
+            "description": "Quand une vis de 2000 ans devient un moteur moléculaire : ce que j'ai compris en entrant dans la protéine avec NexoPeek 🧬⚡️ Ce matin, je lisais l'article de ScienceDaily sur cette prouesse : une équipe a miniaturisé la vis d'Archimède à l'échelle moléculaire. Un moteur bidirectionnel piloté électriquement, 100x plus conducteur. Mon premier réflexe ? Enlever mon casque Meta Quest, lancer NexoPeek, et chercher la structure correspondante dans le visualiseur PDB pro. En quelques secondes, j'étais dedans . Pas sur un écran 2D à faire défiler des coordonnées XYZ. Mes mains attrapaient l'hélice, la tournaient, mesuraient la distance entre deux atomes catalytiques (le Distance Calculator est devenu mon réflexe). J'ai basculé en représentation surface Mol* pour voir le tunnel de conduction, activé la carte de champ électrostatique pour visualiser le gradient de potentiel. L'alignement Foldseek m'a montré en un clic les homologues structurels — pas besoin de sortir PyMOL, de scripter, d'attendre le rendu. C'est là que le bât blesse habituellement : le contexte. Les 12 tours narrées sur 6 piliers (biotech basics, fondations de la vie, voies métaboliques, médicaments en action, technologies génétiques, biotech verte) donnent ce cadre narratif qui manque aux papers. Voir l'ATP synthase tourner dans Fondations de la vie après avoir lu l'article sur le moteur moléculaire... la boucle se ferme. Pour nous, développeurs et chercheurs, NexoPeek n'est pas un gadget VR. C'est un IDE structural : recherche live RCSB/AlphaFold/UniProt/SWISS-MODEL/PDBe, ingestion locale .pdb/.cif/.mol2/.gro/.xyz/.dx/.xtc/.py, prédiction de poches IA (PrankWeb/P2Rank cloud + moteur offline), inspection ligands PubChem, Room View passthrough pour garder ses notes papier à portée. La prochaine fois qu'un paper sort sur une nanomachine, je ne lirai pas juste l'abstract. J'entrerai dedans. https://www.meta.com/experiences/nexopeek/1453797551140347/",
+            "url": "https://dev.to/ashish_624379625242c5d263/quand-une-vis-de-2000-ans-devient-un-moteur-moleculaire-ce-que-jai-compris-en-entrant-dans-la-2nlf",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-11-08T21:21:10+00:00",
+            "collected_at": "2026-11-08T21:31:41.240398+00:00"
+        },
+        {
+            "id": "eba7aedd80f4a5e403c9baf2703a7d0e8ab8042e22073b2f0a35108508a2c0fb",
+            "title": "StarRocks role unions make default-role choices a data-access decision",
+            "description": "StarRocks role unions make default-role choices a data-access decision A distributed query engine can bring several data domains into one SQL session. StarRocks uses both role-based and identity-based privileges, and the effective privilege scope of a user is the union of the user's own privileges and the privileges of assigned roles [1]. That union is straightforward to state and easy to review incorrectly. The documented model StarRocks assigns privileges to roles and roles to users. It also supports direct user privileges. The public role can grant a baseline to all users, and the user_admin role controls user and role administration [1]. The SET ROLE statement activates a role and its associated privileges for the current session [2]. The important review question is not which role appears in a user's profile. It is which roles are active in the session that reaches the data. A default role can widen access, while an inactive role may remain available for later activation. The configuration should make the intended baseline explicit. Query evidence I ran three count-only probes on 2026-11-09 with sub_type=all , page 1, and page size 1. The application-fingerprint query app=\"StarRocks\" matched 0. The title query title=\"StarRocks\" matched 2,141. A body query http.body=\"StarRocks\" matched 3,396. The title and body count may include documentation, vendor pages, and linked deployments. The app candidate did not produce a fingerprint in this run. The numbers are discovery evidence, not proof that a host exposes the web console or a query port without authentication. Review the privilege union For each non-administrative account, list direct privileges, assigned roles, nested roles, default roles, and the public grants. Test a fresh login and inspect the active role set. Then use SET ROLE only in an authorized test session to verify whether the remaining roles can expose data the user should not see. Create a least-privilege read-only role for dashboards and reporting. Avoid granting broad database or table privileges to the public role. Keep user_admin separate from data-query accounts. If a user needs an elevated role for a scheduled task, assign it to a dedicated automation identity instead of a shared human account. Review external authentication and group mapping. LDAP, JWT, and OAuth can reduce password risk, but a group claim that maps to an overly broad role recreates the problem. Test the IdP group change and confirm when the new role becomes effective. Protect the network surfaces Restrict the web console and the MySQL-compatible query port to the management or application network. Require TLS and a proxy where appropriate. Do not assume that the web console is safe because it is not the primary SQL endpoint. Both paths can reach data and administrative features. Separate credentials for ingestion, analytics, and administration. Rotate passwords and tokens after staff changes. Monitor failed logins, role changes, GRANT and REVOKE operations, and queries from unexpected source addresses. Review the data itself. A role that grants SELECT on a table may still expose sensitive columns. Column-level controls, views, and external catalog policies can reduce that exposure. Do not use a broad table grant when a narrow view would answer the business question. Incident response If a query identity is compromised, disable it and revoke its active sessions. Review the role union at the time of the incident, not the current configuration after changes. Identify the catalogs and tables queried, and check whether the account could change grants or create users. Preserve the query history, audit records, authentication logs, and role definitions. If the account used a shared role, determine which other identities could have used the same authority. Rotate external authentication secrets only after preserving evidence. StarRocks' union model is not inherently unsafe. It becomes risky when broad defaults and inactive roles are left unexamined. The useful external count identifies candidates for an inventory, while the owner review should establish which roles are active, which data they reach, and who can grant more. References [1] Overview of StarRocks privileges [2] SET ROLE in StarRocks",
+            "url": "https://dev.to/johnettagaweraks/starrocks-role-unions-make-default-role-choices-a-data-access-decision-1lnh",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-11-08T21:20:22+00:00",
+            "collected_at": "2026-11-08T21:31:41.240866+00:00"
+        },
+        {
+            "id": "9125c0f614de4df770307584ad495d10ff883b6dc6a7b5090bad07e94fb490f2",
+            "title": "Claude Personal Finance: What It Actually Shows You",
+            "description": "Anthropic launched Personal Finance in Claude on November 5, a beta that connects bank and card accounts through Plaid It's read-only, US-only, and limited to Pro, Max, and Ultra, with up to two years of transaction history visible Chats inside the Personal Finance hub are not used to train Anthropic's models For a solo builder, the real news is that Claude is becoming a dashboard, not just a coding tool On November 5, Anthropic rolled out Personal Finance in Claude, a beta that lets US subscribers on Pro, Max, or Ultra link their bank and card accounts and ask Claude plain-language questions about their money. It's read-only, it runs through Plaid, and it's one of the clearer signs yet that Anthropic wants Claude sitting next to your data, not just your code editor. What Does Personal Finance in Claude Actually Do? You connect an account through Plaid, sign in to your bank there, and approve read-only access. Claude never sees or asks for your bank password. Once connected, Claude can see the bank name, account type, the last four digits, your balances and credit limits, and up to two years of transactions. From there it answers questions in the language you'd actually use: what did I spend on food last month, why did this bill go up, what's left before payday. Anthropic's own published example shows Claude totaling one month's spending at just over 4,309, breaking out roughly 1,024 of that on food and drink, listing four upcoming payments, and landing on 1,393 left before the next paycheck. It also builds charts and payment calendars you can keep adjusting after the fact, rather than a static report you have to regenerate. The same hub flags things a person might miss scrolling a statement: a duplicate charge, a fee that crept up over the year, a subscription that renewed at a higher price than last time. It can calculate interest paid on an account too, which is the kind of number most banking apps bury three menus deep if they show it at all. No password sharing, ever. That part is non-negotiable by design. What it won't do matters just as much as what it will. Access is strictly read-only, so Claude can't move money, open an account, or manage anything on your behalf. It's explicitly not built to give investment advice, and Anthropic says plainly that Claude can make mistakes, so you check important figures against your own bank rather than taking a total at face value. There are no ads and no sponsored products inside the hub. Anthropic isn't selling its own cards, loans, or savings accounts through this either. You can unlink an account at any time, and Claude loses access to that data immediately once you do. The privacy line is the one worth reading twice. Conversations inside the Personal Finance hub aren't used to train Anthropic's models. That's a separate, stronger commitment than the general chat privacy settings that still apply outside the hub. It's a sensible place to draw a harder line, given what's flowing through it, and it tells you something about how seriously Anthropic expects users and regulators to scrutinize this specific feature compared to everything else in the product. Why Is This US-Only and Read-Only to Start? Because banking data is the one category where getting it wrong in public is expensive in a way a bad chat answer never is. Plaid already handles the regulatory and security plumbing for linking US bank accounts to third-party apps, so launching through Plaid means Anthropic isn't building new banking infrastructure from scratch. It's adding a conversational layer on top of rails that already cleared compliance review for thousands of other apps. Expanding past the US means repeating that groundwork against different banking systems and different regulators, country by country, bank by bank. None of that is quick work, and I wouldn't expect it to move fast even with a company this well funded behind it. Read-only is the more interesting constraint, because it's a deliberate choice rather than a technical ceiling. Anthropic has said openly that it wants Claude to eventually move money and take actions on a user's behalf, and the company is already gathering feedback from banks, wealth managers, and financial services firms for exactly that next step. Shipping read-only first buys Anthropic something simple: it gets to learn what people actually ask about their own money before anyone's balance is on the line. A wrong total in a chat window is annoying. A wrong instruction that touches an account is a different category of problem entirely. That gap is the whole reason this rolled out in this order and not the other way around. Watching for a flagged \"problem\" that isn't actually one, or a total that quietly drops a pending transaction, is a lot cheaper to fix in a read-only beta than after money has already moved on bad information. Starting with one country and one data direction also keeps the support surface small while Anthropic figures out which edge cases actually come up. A transaction that posts late, a joint account with two names on it, a card that gets replaced mid-month: real banking data is messier than a demo, and every one of those cases needs a sane answer before Claude is trusted to act on top of them instead of just describing them. How Does This Compare to a Dedicated Budgeting App? It doesn't fully replace one yet, and I don't think that's the point of this release. A dedicated budgeting app is built around categorization rules, recurring-bill tracking, and alerts you set up once and mostly forget about. Claude's version is conversational first: you ask a question, it answers from whatever it can see, and the chart or calendar it builds exists because you asked for it, not because a rule engine generated it on a schedule in the background. That trade-off cuts both ways. A purpose-built budgeting app will likely still beat Claude at the boring, structural stuff: automatic categorization that's been tuned for years, bill reminders that fire on their own, year-over-year reports you didn't have to request. What Claude adds is the part those apps are usually bad at, which is answering a specific, oddly phrased question about your own spending the moment you think of it, instead of hunting through five screens of a budgeting app's own interface to find the same number. I'd treat this less as a budgeting app competitor and more as a second surface for the same data. If you already use a dedicated tool for tracking and alerts, Personal Finance in Claude is a faster way to interrogate the numbers that tool already has, not a reason to rip the tool out. That's probably where this stays for a while. The read-only limit alone rules out the automation half of what a budgeting app does. There's also a question of habit. A budgeting app lives on your phone's home screen specifically because you check it on a schedule, payday, month-end, before a big purchase. Claude lives wherever you already have a chat window open for something else entirely, which means the question about your spending gets asked in the middle of doing something unrelated, not as its own separate errand. Whether that makes people check their numbers more often or just differently is the actual experiment running underneath this beta, and it's not one Anthropic can answer from a demo. What Should a Solo Builder Actually Do With This? Honestly, not much, today. It's a Claude.ai consumer feature, not an API capability, so there's nothing here for the RAXXO tools: no new endpoint, no new MCP connector, nothing I could wire up even if I wanted to. If you build on the API or on Claude Code the way I do, this announcement doesn't touch your stack at all. What it does tell me is where Claude is headed as a product, separate from where it's headed as a coding tool. A chat assistant that can read your bank accounts, and eventually your calendar and your inbox, stops being a text box and starts being the dashboard you check instead of five separate apps. That's a genuinely useful shape for a one-person studio juggling its own numbers, once the feature is more than US-only and read-only. I'd rather wait for that version than connect anything financial to a beta right now. If you're curious enough to try it anyway, keep it to an account you'd be fine seeing misread once. A wrong total in a chat window costs you nothing. A decision made on top of one, a payment you skip because Claude said you already covered it, can cost you something real. I'd also watch this as a signal for every other category Claude might read next. Email, calendars, and project trackers already have Claude connectors through the marketplace Anthropic launched in September , and Personal Finance fits the same pattern: take a category people already check constantly, make it conversational, ship it read-only first, loosen the permissions later once trust is earned. If that pattern holds, whatever gets absorbed next probably isn't a coding feature either. None of that changes what I'm shipping this month. It just moves up my mental list of things worth re-checking in three or six months, once read-only stops being the default and actions start showing up next to the answers. Bottom Line Personal Finance in Claude is a well-scoped beta: read-only, US-only, Plaid-based, and upfront about what it can't do yet. It isn't a reason to change anything about how you build, since it ships nowhere near the API or Claude Code, which moved its own unattended-agent story forward just last week . What's worth noticing is the direction, the same push behind Claude Docs and Slides folding into ordinary chat back in September : Claude keeps absorbing categories of app that used to live outside the chat window. Each one ships the same way, read-only or view-only at first, with the harder, riskier version held back until the easy version has been tested on real people for a while. Try Personal Finance on one account you don't mind being wrong about once, if you're curious. Don't build a workflow on top of it yet, and don't connect anything you'd actually be upset to see misread. This one touches money, and betas change.",
+            "url": "https://dev.to/raxxostudios/claude-personal-finance-what-it-actually-shows-you-5979",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "anthropic",
+                "developpement",
+                "git",
+                "programmation",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-11-08T21:19:30+00:00",
+            "collected_at": "2026-11-08T21:31:41.241850+00:00"
+        },
+        {
+            "id": "1bce3212ba615bfd358045a6c30c26d6562780f7ec0948d413ffe4238c7af5e0",
+            "title": "Comment Claude sait-il qu'une citation d'une base de connaissances osFoundry est toujours à jour ?",
+            "description": "Voici les outils de base de connaissances qu'un chat Claude ou Claude Code reçoit du serveur MCP d' osFoundry . Ils ont été récupérés avec un tools/list non authentifié le 2026-11-08 et réduits à ce qui compte ici : { \"name\" : \"search_knowledge_base\" , \"description\" : \"Search current published articles in one granted knowledge base. Results cite the article ID and updated time; this is a live database read.\" , \"inputSchema\" : { \"required\" : [ \"knowledge_base_id\" , \"query\" ], \"properties\" : { \"query\" : { \"type\" : \"string\" , \"minLength\" : 2 , \"maxLength\" : 200 }, \"limit\" : { \"type\" : \"integer\" , \"minimum\" : 1 , \"maximum\" : 20 }}}, \"annotations\" : { \"readOnlyHint\" : true }} { \"name\" : \"read_knowledge_article\" , \"description\" : \"Read one current published article by ID from a granted knowledge base and return a stable citation.\" , \"inputSchema\" : { \"required\" : [ \"knowledge_base_id\" , \"article_id\" ]}, \"annotations\" : { \"readOnlyHint\" : true }} { \"name\" : \"edit_knowledge_article\" , \"description\" : \"Replace article content and optionally its title. Supply the version from read_knowledge_article; concurrent changes are rejected.\" , \"inputSchema\" : { \"required\" : [ \"knowledge_base_id\" , \"article_id\" , \"content\" , \"expected_version\" , \"idempotency_key\" ]}, \"annotations\" : { \"readOnlyHint\" : false , \"destructiveHint\" : true , \"openWorldHint\" : true }} { \"name\" : \"poll_resource_events\" , \"description\" : \"Resume from an event sequence for one granted channel, Note, knowledge base, record, or session.\" , \"inputSchema\" : { \"required\" : [ \"resource_type\" , \"resource_id\" ], \"properties\" : { \"after_sequence\" : { \"type\" : \"integer\" , \"minimum\" : 0 }, \"limit\" : { \"type\" : \"integer\" , \"minimum\" : 1 , \"maximum\" : 100 }}}, \"annotations\" : { \"readOnlyHint\" : true }} Quand on lit les descriptions ensemble, le design apparaît de lui-même. Un résultat de recherche porte un ID d'article et une date de mise à jour. Une lecture renvoie \"a stable citation\" (une citation stable). Une modification exige \"the version from read_knowledge_article\" (la version issue de read_knowledge_article). Et il existe un journal d'événements par base de connaissances qu'on peut reprendre à partir d'un numéro de séquence. La date de mise à jour de la citation et la version qu'une modification doit indiquer sont, en pratique, le même type de valeur : le propre client d'osFoundry pour ces outils, connected-cloud-tools.ts dans l'application desktop, type expected_version de edit_knowledge_article en format: date-time . Une citation n'est donc pas qu'un pointeur pour le lecteur. C'est un tampon de version que l'agent peut vérifier plus tard et, juste après la lecture, renvoyer comme jeton de compare-and-swap. La suite montre ce que ça apporte, mesuré sur une reconstruction. Que doit contenir une citation ? Trois candidats : Citation Résiste à un changement de titre Montre que le contenu a changé Utilisable comme version d'édition Titre de l'article non non non ID de l'article oui non non ID de l'article + date de mise à jour oui oui oui, si elle est récente Le titre est ce qu'un lecteur humain veut voir, d'où la tentation de citer par le titre seul et de le rechercher plus tard. Mais ça ne détecte qu'un article renommé ou supprimé. Un article dont le texte a changé sous le même titre a l'air correct. L'ID règle le problème des renommages. C'est la date qui permet de vérifier si une citation est périmée. La reconstruction Aucun binaire Claude ne tourne ici. kb_store.py implémente les quatre outils sur sqlite avec les vrais noms, arguments obligatoires et limites (query de 2–200 caractères, limit jusqu'à 20 pour la recherche et jusqu'à 100 pour les événements). Seuls les articles publiés peuvent être recherchés ou lus. Les formes JSON sont propres à la reconstruction, car le vrai serveur ne les renvoie qu'à un client authentifié. La citation est {knowledge_base_id, article_id, updated_at} . Chaque enregistrement écrit un événement {sequence, type, article_id, updated_at} , et edit_knowledge_article est un compare-and-swap sur updated_at avec une table d'idempotence, dans une seule transaction BEGIN IMMEDIATE . sim.py simule une journée de support : 400 articles, 120 questions et 300 enregistrements faits par des personnes sur 8 heures. La popularité suit une courbe de Zipf (s = 0.9). Les 10 premiers articles reçoivent 36.7% des questions et 36.7% des enregistrements, parce que les articles sur lesquels les gens posent des questions sont ceux que les gens n'arrêtent pas de corriger. Parmi les enregistrements, 85% modifient le contenu, 10% changent aussi le titre et 5% dépublient. Pour chaque question, un \"Claude\" scripté appelle search_knowledge_base , lit les deux premiers résultats avec read_knowledge_article et garde les deux citations. Toutes les heures, il vérifie de trois façons toutes les citations données jusque-là. Seeds 1–5, Python 3.9.6 sur un Apple M1, stdlib uniquement. L'exécution complète prend 25.7 s. À quelle vitesse les citations deviennent-elles périmées ? Cinq seeds, 120 réponses chacune, deux citations par réponse : Heure Citations jusqu'ici Périmées Réponses avec une citation périmée Détectées par le titre seul 1 152 24 (15.8%) 56.6% 5 sur 24 2 298 61 (20.5%) 61.7% 17 sur 61 4 580 165 (28.4%) 72.1% 56 sur 165 6 914 250 (27.4%) 69.4% 84 sur 250 8 1,200 369 (30.8%) 80.2% 152 sur 369 En fin de journée, près d'un tiers des citations pointent vers un article qui a changé depuis que Claude l'a lu, et quatre réponses sur cinq contiennent au moins une citation de ce genre. \"Modifié\" ne veut pas dire \"faux\" : une modification peut toucher un paragraphe que la réponse n'a jamais utilisé. Mais personne ne peut savoir lequel sans regarder, et c'est la date dans la citation qui indique à Claude où regarder. La popularité explique l'essentiel. Le run de contrôle répartit les mêmes 300 enregistrements uniformément sur les 400 articles : 13.9% des citations deviennent périmées (167 sur 1,200) et 46.7% des réponses (280 sur 600). Plus ta base de connaissances est utilisée, plus les articles que Claude cite sont ceux qu'on est en train de modifier. La vérification par titre seul a trouvé 152 des 369 citations périmées, soit 41.2%. Il s'agissait uniquement de changements de titre ou de dépublications. Elle ne voit jamais une modification de contenu. Relire chaque article cité, ou interroger le journal ? Coût des vérifications horaires sur la journée, cumulé sur les cinq seeds (40 vérifications) : Stratégie Appels Données renvoyées Par vérification Relancer une recherche sur chaque titre cité 2,426 3,342 KiB 60.6 appels, 83.5 KiB Relire chaque article cité 2,264 3,445 KiB 56.6 appels, 86.1 KiB poll_resource_events depuis un curseur 40 153 KiB 1.0 appel, 3.8 KiB Les deux stratégies basées sur l'ID ont trouvé exactement les mêmes 369 citations périmées que la vérité terrain. Le script le vérifie par un assert à chaque contrôle. La différence, c'est le coût. Relire croît avec le nombre d'articles cités et paie leur texte complet à chaque fois. Le polling croît avec le nombre de changements. Moins de 100 changements par heure tiennent dans une page, donc chaque vérification a été un seul appel, et Claude ne relit que les articles qui ont bougé. Le curseur est un simple entier à conserver entre les tours. Avant le premier poll, l'agent a besoin d'une séquence de départ, soit 0, soit la dernière séquence qu'il a enregistrée avec ses citations. Que se passe-t-il quand Claude modifie avec la version d'une citation ? La deuxième expérience reprend la même journée. Après chaque réponse, Claude modifie le premier article qu'il a cité en passant le updated_at de la citation comme expected_version , après un délai. Cinq seeds, 150 modifications par délai : Délai après la lecture Rejetées, version changée Rejetées, dépublié Nouvel essai après une relecture 20 s 0 (0.0%) 0 — 15 min 30 (20.0%) 2 30 sur 30 enregistrées 1 h 57 (38.0%) 3 57 sur 57 enregistrées 4 h 85 (56.7%) 14 85 sur 85 enregistrées Une citation fait une bonne version d'édition pendant quelques secondes et une mauvaise au bout d'une heure. Les rejets, c'est le système qui fonctionne : chacune de ces écritures aurait sinon remplacé le texte plus récent d'une personne par un contenu construit à partir d'une lecture plus ancienne. La correction est mécanique. Relire, réappliquer le changement sur ce qui est là, écrire avec la nouvelle version. Chaque nouvel essai a réussi. La clé d'idempotence a aussi été testée. Après chaque modification réussie, le même appel avec la même clé a été renvoyé. 409 sur 409 ont renvoyé le premier résultat marqué comme replay et n'ont écrit aucun nouvel événement. Pourquoi osFoundry répond-il uniquement à partir d'articles publiés ? Parce qu'une citation devrait pointer vers quelque chose qu'une personne a décidé être une réponse. Dans l'application desktop, l'onglet Publishing d'un article indique \"Published articles are used by this workspace's AI assistant and search. They are not visible outside the workspace.\" (les articles publiés sont utilisés par l'assistant IA et la recherche de ce workspace, et ne sont pas visibles en dehors). Les brouillons sont invisibles pour search_knowledge_base et read_knowledge_article , et un article dépublié disparaît des deux au prochain appel. Dans la reconstruction, la dépublication écrit un événement comme n'importe quel enregistrement. 19 des 600 modifications différées ci-dessus sont tombées sur un article dépublié, et la vérification signale une telle citation comme disparue, pas comme modifiée. Pourquoi l'outil de modification est-il marqué open-world ? edit_knowledge_article est le seul outil de base de connaissances avec openWorldHint: true . Son effet ne reste pas dans la conversation. L'article enregistré est ce à partir de quoi tous les autres assistants et recherches du workspace répondront ensuite. Les annotations indiquent au client que cet appel modifie un état partagé, et Claude Code demande confirmation avant de l'exécuter, sauf si tu l'as autorisé. osFoundry ajoute son propre garde-fou quand un chat lié travaille depuis l'écran Knowledge Base dans l'application : connected-browser-run.ts demande une approbation pour chaque écriture cloud et ne propose pas d'autorisation valable pour toute la session. Si tu le mets en place toi-même Mets une version dans la citation, pas seulement un ID. Utilise la même valeur que ton outil de modification accepte comme expected_version , pour qu'une seule lecture te donne les deux. Tiens un journal d'événements par base de connaissances avec une séquence monotone, et laisse l'agent reprendre à partir d'un numéro. Un entier d'état côté client remplace la relecture de tout ce qu'il a jamais cité. Réponds uniquement à partir de contenu publié et journalise la dépublication comme un événement, pour qu'une citation puisse revenir comme \"disparue\" et pas seulement comme \"différente\". Fais des modifications un compare-and-swap sur le contenu complet avec une clé d'idempotence obligatoire. Dis au modèle, dans la description de l'outil, de relire avant de modifier, car une version tirée d'une citation vieille d'une heure échoue environ quatre fois sur dix. Marque l'outil d'écriture comme destructive et open-world, et garde aussi de ton côté une approbation par appel. Ce qu'osFoundry entend par retrieval et grounding se trouve dans son entrée de glossaire sur le RAG . L'organisation de ses bases de connaissances est décrite sur la page des bases de connaissances .",
+            "url": "https://dev.to/bbt-fr/comment-claude-sait-il-quune-citation-dune-base-de-connaissances-osfoundry-est-toujours-a-jour--3e09",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "anthropic",
+                "developpement",
+                "programmation",
+                "python",
+                "web"
+            ],
+            "published_at": "2026-11-08T21:17:48+00:00",
+            "collected_at": "2026-11-08T21:31:41.243216+00:00"
+        },
+        {
+            "id": "c56555a94b381053cedd6b2df80bdf72fb50b39d347618db5b4817690aa6ab7c",
+            "title": "A new chapter for TypeScript - 10x performance boost",
+            "description": "Intro With all the noise about yet another shiny AI model, most of us completely missed a much bigger and more impactful announcement. Summer 2026 delighted us with Microsoft rolling out the TypeScript 7.0 RC. TypeScript, which was previously written in TypeScript itself, has been ported to Go! In the official YouTube video announcement , Anders Hejlsberg starts with the statement that they have likely reached the limit of what they can squeeze out of JavaScript. TypeScript has been written in itself, and that has brought a lot of benefits, but it has also consistently brought some challenges, in particular around performance and skill availability. The JavaScript runtime platform is really optimized for UI and browser usage, and not so much for compute-intensive workloads like compilers and system-level tools. The future of TypeScript became questionable, and some fundamental changes were required. Codenamed Project Corsa , the port took the team more than a year and eventually became an installable npm package. Big early adopters report outstanding benchmarks: The VS Code codebase, roughly 1.5 million lines of TypeScript, now compiles in approximately 7.5 seconds — down from approximately 78 seconds. Language server failures dropped by over 20x compared to TypeScript 6.0. I am especially happy about the drop in language server failures, but those numbers alone say nothing. I got curious: how did they make these numbers possible, and what does this change mean for TypeScript users and the JavaScript ecosystem in general? That is what we are going to explore, based on the official announcement and publicly available facts. Ported, not rewritten The main reason for a port: performance and scalability. It simply was not feasible to rewrite instead of porting, because we would have had to solve a bunch of new problems. The Microsoft team has been crystal clear that they are porting the existing codebase instead of rewriting the whole thing from scratch. This is important, because this approach guarantees core compatibility. Code that compiles in TypeScript 6.0, with stableTypeOrdering enabled and no deprecated flags, should compile identically in TypeScript 7.0. Rewriting the compiler from scratch would mean reevaluating design decisions, algorithms and data structures, whereas porting means a file-by-file migration of the existing codebase to Go, preserving the existing algorithms and data structures. Anders Hejlsberg thinks that rewrites are often toxic for an ecosystem because they sacrifice compatibility: you never come back to exactly what you had before. Backwards compatibility is important if you want to keep your ecosystem happy. Go Rust, or Go fast? The first and most obvious question that comes to mind is: why not Rust? Why Go? Anders Hejlsberg explains in his interview that there were several reasons. Rust doesn't have garbage collection. Memory is managed manually or through the borrow checker, but the latter doesn't allow circular data structures (and the TS compiler is packed with those). The target language should have access to shared memory and treat functions as first-class citizens. Of course, there are libraries that provide garbage collection, but they come with restrictions and cannot guarantee safety, whereas Go is type- and memory-safe. Go was the most suitable option. Numbers 10x speed is more the result than the final goal. Microsoft's official wording is \"often about 10 times faster\", which means it can be even higher. Large codebases and monorepos will immediately see the gain, whereas small projects will not see the same dramatic improvement. Build speed affects CI pipeline wait times and deployment feedback loops, but the improvement doesn't stop there. The developer experience got a huge boost as well: failing language server commands dropped by over 20x relative to TypeScript 6.0. In large monorepos, where VS Code's language server was a known bottleneck, will feel the difference most immediately. I personally work with multiple large monorepos in WebStorm and have also noticed a huge performance boost. If you work with AI to write your code, you have probably noticed that the TS server doesn't keep up with the changes the agent makes in your project, and you get those 'phantom errors' on typecheck. And that is just the problem we have today. With a fast and stable type-checker, new AI features become possible: immediate typechecking of an LLM's output, providing semantic information in LLM prompts, and much more. This improvement will make it possible to build many new IDE features that were not feasible before, and to truly scale alongside agentic development. Breaking changes The type system is identical, that was the core promise of the port approach. TypeScript 7.0 adopts TypeScript 6.0's new defaults and promotes deprecation warnings to hard errors. Specifically, these flags and patterns now cause compilation errors: target: es5 — downcompilation to ES5 is no longer supported downlevelIteration moduleResolution: node / node10 module: amd , umd , systemjs , none baseUrl (use paths instead) esModuleInterop: false , allowSyntheticDefaultImports: false Namespace module keyword, closure-style function syntax in JSDoc New defaults include: strict: true module: esnext target — the current stable ECMAScript version immediately preceding esnext noUncheckedSideEffectImports: true libReplacement: false stableTypeOrdering: true (and cannot be disabled) rootDir: ./ — inner source directories must now be set explicitly types: [] — list the global types you need explicitly, e.g. [\"node\", \"jest\"] Migration plan It is not recommended to jump right into the void upgrading to the latest version. First, you should upgrade to version 6, which surfaces upcoming errors as warnings and lets you prepare for the migration to v7. Some articles recommend installing both v6 and v7 and running a side-by-side comparison, but that was true for the RC version. Now version 7 is stable and production-ready , so you can skip this step. But here is the catch. The current TypeScript version doesn't have a programmatic API yet, it is coming in version 7.1. Thus, if your project depends on TypeScript as a library — plugin systems, custom transformers, specialized language server integrations — you may face compatibility issues until that API stabilizes. This is the single largest drawback for early adopters with complex toolchains. Until then, the official announcement recommends keeping v6 around through the @typescript/typescript6 compatibility package for tools that need programmatic access to the compiler, such as typescript-eslint . The same goes for editor support in Vue, Svelte, Astro and MDX, which still runs on v6 for now. Conclusion - The Last Piece of the Native Puzzle TypeScript 7.0 is not an unexpected surprise. It is a logical step in a transformation that is already happening across the JavaScript ecosystem. esbuild (Go), SWC (Rust), and Bun ( Zig / C++ ) demonstrated that native-compiled tooling can dramatically outperform JavaScript-implemented tools. JavaScript naturally has constraints that make scaling impossible: the single-threaded event loop, JIT warmup overhead, and the absence of shared-memory parallelism. It doesn't mean that JavaScript is a bad language, of course not; it just means that it is not designed for this job. It is actually better that JS has only one thread. Shared memory and multiple threads in a language with mutable data sounds hideous. TypeScript used to be a bottleneck for every tool that consumes TypeScript's type information. esbuild and SWC addressed the build pipeline, while TypeScript type-checking remained JavaScript-based. TypeScript 7.0 closes that last gap by making the type-checker itself native. Long term, cheaper type-checking enables more ambitious static analysis, more precise refactoring assistance, and richer IDE features that were previously too expensive to run interactively. The transition won't be that effortless: a whole bunch of tooling depends on the programmatic API, so we should wait until version 7.1 stabilizes. Those who depend heavily on this API shouldn't rush the migration for now. Resources Official announcement by Microsoft Project Corsa video announcement Interview with Anders Hejlsberg about the port Braindetox in-depth article Project Corsa repo TypeScript repo",
+            "url": "https://dev.to/hugaidas/a-new-chapter-for-typescript-10x-performance-boost-4b13",
+            "source": "DEV Community",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "amd",
+                "cpp",
+                "developpement",
+                "java",
+                "javascript",
+                "llm",
+                "programmation",
+                "rust",
+                "typescript",
+                "web"
+            ],
+            "published_at": "2026-11-08T21:17:28+00:00",
+            "collected_at": "2026-11-08T21:31:41.243974+00:00"
+        },
+        {
+            "id": "199f1491107f24437ce0f74f3352eea03f380732e212a5b5ba9e5d8647d01e5b",
+            "title": "Immersives YouTube auf Quest – und warum das für Sehtraining mehr ist als ein Interface-Update",
+            "description": "Immersives YouTube auf Quest – und warum das für Sehtraining mehr ist als ein Interface-Update Laut UploadVR arbeitet Google an einem größeren Redesign der YouTube-App für immersive Ansichten auf Meta Quest, näher an dem, was Android XR und visionOS bereits zeigen. Das klingt nach einem Interface-Update. Es ist mehr: Es verschiebt die Art und Weise, wie wir Videoinhalte in VR konsumieren – von „Bildschirm im Raum\" hin zu einem echten immersiven Erlebnis. Und genau hier beginnt eine interessante Frage. Wenn wir künftig ohnehin in VR schauen, warum nutzen wir diese Zeit nicht aktiver? Ich saß letzten Dienstag auf dem Sofa, das Quest hing halb auf meiner Nase, und ich starrte zum hundertsten Mal auf dieselbe Folge einer Serie, die ich eigentlich nur laufen ließ, weil Stille unangenehm war. Auf dem Couchtisch daneben: ein Pflaster, das ich seit Wochen nicht mehr angefasst hatte. Ich bin 34, und ich habe Amblyopie am rechten Auge – seit ich denken kann. Als Kind war das Pflaster normal, später war es peinlich, und irgendwann war es einfach nur noch müde. Man hört auf, weil nichts sich ändert. Man hört auf, weil es sich anfühlt wie Hausaufgaben, die niemand mehr einsammelt. Aber fangen wir vorne an. Das Problem bei Amblyopie Amblyopie (lazy eye) wird oft früh behandelt – mit Pflaster, Brillen, gelegentlich auch mit Rot-Blau-Brillen. Was danach kommt, ist häufig eine Lücke: Übungen, die Zuhause durchgehalten werden müssen, konkurrieren mit Alltag, Arbeit und – ehrlich gesagt – mit Langeweile. Die klinische Logik ist klar, die Compliance ist es nicht. Zwischen „ich sollte\" und „ich mache\" liegt ein Graben, und in diesen Graben fallen die meisten Therapiepläne. Nicht aus Faulheit. Aus Erschöpfung. Genau diesen Graben fand ich wieder, als ich vor ein paar Monaten anfing, mich mit Amblyotube von Seven Sports zu beschäftigen. Nicht weil ich eine App suchte – sondern weil ich müde war, immer dieselbe müde Geschichte über mich zu erzählen. Der Übergang von Zuschauen zu Training Amblyotube dreht das um: Statt eine Übungs-App zu öffnen, wird ein Inhalt geöffnet, den man ohnehin schauen will. Die App zeigt dabei jedem Auge ein anderes visuelles Erlebnis. Das dominante Auge bekommt eine sanft einstellbare digitale Unschärfe (Dominant Eye Shader). Das schwächere Auge erhält ein KI-geschärftes Bild (AI Sharpener, MFBF), das menschliche Figuren erkennt und mit kräftiger roter Kontur sowie gelb-grüner Hervorhebung markiert – mit einem pulsierenden Flicker in gleichmäßigem Rhythmus. Optional schaltet die Wedge Occlusion Teile der Szene für jedes Auge aus, sodass jedes Auge nur bestimmte Bildbereiche sieht. Das reduziert binokulare Rivalität. Ein heller Magenta-Fokus-Cue im schwächeren Auge plus ein dezenter neutraler grauer Punkt im dominanten Auge werden zusammengeführt – das Gehirn lernt, beide Bilder zu verschmelzen und echte Tiefe zu verarbeiten. Dazu kommen Pass-through und Handtracking, eine Auswahl des betroffenen Auges (links/rechts), Intensitäts-Presets (leicht/mittel/stark) und eine LogMAR-Sehprüfung direkt in der App. Was mich überrascht hat: die Idee, das Training nicht als eigenständigen Block zu behandeln, sondern als Schicht über dem, was sowieso passiert. In der Praxis heißt das, dass die Übung in dem Moment stattfindet, in dem ich ohnehin schaue – nicht danach, nicht stattdessen. Das ist ein architektonischer Unterschied, kein Marketing-Satz. Wie sich das anfühlt Die erste Sitzung war seltsam. Mein rechtes Auge bekam das schärfere Bild, mein linkes die Unschärfe – und für ein paar Sekunden war mein Gehirn sichtlich verwirrt, weil es die gewohnte Arbeitsteilung nicht mehr bekam. Nach etwa zehn Minuten wurde es ruhiger. Der Magenta-Punkt und der graue Punkt rückten zusammen, dann auseinander, dann wieder zusammen. Irgendwann – und das ist kein dramatischer Moment, sondern ein kleines, stilles – sah ich Tiefe in einem Bild, in dem ich vorher nur Fläche gesehen hatte. Nicht perfekt. Nicht dauerhaft. Aber zum ersten Mal seit Jahren etwas, das sich nach Veränderung anfühlte. Ich habe danach nicht das Pflaster rausgeholt. Ich habe mir einen Tee gemacht und aus dem Fenster geschaut. Was das im Alltag bedeutet 30–40 Minuten am Tag, maximal 1 Stunde. Kein Pflaster, keine Rot-Blau-Brille. Nach der Sitzung Kopfhörer ab, Headset ab – und in die Welt schauen. Was bleibt, ist die Frage, ob ich morgen wieder anfange. Und genau da wird die Verbindung zu Googles YouTube-Redesign interessant: Wenn immersives Video in VR wirklich zur Normalität wird – nicht als Gimmick, sondern als Ort, an dem wir ohnehin Zeit verbringen –, dann verschiebt sich die Frage von „mache ich heute meine Übung?\" zu „welche Serie schaue ich heute?\". Das ist ein kleiner Satz mit großer Wirkung. Einordnung, die wichtig ist Amblyotube ist ergänzendes Sehtraining bzw. ein Hilfsmittel für binokulare Koordination und Tiefenwahrnehmung. Es ist keine Diagnose, keine Behandlung und kein Heilmittel. Freigegeben ab 13 Jahren. Wer Amblyopie kennt, weiß: Der schwierigste Teil ist nicht das Verstehen, sondern das Dranbleiben. Wenn YouTube in VR wirklich immersiv wird, wird dieses Dranbleiben zumindest deutlich einfacher. Vielleicht ist das die eigentliche Neuerung. Nicht die Pixel. Sondern die Tatsache, dass man aufhört, sich selbst als jemanden zu sehen, der üben muss – und anfängt, sich als jemanden zu sehen, der einfach gerade schaut. Amblyotube im Meta Quest App Store: https://www.meta.com/en-gb/experiences/amblyotube/25906906972338493/",
+            "url": "https://dev.to/ashish_624379625242c5d263/immersives-youtube-auf-quest-und-warum-das-fur-sehtraining-mehr-ist-als-ein-interface-update-586a",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "android",
+                "developpement",
+                "git",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-11-08T21:17:20+00:00",
+            "collected_at": "2026-11-08T21:31:41.244613+00:00"
+        },
+        {
+            "id": "7ddc223f625270f3fcb14106f1b1d2fc82f041770b77fcfd8813943f1649bef1",
+            "title": "Regenerate Only What Moved: An Anchor Manifest for Model-Drafted Docs",
+            "description": "Most documentation pipelines that use a model regenerate the whole page, and that is where both the risk and the cost live. A page is a bundle of claims with different owners, different evidence, and very different lifetimes. Regenerating a page to fix one stale paragraph quietly rewrites five paragraphs that were already correct and already approved. The fix is structural: bind every claim to the code that justifies it, then regenerate only the claims whose evidence actually moved. The workflow below is small enough to adopt in an afternoon and specific enough to argue with. It has an anchor manifest, a four-state drift plan, a drafting step where a model is allowed to write, and a review queue where it is not. Every number this workflow reports comes from your own repository, which is the only honest source of such numbers. The failure mode, stated precisely A diff of a regenerated page mixes three kinds of change, and reviewers cannot separate them from the rendered result. Some changes are real drift caused by a code change, some are sampling noise from the model, and some are the model's editorial taste applied to prose that was fine. Under a whole-page pipeline these three arrive in one lump, so the reviewer either approves all of it or abandons the diff. The second problem is cost asymmetry. A page with fourteen claims usually has one or two that are stale, so you spend model calls and human attention on twelve claims with nothing wrong with them. Repeated often enough, that pattern teaches reviewers to rubber-stamp, which is the worst outcome a documentation review process can produce. The manifest approach removes both problems by making regeneration a targeted operation instead of a bulk one. You first prove which claims drifted, then you spend model time only there, and the reviewer sees a short, explainable queue instead of a page-sized diff. Step 1: Anchor one claim per code reference An anchor is an HTML comment on the line immediately above a claim, and it names the code location that would make the claim false if it changed. Keep the granularity tight; one anchor covers exactly one claim, never a section. ## Retry behavior <!-- anchor: src/limiter/backoff.py#compute_backoff --> Retries use exponential backoff with jitter and stop at the configured cap. <!-- /anchor --> <!-- anchor: src/limiter/backoff.py#MAX_ATTEMPTS --> The limiter allows `MAX_ATTEMPTS` attempts per request. <!-- /anchor --> The reference format is path#symbol , where the symbol is a function, a class, or a module-level constant. Claims with no defensible anchor are still allowed, but they are invisible to this pipeline and must be owned by a human explicitly. That gap is a feature: it forces you to notice which sentences no code can support. Step 2: Build the manifest and classify drift The script below parses anchored claims, resolves each anchor to a fingerprint, and compares that fingerprint against a committed manifest. Fingerprints hash the symbol body with per-line whitespace stripped, so a reformat or a reindent does not fake a drift event. #!/usr/bin/env python3 \"\"\" anchordoc.py - plan documentation regeneration from code anchors. Usage: python anchordoc.py plan --docs docs/ --manifest docs.anchors.json python anchordoc.py accept --docs docs/ --manifest docs.anchors.json --owner avery \"\"\" from __future__ import annotations import argparse , hashlib , json , re , subprocess from datetime import datetime , timezone from pathlib import Path ANCHOR_RE = re . compile ( r \" <!--\\s*anchor:\\s*(?P<ref>[^\\s>]+)\\s*--> \" ) DEF_RE = re . compile ( r \" ^(?P<indent>\\s*)(?:(?:async\\s+)?def|class)\\s+(?P<fn>\\w+) \" r \" |^(?P<const>[A-Z][A-Z0-9_]*)\\s*= \" ) def git_blob ( path : Path ) -> str : out = subprocess . run ([ \" git \" , \" hash-object \" , str ( path )], capture_output = True , text = True , check = True ) return out . stdout . strip () def symbol_fingerprint ( path : Path , symbol : str ) -> str | None : lines = path . read_text ( encoding = \" utf-8 \" ). splitlines () for i , line in enumerate ( lines ): m = DEF_RE . match ( line ) if not m or ( m . group ( \" fn \" ) or m . group ( \" const \" )) != symbol : continue body = [ line ] if m . group ( \" fn \" ): # block ends at first dedent indent = len ( m . group ( \" indent \" )) for nxt in lines [ i + 1 :]: if nxt . strip () and len ( nxt ) - len ( nxt . lstrip ()) <= indent : break body . append ( nxt ) norm = \" \\n \" . join ( b . strip () for b in body if b . strip ()) return hashlib . sha256 ( norm . encode ()). hexdigest ()[: 16 ] return None def parse_claims ( doc : Path ) -> list [ dict ]: text = doc . read_text ( encoding = \" utf-8 \" ) claims , cursor = [], 0 for m in ANCHOR_RE . finditer ( text ): if claims : claims [ - 1 ][ \" text \" ] = text [ claims [ - 1 ][ \" start \" ]: m . start ()]. strip () claims . append ({ \" anchor \" : m . group ( \" ref \" ), \" start \" : m . end ()}) if claims : claims [ - 1 ][ \" text \" ] = text [ claims [ - 1 ][ \" start \" ]:]. strip () return claims def resolve ( ref : str , repo : Path ): rel , _ , symbol = ref . partition ( \" # \" ) src = repo / rel if not rel or not symbol or not src . exists (): return None return symbol_fingerprint ( src , symbol ) def main () -> None : ap = argparse . ArgumentParser () ap . add_argument ( \" mode \" , choices = [ \" plan \" , \" accept \" ]) ap . add_argument ( \" --docs \" , required = True , type = Path ) ap . add_argument ( \" --manifest \" , required = True , type = Path ) ap . add_argument ( \" --owner \" , default = \" unassigned \" ) args = ap . parse_args () manifest = json . loads ( args . manifest . read_text ()) if args . manifest . exists () else {} repo = Path . cwd () plan = { \" fresh \" : [], \" stale \" : [], \" orphan \" : [], \" new \" : []} for doc in sorted ( args . docs . rglob ( \" *.md \" )): for claim in parse_claims ( doc ): key = f \" { doc . as_posix () } | { claim [ ' anchor ' ] } \" fp = resolve ( claim [ \" anchor \" ], repo ) if fp is None : plan [ \" orphan \" ]. append ({ \" key \" : key , \" anchor \" : claim [ \" anchor \" ]}) continue entry = manifest . get ( key ) if entry is None : plan [ \" new \" ]. append ({ \" key \" : key , \" fingerprint \" : fp }) elif entry [ \" fingerprint \" ] != fp : plan [ \" stale \" ]. append ({ \" key \" : key , \" was \" : entry [ \" fingerprint \" ], \" now \" : fp , \" class \" : entry . get ( \" class \" )}) else : plan [ \" fresh \" ]. append ({ \" key \" : key }) if args . mode == \" accept \" : manifest [ key ] = { \" fingerprint \" : fp , \" owner \" : args . owner , \" class \" : entry . get ( \" class \" ) if entry else \" behavior \" , \" approved_at \" : datetime . now ( timezone . utc ) . strftime ( \" %Y-%m-%dT%H:%M:%SZ \" )} if args . mode == \" accept \" : args . manifest . write_text ( json . dumps ( manifest , indent = 2 , sort_keys = True ) + \" \\n \" ) print ( f \" accepted { len ( manifest ) } claims into { args . manifest } \" ) else : plan [ \" counts \" ] = { k : len ( v ) for k , v in plan . items ()} print ( json . dumps ( plan , indent = 2 )) if __name__ == \" __main__ \" : main () This is a reference implementation, not a blessed one; run it on a scratch branch before you trust its plan output. The two commands that matter are the plan run and the human-only accept run. python tools/anchordoc.py plan --docs docs/ --manifest docs.anchors.json > regenerations.json python tools/anchordoc.py accept --docs docs/ --manifest docs.anchors.json --owner avery A plan output has a predictable shape, and the counts line is the one you read first. If stale is consistently a small fraction of fresh , your anchors are doing their job and your regeneration budget is small. { \"fresh\" : [{ \"key\" : \"docs/retries.md|src/limiter/backoff.py#compute_backoff\" }], \"stale\" : [{ \"key\" : \"docs/retries.md|src/limiter/backoff.py#MAX_ATTEMPTS\" , \"was\" : \"3b91c0d7a2e4f1aa\" , \"now\" : \"9f2c1ab34d5e6f70\" , \"class\" : \"behavior\" }], \"orphan\" : [{ \"key\" : \"docs/limits.md|src/limiter/budget.py#spend\" , \"anchor\" : \"src/limiter/budget.py#spend\" }], \"new\" : [{ \"key\" : \"docs/limits.md|src/limiter/budget.py#reset\" , \"fingerprint\" : \"77aa1c90d2be4410\" }], \"counts\" : { \"fresh\" : 41 , \"stale\" : 2 , \"orphan\" : 1 , \"new\" : 0 } } Step 3: Read the four states as four different jobs Drift is not one condition, and collapsing the states is how teams end up regenerating things that were never broken. Treat each state as a distinct task with a distinct owner. State Meaning Next action Who acts fresh Fingerprint matches the approved manifest Do nothing; do not send it to a model Nobody stale Source symbol changed since approval Draft a replacement, then route by claim class Model drafts, human signs orphan Anchor no longer resolves Fix the manifest or the claim by hand Human new Anchored claim with no approved baseline Review the text once, then accept it Human The most important row is fresh , because the correct action there is inaction. Any pipeline that touches fresh claims has already given up the main benefit of this design. Orphans deserve a second look as well: a rename looks exactly like a deletion, so a two-line manifest edit is usually the whole fix. Step 4: Draft only the stale claims Now the model gets a narrow job with real evidence attached: one claim, one symbol body, and an instruction to prefer silence over invention. The drafting step writes to a separate directory and never overwrites the approved document. This is where a free model tier becomes genuinely useful, because the calls are small, scoped, and easy to discard. I use MonkeyCode's free model access for exactly this step; the drafting call stays a thin wrapper so the endpoint can be swapped without touching the plan logic. Disclosure: This article was prepared as part of MonkeyCode's product outreach. jq -r '.stale[] | [.key, .class] | @tsv' regenerations.json \\ | while IFS = $' \\t ' read -r key class ; do python tools/draft_claim.py --key \" $key \" --class \" $class \" \\ --out \"docs/drafts/ $( echo \" $key \" | cut -d '|' -f1 | xargs basename ) \" done The prompt skeleton matters more than the transport, and the escape hatch on the last line is deliberate. A model that is allowed to answer UNCHANGED stops inventing filler after a refactor that did not change behavior. You may rewrite only the claim text below, using the source as ground truth. Do not introduce numbers, dates, version strings, guarantees, or new capabilities. Return exactly one paragraph of prose, or the token UNCHANGED. CLAIM: {claim_text} SOURCE: {symbol_body} Step 5: Route drafts by claim class, not by confidence A model's self-reported confidence is not a routing signal, but the class of claim is. The table below is the part of this workflow I would defend hardest, because it encodes who can be blamed when a sentence is wrong. Claim class Example Model may draft? Human must own Behavior narrative \"Retries back off exponentially until the cap\" Yes, when stale Doc owner confirms the code path Numeric limits and timeouts \"The cap is 30 seconds\" Yes, but the number must be grepped from source Reviewer verifies the value in the diff Versions and deprecation dates \"Removed in 3.0\" No Release owner Security, privacy, licensing \"Tokens are never logged\" No Named role, not the doc owner Setup and migration commands make migrate-dry-run Yes Someone runs every command before merge API signatures Function parameters and types No, generate from introspection Tooling, then a spot check Intent and roadmap \"We plan to consolidate this\" No anchor can support it Product owner, outside this pipeline The numeric row is the subtle one: the model may write the sentence, but the number has to come from the source, not from the model's summary of it. The intent row explains why some paragraphs must be marked as unanchored on purpose, rather than given a plausible anchor that no code can justify. Step 6: Schedule the planning run, not the drafting run Running the planner on a schedule is cheap and safe, because it only reads code and writes a JSON plan. The drafting loop should stay manual until your approval rate stabilizes, since a scheduled drafting loop mostly produces orphan drafts nobody reads. A free server option is a reasonable home for the planning job, since the work is a short weekly read over a checkout. Treat that availability as convenience rather than a dependency, and keep the job off your release critical path entirely. # weekly, 07:00 UTC - plan only, no writes to docs/ 0 7 * * 1 cd /srv/repo && git pull --ff-only && \\ python tools/anchordoc.py plan --docs docs/ --manifest docs.anchors.json \\ > reports/regen- $( date +%F ) .json What to measure every week Three numbers tell you whether the workflow is working, and all three come straight out of the plan output. Stale ratio is stale / (stale + fresh) ; orphan count is the number of anchors that no longer resolve; median staleness age is how long stale claims waited for an owner. Add one process number on top: regeneration precision, the share of model drafts a reviewer accepted without substantive edits. If precision drops while the stale ratio holds steady, your drafting step is the problem, not your anchors. If the orphan count grows every week, your anchors are too fine-grained for the refactor rate of the code they track. Neither signal requires a new tool; both require a decision about claim granularity. Limitations and who should skip this The fingerprint detects change, not meaning, so a comment-only commit or a pure rename-preparation refactor can flip a claim to stale with no semantic drift. Expect false positives and budget a few minutes per week to dismiss them. The symbol extraction here is Python-shaped and will miss decorators with multi-line bodies, dynamically created methods, and most non-Python languages without a rewrite. A fresh fingerprint is not a correctness guarantee, and this is the limitation that matters most. A sentence that was wrong when it was accepted stays wrong forever if the code behind it never changes, which is why the new state needs a real human read rather than a rubber stamp. Skip this workflow if your claims live outside the repository, such as pricing pages, SLAs, or anything legal reviews. Skip it if you have no git-tracked version of record, since the manifest is meaningless without one. Skip it as well if nobody can spare a reviewer for the human queue, because this design trades model time for human attention rather than the reverse. If your docs already live beside your code, the manifest is a one-time afternoon of annotation and a weekly read afterwards. Start with the behavior class only, measure regeneration precision for two weeks, and widen the scope only when reviewers stop rewriting the drafts.",
+            "url": "https://dev.to/github_7727/regenerate-only-what-moved-an-anchor-manifest-for-model-drafted-docs-5h2p",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "git",
+                "programmation",
+                "python",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-11-08T21:17:01+00:00",
+            "collected_at": "2026-11-08T21:31:41.246188+00:00"
+        },
+        {
+            "id": "e18ff80e9c83b5ede90c9e62e85a4e0223456feecfbb25620076fa00c776ffde",
+            "title": "Designing Evolvable Kafka Event Architectures: Schema Evolution Without Breaking Consumers",
+            "description": "Project Context: This is Issue #13 of my ongoing implementation series for a Kafka-based distributed telemetry ingestion platform. The complete implementation and future iterations can be tracked here: Repository. This issue focuses on schema evolution, version-aware event processing, and designing stable event contracts for changing telemetry requirements. While building this Kafka-based distributed telemetry ingestion platform , I reached a point where the problem was no longer about moving data from one place to another. The pipeline already had the fundamental flow: Sensor Producers → Kafka Topics → Consumers → Processing Layer → Persistence Layer → Database The challenge was: How do we evolve telemetry events when the data model itself changes over time? Imagine a sensor device today sends: Temperature Humidity Timestamp Tomorrow, a newer generation of the device sends: Temperature Humidity Timestamp Battery Level Current file structure: Figure 1: Current telemetry package structure showing the organization of domain models, versioned event contracts, processing services, Kafka consumers, and persistence components. The easiest approach is to keep modifying one event class and keep adding fields. But that creates a growing contract: telemetry/domain/TelemetryEvent.java: Initial telemetry event model before introducing version-specific representations. The model started accumulating fields that belonged only to certain device versions. Over time, the original event becomes tightly coupled to every future requirement. Older versions start carrying fields they never understood, and every new change risks affecting existing consumers. The question became: How do we allow event versions to evolve independently while keeping the processing pipeline stable? Figure 2: The initial single-event approach where new requirements continuously expand the telemetry model, increasing coupling between event versions and consumers. The first design decision was to separate telemetry versions. Instead of one expanding model, I introduced: TelemetryEventV1 -> Temperature + Humidity telemetry/domain/event/TelemetryEventV1.java: TelemetryEventV1 implementation representing the first telemetry schema version with only the common sensor fields defined by the VersionedTelemetryEvent contract. TelemetryEventV2 -> Temperature + Humidity + Battery Level telemetry/domain/event/TelemetryEventV2.java: TelemetryEventV2 implementation extending the telemetry schema with battery support through BatteryAwareTelemetryEvent while maintaining the common VersionedTelemetryEvent contract. Now the versions could evolve independently. But this introduced another question: Who decides which version of the event should be created? The answer was a dedicated version mapping layer. The flow became: Figure 3: Version-specific telemetry models allowing each event version to evolve independently while keeping version selection centralized through TelemetryEventVersionMapper. The mapper correctly identified the version and created the corresponding event object. telemetry/service/TelemetryEventVersionMapper.java: TelemetryEventVersionMapper centralizing version selection and transformation logic to convert incoming telemetry events into their corresponding version-specific implementations. Then I encountered a Java type system problem. Initially, the mapper returned: Object This was because both versions were objects. The mapping worked. But the consumer received only: Object event; At that point, Java only knew: \"This is an Object.\" It did not know whether it was: TelemetryEventV1 TelemetryEventV2 The version information was lost at the contract level and the consumer could not safely access version-specific behavior. This led to introducing a common contract: VersionedTelemetryEvent Now both event versions implemented the same interface. The flow evolved into: Figure 4: Common event contract introduced through VersionedTelemetryEvent, allowing multiple telemetry versions to share a stable abstraction while preserving their version-specific fields. The consumer no longer cared about the exact implementation. It only depended on the contract. This was the first application of the * Dependency Inversion Principle: * High-level processing logic depended on an abstraction rather than concrete event classes. telemetry/domain/event/VersionedTelemetryEvent.java: VersionedTelemetryEvent defining the stable contract shared across all telemetry event versions while keeping version-specific capabilities outside the core interface. But another design question appeared. If the processor receives: VersionedTelemetryEvent event; what happens when V2 has: getBatteryLevel() but V1 does not? Should battery become part of the common interface? Something like: interface VersionedTelemetryEvent { getTemperature(); getHumidity(); getBatteryLevel(); } That would solve V2, but it would force V1 to support functionality it does not have. The contract would become polluted. The solution was capability-based design. Instead of making every telemetry event support every possible feature: VersionedTelemetryEvent -> BatteryAwareTelemetryEvent -> LocationAwareTelemetryEvent -> FirmwareAwareTelemetryEvent Only events that support a capability implement it. So: TelemetryEventV1 -> VersionedTelemetryEvent TelemetryEventV2 -> VersionedTelemetryEvent + BatteryAwareTelemetryEvent telemetry/domain/event/capability/BatteryAwareTelemetryEvent.java: BatteryAwareTelemetryEvent capability interface isolating battery-specific behavior so only telemetry versions supporting battery data implement this additional contract. telemetry/domain/event/capability/LocationAwareTelemetryEvent.java: LocationAwareTelemetryEvent capability interface designed to support future location-enabled telemetry versions without modifying the core event contract. Now the processor can handle optional capabilities safely: telemetry/service/TelemetryEventProcessor.java: TelemetryEventProcessor consuming the common VersionedTelemetryEvent contract, transforming events into persistence records, and handling optional capabilities through capability-based interfaces. This followed the** Interface Segregation Principle:** Classes should not be forced to depend on methods they do not use. The next responsibility boundary was processing. The event object should not directly become a database entity. So the final flow became: Figure 5: Final telemetry processing flow separating event version handling, business transformation, and persistence responsibilities across independent layers. The processor became responsible for transformation. The persistence layer became responsible only for persistence. This followed the Single Responsibility Principle: - Mapper handles version selection. - Processor handles transformation. - Persistence handles storage. Each component has one clear reason to change. Final Consumer Service - TelemetryConsumerService.java: TelemetryConsumerService orchestrating the version-aware Kafka consumption flow by mapping incoming events, processing versioned telemetry contracts, and delegating persistence responsibilities. The final architecture allowed: - New telemetry versions without modifying existing ones. - Optional capabilities without bloating the base interface. - Cleaner separation between ingestion, processing, and storage. The important realization was: Schema evolution is not solved by adding a version number. The real challenge is designing the boundaries correctly: - What belongs to every event? - What belongs to a specific version? - What should become a capability? - Which layer should know about version details? One more architectural gap became clear during this process. The consumer side is now version-aware: Kafka Event -> Version Mapper -> Versioned Processing But the producer side is still using the generic event contract. The complete evolution will eventually become: _Producer -> Versioned Event DTO -> Kafka -> Versioned Consumer -> Processing -> Persistence_ That introduces the next design area: Polymorphic Kafka serialization Producer-side versioned DTOs Event envelope design Schema compatibility strategies The most valuable part of this implementation was not creating multiple event classes. It was learning that good architecture often comes from repeatedly asking: \"Does this responsibility really belong here?\" Every uncomfortable question exposed a better boundary. I would love to hear your thoughts and perspectives on designing evolvable event-driven systems. How do you approach schema evolution in Kafka-based architectures? What patterns or trade-offs have worked well in your production systems? Open to discussions, feedback, and different architectural viewpoints. Thank you.",
+            "url": "https://dev.to/the_puja_nikam/designing-evolvable-kafka-event-architectures-schema-evolution-without-breaking-consumers-4a20",
+            "source": "DEV Community",
+            "category": "hardware",
+            "tags": [
+                "developpement",
+                "java",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-11-08T21:15:28+00:00",
+            "collected_at": "2026-11-08T21:31:41.247132+00:00"
+        },
+        {
+            "id": "859968afcc92ae956ef4d9a0c04c8f51bf7e99115a8c193387c43ce6dc526beb",
+            "title": "Airbnb Pays €114.000 in Berlin. My Scraper Read That as 114",
+            "description": "I run a visa agency in Bali. The other half of my week goes into Apify Actors, and one of them reads company job boards on Greenhouse: you hand it a list of company slugs, it hands back one row per open job. No login, no browser — Greenhouse publishes every board as JSON at boards-api.greenhouse.io/v1/boards/<slug>/jobs?content=true , and one request returns the whole board with every description in it. The field people actually buy it for is salaryMin / salaryMax . So I pulled nine boards — 3,421 open jobs, measured 8 November 2026 — and checked what that field really is. The short version: the coverage is a legal artefact, one large company publishes nothing at all, and my own parser was wrong on every European row it had ever produced. Greenhouse has no salary field This is the first thing to internalise. The Greenhouse board API gives you title , location.name , departments , absolute_url , first_published , metadata and content . There is no pay object. When a company complies with a pay-transparency law, Greenhouse's editor drops a block into the description HTML: <div class= \"title\" > Annual Salary: </div> <div class= \"pay-range\" > <span> $222,800 </span><span class= \"divider\" > — </span><span> $290,000 USD </span> </div> That block — and only that block — is what my Actor reads. Never a loose number in the body text. I will come back to why that restriction earns its keep. Coverage is a map of US pay-transparency law Of 3,421 jobs, 1,858 carry a pay-range block . Split by whether the location names a US state, a US city or \"United States\": Board Jobs With a range US Non-US databricks 922 477 313/331 164/591 stripe 766 0 0/257 0/509 anthropic 675 587 531/534 56/141 coinbase 283 260 179/184 81/99 gitlab 248 109 98/115 11/133 airbnb 205 170 101/101 69/104 robinhood 150 135 122/125 13/25 figma 145 94 94/94 0/51 discord 27 26 21/22 5/5 total 3,421 1,858 1,459/1,763 (83%) 399/1,658 (24%) Figma is the cleanest illustration in the set: 94 of 94 US postings publish a range, 0 of 51 everywhere else. Nobody at Figma decided to be transparent — Colorado, California, New York and Washington decided for them. If you are building a salary dataset out of Greenhouse, you are building a dataset of US postings with a non-US tail that skews toward whoever voluntarily opted in. A planning number worth stealing: budget on roughly half your rows having a salary, and about four in five if you filter to the US. Stripe publishes zero ranges, and the 19 numbers it does publish are not jobs Stripe is 766 open jobs and not one pay-range block. Searching the raw description text for $NNN,NNN finds 19 postings with a number in them. Eighteen of those nineteen look like this: Salary: $121,600.00 - $182,400.00 /yr. This salary range represents the base salary range for the role... 40 hrs/week 100 % Telecommuting permitted Multiple Positions \"40 hrs/week\", \"% Telecommuting permitted\", \"Multiple Positions\" — those are US immigration notices (PERM / H-1B postings), not pay transparency. Eight are in Seattle, four in South San Francisco. If my parser scraped loose currency amounts, Stripe would contribute exactly 19 salaries to your dataset and all 18 of them would be visa paperwork. That is the whole argument for reading one CSS class and nothing else: a null is a fact, a wrong number is a bug you will never notice. The bug: €114.000 is not 114 Here is the part I did not enjoy finding. My number parser was one line: const n = Number ( String ( t ). replace ( / [^ 0-9. ] /g , '' )); Strip everything that is not a digit or a dot. That is correct for $222,800 and wrong for Airbnb's European rows, which use the dot as a thousands separator: Germany Annual Pay Range €114.000 – €142.000 EUR → min 114, max 142 Brazil Monthly Pay Range R$30.666,67 – R$38.333,33 → min 30.66667 Across my 1,857 parsed rows that is 56 EUR rows and 8 BRL rows — 64 rows, which is 100% of every EUR and BRL row in the sample. USD, GBP and CAD were fine the whole time, which is exactly why it survived: my own health checks run US-heavy boards. The fix decides the separator per value instead of assuming one. If a string has both . and , , the last one is the decimal point; if it has only commas, 1,234,567 is thousands and 1,5 is decimal; if it has only dots, 114.000 matching \\d{1,3}(\\.\\d{3})+ is thousands. function money ( t ) { let s = String ( t ). replace ( / [^ 0-9., ] /g , '' ); if ( ! s ) return null ; const dot = s . lastIndexOf ( ' . ' ); const com = s . lastIndexOf ( ' , ' ); if ( dot >= 0 && com >= 0 ) s = dot > com ? s . replace ( /,/g , '' ) : s . replace ( / \\. /g , '' ). replace ( ' , ' , ' . ' ); else if ( com >= 0 ) s = /^ \\d{1,3}( , \\d{3}) +$/ . test ( s ) ? s . replace ( /,/g , '' ) : s . replace ( ' , ' , ' . ' ); else if ( dot >= 0 && /^ \\d{1,3}(\\.\\d{3}) +$/ . test ( s )) s = s . replace ( / \\. /g , '' ); const n = Number ( s ); return Number . isFinite ( n ) && n > 0 ? n : null ; } Replayed over the same 1,857 rows: 64 numbers changed, 0 USD/GBP/CAD rows changed. Then the same input on the old build and the new one — one role Airbnb posts in six cities, which is a free before/after because the London row is in pounds: old build 0.1.26 new build 0.1.28 Berlin, Germany 104 130 EUR 104000 130000 EUR Dublin, Ireland 102 128 EUR 102000 128000 EUR Barcelona, Spain 85 105 EUR 85000 105000 EUR Milan, Italy 85 105 EUR 85000 105000 EUR Paris, France 96 120 EUR 96000 120000 EUR London, UK 94000 118000 GBP 94000 118000 GBP Shipped as build 0.1.28 of Greenhouse Jobs Scraper . Currency and period were lying too, more quietly Two smaller things fell out of the same measurement. 30 rows had salaryCurrency: null because the symbol was not in my list: ₱798,300 PHP , 503,500 د.إ AED . Matched by symbol now, not only by ISO code. 714 of 1,857 rows had salaryPeriod: null — 38%. Not because companies were vague, but because my regex wanted the word \"annual\", \"year\", \"hour\" or \"salary\" in the label, and the common labels have none: Zone 2 Pay Range (Databricks, 358 rows), Local Pay Range (212), Pay Range (Airbnb US, 103). All annual. Rather than hard-code labels that change next quarter, the period now falls back to year when the number is four digits or more: nulls go from 714 to 30, and those 30 deserve to be null — Internship $46 – $46 USD , Local Pay Range $170.40 – $255.60 USD , hourly rates with nothing in the posting saying so. Coinbase's board contradicts itself, in the same city, in the same week While checking PHP rows I hit this pair. Same job title, same office, both labelled by Coinbase as an annual range: Customer Support Specialist II Manila ₱798,300 – ₱798,300 PHP \"Annual base salary range\" Customer Support Specialist ll Manila ₱364.61 – ₱383.80 PHP \"Annual base salary range\" 798,300 ÷ 2,080 working hours = 383.80 . The second posting is an hourly rate wearing an annual label, typed by a human into the Greenhouse editor. No parser can save you from that, and mine does not try: it reports what the block says. If you are averaging salaries by country, throw out anything implausible for its currency before you aggregate. The same title also shows why row count is not job count . \"Customer Support Specialist ll\" appears 29 times on Coinbase's board, all in Manila, all created between 29 October and 3 November, with slightly different description text and 29 different job IDs — one requisition per seat. Across the nine boards, Databricks has 922 jobs under 683 distinct titles; 347 of its rows sit in a duplicate-title group. You are billed per row, so if you are counting \"open roles at this company\", deduplicate on title plus location before you report a number. One more trap: the location is free text holding several places 654 distinct location strings across 3,421 jobs, and the top ones are not cities: San Francisco, CA | New York City, NY (169 jobs), Remote - USA (164), United States (124), San Francisco, CA • New York, NY • United States (67). Three separators — | , • , ; — and 233 strings pack several places into one. Greenhouse has no remote field either: \"remote\" is a word in that string or it is nothing, so a remote job advertised as \"Austin, TX\" escapes any remote filter. My locations filter is a substring match for exactly this reason; an equality join here quietly drops a third of your matches. Calling it An empty input returns a demo (newest 20 jobs each from gitlab, discord, airbnb) — the cheapest way to see the row shape. A real call: curl -X POST \"https://api.apify.com/v2/acts/lergassy~greenhouse-jobs-scraper/run-sync-get-dataset-items?token= $APIFY_TOKEN \" \\ -H 'Content-Type: application/json' \\ -d '{\"companies\":[\"anthropic\",\"https://job-boards.greenhouse.io/gitlab\",\"airbnb\"], \"titleKeywords\":[\"engineer\"],\"workplace\":\"remote\",\"postedWithin\":\"month\"}' A board of 800 roles is one HTTP request, so runs take seconds. Billing is $1.60 per 1,000 job rows; rows your filters removed are not charged, and error rows (bad slug, board that would not answer) are free. When this is the wrong tool You want to search the whole job market by keyword. There is no directory of Greenhouse boards; you supply the companies. Guessing slugs from company names is a bad time — on Lever I tried 199 guesses and 180 came back 404, and Greenhouse is no kinder. Open the careers page, click a job, read the domain: greenhouse.io , lever.co , ashbyhq.com each tell you the tool and the slug. You need a reliable \"posted today\". first_published is the requisition's creation date, and on some boards it is archaeology. Keep your own history of job IDs and diff it — board APIs return a stable ID set. You need salary for a non-US market. 24% coverage is not a dataset, it is an anecdote. The measurement script in this post is nine curl calls against a public API and about forty lines of JavaScript. It found a thousand-fold error in production code I wrote in October and had been shipping ever since. If you maintain a scraper with a number in its output, go and replay your parser over a few thousand real rows today — not the ten you wrote tests against.",
+            "url": "https://dev.to/matveyg/airbnb-pays-eu114000-in-berlin-my-scraper-read-that-as-114-1hoc",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "anthropic",
+                "developpement",
+                "git",
+                "java",
+                "javascript",
+                "php",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-11-08T21:15:00+00:00",
+            "collected_at": "2026-11-08T21:31:41.248265+00:00"
+        },
+        {
+            "id": "6ffe60d10ef440db22be01c25a2fc0cec11f36cc9fbc3567eb7c17b71590da00",
+            "title": "Cron Triggers and Worker Queues: Reliable Long-Running Report Generation",
+            "description": "Short answer: use the cron job trigger only to publish a small, idempotent run message, then let worker-based queue consumers generate and deliver the report. It is the right approach for long-running property reports because a cron execution is capped at 900 seconds. A daily property report has two different jobs: decide when work starts, then keep working after the scheduler returns. Put the first job in cron and the second in a durable queue. The handoff is the design decision. Shape Good fit Main boundary Cron calls a worker directly Small, bounded reports The trigger owns the work and can time out Cron publishes one job; workers consume it Long reports, retries, tenant fan-out You must make consumption idempotent For a daily report email, choose the second shape unless the whole report is predictably short. The schedule should create a job containing a report run identifier; workers should claim that job, generate the report, and send the email exactly once from the application's point of view. The queue's delivery may still happen more than once. Infrai fits this workflow when the team wants the scheduler, queue, and error surface behind one backend key and one bill. Its public discovery surface is self-describing, and each documented capability has runnable examples in 10 languages. That matters when a small trigger service should use plain HTTP without another SDK or configuration layer. There is a cost. A single platform means one vendor to trust and one outage surface. Keep it boring. What should the scheduler actually guarantee? The scheduler should guarantee an attempted handoff, not report completion. A cron task can call a public HTTPS endpoint that publishes a compact message. It should not carry a report, a recipient list that might exceed the message limit, or a promise that the worker finished. Keep the message under 256 KB, and set retention no longer than 30 days. Delayed delivery is limited to 7 days, so a month-end backfill needs an application-level plan. The important invariant is a stable run key, such as property-report:2026-10-23 . Store it with the report status and use it when the worker retries. Standard queues are at-least-once. FIFO deduplication only covers a five-minute window, which is not a substitute for an idempotency record. A duplicate worker invocation must observe the completed run and stop before sending another email. I initially treated the queue as the reliability feature. The sharper boundary is ownership: cron owns time, the queue owns delivery attempts, and the worker owns the state transition. Once those boundaries are explicit, a retry is an ordinary state check instead of a guessing game. Should I combine a cron job trigger with a worker-based queue? Architecture A is a direct cron-to-worker request. It has less moving parts and is reasonable for a report that always finishes well inside the 900-second limit. Its failure mode is blunt: a slow export, a transient dependency error, or a large tenant can consume the trigger window. Retrying the whole HTTP call may also repeat side effects. Architecture B is cron-to-queue-to-worker. It adds a publish step, but it turns the long operation into a durable unit that workers can retry and scale independently. It is the better fit for daily reports across many properties, provided the worker records completion before acknowledging the message and the email operation itself has a deduplication key. No DAG or workflow join is implied here; if the report needs fan-out and aggregation, that coordination belongs in application code or a workflow specialist. AWS EventBridge Scheduler with SQS is a strong conventional choice when the team already operates on AWS and wants deep queue controls. Google Cloud Scheduler with Pub/Sub is similarly natural inside GCP. Cloud Tasks is a better fit when each retry should target a specific HTTP handler with task-level scheduling. These are not interchangeable labels: pick the platform where your operators already understand delivery, dead letters, credentials, and alerting. Infrai is a deliberate option when the operational goal is one backend key and one bill across the scheduler, queue, and error surface. Its 295 routes across 20 modules use one REST surface, so the trigger and failure signal do not need separate SDK conventions. More relevant here, the queue run and the captured error can be queried with the same Authorization: Bearer key and base URL. Can the handoff and failure signal share one boundary? The following is the small seam I care about: publish a run, then capture a worker failure using the same environment key. The application still owns the report state and idempotency table. The example uses only the two relevant write routes; the worker's queue consumption is an application loop around the documented consume capability, not a second product tutorial. const baseUrl = \" https://api.infrai.cc/v1 \" ; const apiKey = process . env . INFRAI_API_KEY ; if ( ! apiKey ) throw new Error ( \" INFRAI_API_KEY is required \" ); async function post ( url : string , body : Record < string , unknown > ) { const response = await fetch ( url , { method : \" POST \" , headers : { Authorization : `Bearer ${ apiKey } ` , \" Content-Type \" : \" application/json \" , }, body : JSON . stringify ( body ), }); if ( ! response . ok ) { const detail = await response . text (); throw new Error ( ` ${ url } failed with ${ response . status } : ${ detail } ` ); } return response . json (); } const runId = \" property-report:2026-10-23 \" ; try { await post ( \" https://api.infrai.cc/v1/queue/publish \" , { queue : \" daily-property-reports \" , message : { run_id : runId }, idempotency_key : runId , }); } catch ( error ) { await post ( \" https://api.infrai.cc/v1/errors/capture \" , { message : error instanceof Error ? error . message : String ( error ), context : { run_id : runId , component : \" report-trigger \" }, }); throw error ; } The same-key arrangement is useful only if it shortens diagnosis. Runs, dead letters, and captured errors should be correlated by run_id ; otherwise one credential set merely hides the same search problem. An SQS DLQ plus Sentry cron setup would require separate signups, separate credentials, and glue to propagate that identifier between the queue consumer and error tracker. The trade is real: consolidating those boundaries also concentrates trust and failure. When is the runner-up better? Use a direct cloud queue stack when your organization needs its provider's native IAM, regional controls, mature replay procedures, or existing on-call dashboards. Infrai's limitation is clear: it is not suitable when you need those provider-specific controls or a workflow engine; AWS, GCP, Temporal, or Airflow is the better choice then. Use Temporal or Airflow when the report is a workflow with durable timers, branching, fan-out, and a join; this cron-plus-queue shape does not provide those primitives. Use a direct cron call when the work is short and idempotent enough that queue operations would add more ceremony than recovery value. For the common daily report, my decision rule is plain: trigger on a schedule, publish a small run message, make the worker idempotent, and observe failures by the same run key. Teams that want one key, a plain REST surface, and a compact operational boundary should try Infrai for the trigger-to-queue part; teams needing provider-native controls or workflow joins should choose the specialist instead. If that boundary fits your system, the scheduling and queue discovery details are at https://docs.infrai.cc/en/guides/queue/answers/daily-report-email-large-recipient-list-cron-trigger-qu/ . Sources https://api.infrai.cc/v1/discovery/queue.create https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-create-rule-schedule.html https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-dead-letter-queues.html https://cloud.google.com/scheduler/docs https://cloud.google.com/pubsub/docs/overview https://docs.infrai.cc/en/guides/queue/answers/daily-report-email-large-recipient-list-cron-trigger-qu/",
+            "url": "https://dev.to/rhysfalconer159/cron-triggers-and-worker-queues-reliable-long-running-report-generation-39lb",
+            "source": "DEV Community",
+            "category": "cloud",
+            "tags": [
+                "aws",
+                "developpement",
+                "google_cloud",
+                "programmation",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-11-08T21:13:37+00:00",
+            "collected_at": "2026-11-08T21:31:41.248971+00:00"
+        },
+        {
+            "id": "26ab6c66d72aaf60419b1850176d074db53930999cfe5310502382d71499b749",
+            "title": "Cheap Storage Cleanup for SaaS User Documents: Retention, Access Control, Archive Backups",
+            "description": "Short answer: for a property-management SaaS, choose storage by the deletion contract and access-control boundary first, then compare lifecycle behavior and total operating cost; a lifecycle rule can clean up expired files, but it is not a substitute for legal hold, recovery, or an authorization design. That distinction is the decision rule. Signed leases and inspection reports are user documents, but they are not all the same operational object. A file waiting for an application review can be private, short-lived, and easy to recreate. A signed lease may need a stated deletion deadline, a documented access path, and a recovery plan that survives an accidental overwrite. The system should make those differences visible. Otherwise a bucket policy quietly becomes the retention policy, and the team discovers the mismatch during an audit or an incident. The incident lesson is to separate cleanup from custody I use a bounded scenario in design reviews: a property manager uploads a signed lease, the tenant can view it, an internal service extracts metadata, and the platform must delete the file after the contractually defined deadline. A second copy may be needed for disaster recovery, but it must not become an excuse to retain the customer document forever. This is a model for testing the design, not a claim about a particular production event. In the review, I trace the object from upload to quarantine, from quarantine to an authorized download, and from the deadline to the deletion audit event. Then I deliberately replay the awkward cases: the browser retries after a timeout, the metadata write arrives after the object write, an employee loses access while a download is in progress, and a legal hold is placed just before the cleanup worker runs. If the design cannot say which state wins in each case, the lifecycle rule is doing work that belongs in an application state machine. The invariant is simple: the component that decides who may read a document should not be the only component that decides when the document disappears. Application metadata can hold the retention deadline and the legal state; object storage can enforce the coarse cleanup rule; a scheduled reconciliation job can find objects whose metadata and storage state disagree. That separation gives the on-call engineer something concrete to inspect. The record should include an object key, tenant identifier, classification, deletion deadline, and current authorization state. The object key should be treated as an opaque identifier rather than a place to expose a tenant name or an address. OWASP recommends storing uploaded files outside the webroot, applying authorization checks, and validating the upload rather than trusting its filename or content type. Those controls matter before lifecycle cleanup enters the picture. The failure mode is usually mundane. A user changes the filename, a retry creates a second key, or a deleted database row leaves an object behind. A lifecycle rule cannot infer that two keys represent one lease. It needs a deliberately chosen prefix, tag, or other provider-supported selector, and the application still needs a reconciliation path for exceptions. It is easy to miss one of these paths because the happy case has only one object and one deadline; the audit case has an object, a record, an authorization decision, a hold state, and an operator who needs to explain why deletion did or did not happen. Short version: deletion is a workflow. How should SaaS teams compare lifecycle cleanup for archived documents? Start with the questions that become acceptance tests, not with a price table. For S3 lifecycle, R2 lifecycle, and Wasabi lifecycle, verify the current documentation and contract for the exact behaviors your archive requires. The names describe comparison candidates; they do not establish that the candidates expose identical retention, versioning, replication, restore, or access-control semantics. Don't treat a matching feature label as matching behavior: “lifecycle” can describe a cleanup mechanism while leaving the timing, selectors, recovery model, and authorization path to separate documentation. Question Why it matters for signed documents Evidence to require What selects an object for cleanup? A broad prefix can delete the wrong tenant's files; a narrow rule can leave retries behind. A tested rule using the actual key and metadata scheme When does deletion become effective? The application may promise a deadline while the storage service applies lifecycle work asynchronously. Provider behavior, timestamps, and an observed test Can an authorized reader retrieve the file without making it public? A lease is private customer data, not a static asset. A private-bucket test and an authorization trace What survives an overwrite or accidental deletion? A backup requirement is about recovery, not merely retaining bytes. Version, replication, and restore documentation plus a drill Who owns exceptions? Legal hold, dispute, failed deletion, and migration all need an owner and an SLO. Runbook, alert, escalation path, and audit record This is where “cheap” becomes a weak primary axis. Capacity planning needs object count, average and tail size, upload rate, retention distribution, read traffic, and restore traffic. The bill is only one input; engineering time, reconciliation jobs, egress during recovery, and pages caused by a missed deletion deadline also belong in the estimate. I would also model the retention distribution by document class instead of multiplying today's average bytes by a guessed number of months: signed leases, generated exports, thumbnails, quarantine objects, and recovery copies have different lifetimes and different read patterns. That model makes a policy change reviewable. If the product team changes a default deadline, the platform team can see which object classes grow, which deletion tests need to change, and which restore assumptions no longer hold. I would put each candidate through the same small test matrix. Upload a private sample, grant access to the intended tenant principal, deny access to a different tenant, schedule a disposable object for expiry, and confirm the observed deletion behavior. Then overwrite a sample, attempt a restore, and run the reconciliation check. Record the provider, region, policy revision, timestamps, and result. Your mileage may vary across account settings and regions, so a marketing comparison is not evidence for an SLO. The access path is part of the retention design The safest delivery path for a browser is usually an application authorization decision followed by a narrowly scoped, short-lived download capability. The browser should not receive a long-lived storage credential. The service should check tenant membership and document state before issuing access, and logs should record the decision without logging the document contents or secrets. Uploads need the same discipline. Generate the storage key server-side, constrain size and accepted formats, validate the file signature where appropriate, and scan or quarantine content before it becomes available to other users. OWASP's file-upload guidance is a useful baseline because an upload endpoint is an input boundary, not just a convenient pipe into a bucket. For signed leases, the database transaction and object write also need an explicit relationship. A practical sequence is to create a pending document record, upload to a private quarantine key, validate the object, promote it to its immutable application identity, and then mark the record available. A retry must be idempotent. If the upload succeeds but the transaction does not, reconciliation should either complete the record or delete the orphan according to a recorded deadline. RFC 3986 is relevant in a less glamorous place: object keys and signed URLs cross URI boundaries. Percent-encoding is not decoration. A key containing spaces, reserved characters, or non-ASCII input must be encoded according to the URI component being built, and the exact canonical form expected by the signing scheme must be preserved. Treating a raw user filename as a URL path is how an apparently valid link turns into the wrong object or a signature mismatch. What should the buy-versus-build boundary be for document archives? Buy the storage primitive when it supplies the documented durability, private access, lifecycle selectors, and regional behavior that the retention SLO needs. Build the application controls around it: tenant authorization, metadata, deletion deadlines, idempotency, reconciliation, audit events, and restore tests. That division keeps the storage service from becoming a second application database while avoiding a homegrown object store. Build additional coordination only when the requirement is explicit. A database or queue can own fine-grained deadlines, retries, and legal-state transitions; an object lifecycle rule can provide a backstop for ordinary expiry. If the requirement is immutable retention or a legally enforceable hold, select a storage capability whose current contract supports that control and have the compliance owner verify it. Do not encode a legal promise in a comment beside a delete call. The catch is operational ownership. A self-managed component may offer control over policy evaluation and migration, but it also creates patching, monitoring, restore, and incident work. A managed service may reduce that burden while introducing provider-specific policy syntax and migration constraints. Stick with the managed option when the team cannot staff restore drills and policy reconciliation; choose a more controllable design when portability or a specialized retention rule is worth the on-call load. Here is the core deletion path in Go. It deliberately asks the application database for the deadline and makes the delete decision only after the record is still eligible. The storage client is an interface so the policy can be tested without contacting a provider. package retention import ( \"context\" \"time\" ) type Document struct { Key string DeletionDueAt time . Time LegalHold bool Authorization string } type Documents interface { Find ( ctx context . Context , key string ) ( Document , error ) } type Objects interface { Delete ( ctx context . Context , key string ) error } func DeleteIfDue ( ctx context . Context , docs Documents , objects Objects , key string , now time . Time ) error { doc , err := docs . Find ( ctx , key ) if err != nil { return err } if doc . LegalHold || now . Before ( doc . DeletionDueAt ) { return nil } return objects . Delete ( ctx , doc . Key ) } The important behavior is not the interface name. It is the guard. A queue retry must be harmless before the deadline, and a legal hold must win over an automated cleanup event. In real code, the delete operation also needs an audit event, a retry policy, and a reconciliation report for objects that no longer have a matching database record. A small SLO makes the comparison honest Write the promise in observable terms: authorized tenants can retrieve an available document; unauthorized tenants cannot; eligible objects enter the deletion workflow by their deadline; held objects remain available to authorized readers; and a restore drill can recover the required backup copy. The exact target belongs to the business and compliance owners, not to the storage vendor's feature list. Measure policy evaluation lag, authorization denials, orphan count, deletion failures, restore success, and retained bytes by tenant and classification. Alert on the trend as well as the threshold. A bucket that is growing because cleanup is silently skipping a new key prefix is a capacity problem and a data-governance problem at the same time. This approach is not suitable when the workload needs public static delivery, unrestricted anonymous downloads, or retention semantics the chosen storage contract cannot prove. Pick a service and architecture that provide those controls instead of weakening the document policy to fit a convenient API. For ordinary private documents with a clear deadline, lifecycle cleanup plus application-owned authorization and reconciliation is a defensible boundary. The conclusion is deliberately modest: compare S3, R2, and Wasabi lifecycle behavior as implementations of a tested contract, not as interchangeable labels. Keep custody, access, deletion, and recovery as separate responsibilities, then choose the option whose evidence fits the SLO and whose operational burden the team can actually carry. References https://cheatsheetseries.owasp.org/cheatsheets/File_Upload_Cheat_Sheet.html https://www.rfc-editor.org/rfc/rfc3986",
+            "url": "https://dev.to/erasmuspierce7981/cheap-storage-cleanup-for-saas-user-documents-retention-access-control-archive-backups-3pdd",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "programmation",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-11-08T21:13:03+00:00",
+            "collected_at": "2026-11-08T21:31:41.250396+00:00"
+        },
+        {
+            "id": "010a6f704a0a1964c8f67476c80c9933cc40adda34f538573446c2e022061b22",
+            "title": "Virtualized Redox: from Virtio-FS to Cloud Hypervisor, and beyond",
+            "description": "Comments",
+            "url": "https://www.redox-os.org/news/virtualized-redox/",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-11-08T21:06:06+00:00",
+            "collected_at": "2026-11-08T21:31:41.090489+00:00"
+        },
+        {
+            "id": "92cef45000a1a51845189474bd2ad7a36d2c0aa9dd2cb258d5d0ebae5e99472c",
+            "title": "Bitcoin Packs 11,255 Transactions Into a Single Block, Nears Record",
+            "description": "Bitcoin’s blockchain came within striking distance of an 11-year-old transaction record on Saturday, Nov. 7, 2026, when a single block processed 11,255 transactions, the second-highest total in network history, amid a year already producing extraordinary daily transaction counts. Bitcoin’s 2015 Transaction Record Faces Its Closest Challenger in 11 Years Bitcoin’s transaction history is getting a […]",
+            "url": "https://news.bitcoin.com/featured/bitcoin-packs-11255-transactions-into-a-single-block-nears-record/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-11-08T21:05:28+00:00",
+            "collected_at": "2026-11-08T21:31:55.747339+00:00"
+        },
+        {
+            "id": "ab3c0090fa33621fad6524285eca441a03f21f6a350ddb46170ce0ef2f1cb199",
+            "title": "Nvidia will investigate CEO Jensen Huang’s relationship with possible Chinese spy",
+            "description": "In a memo to the company, Huang admitted that he had an affair.",
+            "url": "https://techcrunch.com/2026/11/08/nvidia-says-its-investigating-ceo-jensen-huangs-relationship-with-possible-chinese-spy/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "nvidia",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-11-08T21:00:11+00:00",
+            "collected_at": "2026-11-08T21:31:39.278347+00:00"
+        },
+        {
+            "id": "173bdbed7479e7643659f14b742b7b075e758cb508d18419ae4a04c503ae2c20",
+            "title": "If Snap’s Specs are still ridiculously expensive, they’re also a lot more comfortable than they used to be",
+            "description": "Snap's Specs, which have been in development for many years now, are going to market this fall. Will they be a hit with users?",
+            "url": "https://techcrunch.com/2026/11/08/if-snaps-specs-are-still-ridiculously-expensive-theyre-also-a-lot-more-comfortable-than-they-used-to-be/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-11-08T21:00:00+00:00",
+            "collected_at": "2026-11-08T21:31:39.278415+00:00"
+        },
+        {
+            "id": "abc33a0fbba42e3ee1dd6d0d68ae95f073a68ae9ab2521e4356e0222c43b623a",
+            "title": "Coordinated disturbances haunt grids worldwide. Here’s how researchers solved the mystery.",
+            "description": "Mystery solved: Coordinated power drops have been haunting power grid worldwide, but a team of researchers in Germany found the culprit.",
+            "url": "https://techcrunch.com/2026/11/08/coordinated-disturbances-haunt-grids-worldwide-heres-how-researchers-solved-the-mystery/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-11-08T20:30:00+00:00",
+            "collected_at": "2026-11-08T21:31:39.278486+00:00"
+        },
+        {
+            "id": "e68539633591cd5be6cb5f6dd6ae9f490223dbe1b2be9b757b06d9e408c002e8",
+            "title": "Nvidia Board of Directors Is Investigating Jensen Huang",
+            "description": "Comments",
+            "url": "https://nvidianews.nvidia.com/news/statement-from-nvidia-board-of-directors",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "nvidia",
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-08T20:26:43+00:00",
+            "collected_at": "2026-11-08T21:31:40.927991+00:00"
+        },
+        {
+            "id": "e14606d865d4d621bb5c7ce3ae07d6df8091e8c730c939798f760b01b88ef80e",
+            "title": "Sequoia partners reportedly blindsided when Roelof Botha joined SpaceX board",
+            "description": "A new report claims Sequoia's recent changes undo the legacy of the firm's former steward.",
+            "url": "https://techcrunch.com/2026/11/08/sequoia-partners-reportedly-blindsided-when-roelof-botha-joined-spacex-board/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-11-08T19:51:30+00:00",
+            "collected_at": "2026-11-08T21:31:39.278530+00:00"
+        },
+        {
+            "id": "79b046481bd48da63ddc54a93cb1e3b81f86263f7145535537e7bf599149c5d6",
+            "title": "Starship Flight 15 on 11/13 plans to catch both booster and ship",
+            "description": "Comments",
+            "url": "https://www.spacex.com/launches/starship-flight-15",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-08T19:49:46+00:00",
+            "collected_at": "2026-11-08T21:31:40.928453+00:00"
+        },
+        {
+            "id": "15e3009512868312452c89afb9b6af20064b0e9bb92ecd4fa3935b601ea3b177",
+            "title": "The Web Is More Than Enough, by Paul Ford",
+            "description": "Comments",
+            "url": "https://ftrain.com/aboard-the-web-is-more-than-enough",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-08T19:48:32+00:00",
+            "collected_at": "2026-11-08T21:31:40.928107+00:00"
+        },
+        {
+            "id": "dbc1114bf6fef122cb1858505a5ce43af9ce3e824106a1833d2ef9b3c1e24672",
+            "title": "Lightning Network Security Scare Forces LNbits Servers Offline",
+            "description": "LNbits, the open-source Lightning Network wallet and payments platform, issued an emergency shutdown warning Sunday, Nov. 8, 2026, after multiple reported security compromises. Operators were instructed to take their servers offline immediately while developers prepared critical patches to address the unfolding attacks. LNbits Sounds the Alarm as Lightning Network Attacks Unfold The security warning arrived […]",
+            "url": "https://news.bitcoin.com/security/lightning-network-security-scare-forces-lnbits-servers-offline/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-11-08T19:40:41+00:00",
+            "collected_at": "2026-11-08T21:31:55.747448+00:00"
+        },
+        {
+            "id": "8b18a5361e6d14a958f6230dacc6693daecb7b825dba1d303670f9618e563a8a",
+            "title": "How I Fight AI Brain Fry",
+            "description": "Comments",
+            "url": "https://sergeykuhne.com/blog/fighting-ai-brain-fry",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-08T19:37:42+00:00",
+            "collected_at": "2026-11-08T21:31:40.927715+00:00"
+        },
+        {
+            "id": "1cc62f57e2e9402903c186950fa7e90abe1b443db359e35ba96020b40293103a",
+            "title": "What the election results mean for crypto: State of Crypto",
+            "description": "",
+            "url": "https://www.coindesk.com/policy/2026/11/08/what-the-election-results-mean-for-crypto-state-of-crypto",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-11-08T19:30:00+00:00",
+            "collected_at": "2026-11-08T21:31:55.416205+00:00"
+        },
+        {
+            "id": "7cbb1e8e79a45712035a2c9524c1c0e42f5904a763eadf0f404e4a97a65bbe92",
+            "title": "Outlook.com Is Quietly Rejecting Email from Domains Without DMARC",
+            "description": "Comments",
+            "url": "https://mailroute.net/blog/outlook-rejecting-email-without-dmarc",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-08T19:20:32+00:00",
+            "collected_at": "2026-11-08T21:31:40.927849+00:00"
+        },
+        {
+            "id": "06763f62930f2cc14d4caa7923acfa72101f109c2582f536014b8332bfc4ac01",
+            "title": "Stablecoin growth has stalled. The payments boom hasn't",
+            "description": "",
+            "url": "https://www.coindesk.com/business/2026/11/08/stablecoin-growth-has-stalled-the-payments-boom-hasn-t",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-11-08T19:16:42+00:00",
+            "collected_at": "2026-11-08T21:31:55.416246+00:00"
+        },
+        {
+            "id": "c7aa9e435f02c624ff0b93e814e6cd0c2e085f682c3a20339ceaf8359610c211",
+            "title": "Dux: Free, open-source Wayland desktop shell with file manager and theming",
+            "description": "Comments",
+            "url": "https://duxlabs.dev/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-08T19:08:51+00:00",
+            "collected_at": "2026-11-08T21:31:40.927752+00:00"
+        },
+        {
+            "id": "bcc208864a4b5551ebd2888b338b36bf54d3aa58423d24d2d44cdf3e4be8330d",
+            "title": "Extension Manager 0.7 released with new (and fixed) features",
+            "description": "A new version of Extension Manager, the desktop app that makes it easier to browse, install and manage GNOME Shell extension without a web browser, has been released. Extension Manager 0.7.0 includes a number of welcome improvements, new features and restores a few nifty bits that had stopped working in earlier versions. With the new update, you can now find and open installed extension preferences from the Activities overview as the app now bundles a GNOME Search provider. Enable that (after installing this version) from Settings > Search, if it’s something you’d use. Extension detail pages show more details, including […] You're reading Extension Manager 0.7 released with new (and fixed) features , a blog post from OMG! Ubuntu . Do not reproduce elsewhere without permission.",
+            "url": "https://www.omgubuntu.co.uk/2026/11/gnome-extension-manager-0-7-released",
+            "source": "OMG! Ubuntu",
+            "category": "linux",
+            "tags": [
+                "desktop",
+                "linux",
+                "ubuntu"
+            ],
+            "published_at": "2026-11-08T18:45:20+00:00",
+            "collected_at": "2026-11-08T21:31:45.487742+00:00"
+        },
+        {
+            "id": "f400a8a2e0a8ec6a5be10de25e436bb2c1eba2687a447be3f04f3f8ead142347",
+            "title": "Silicon Valley Promises AI Will Cure Disease. Drugmaker CEOs Aren't Buying It",
+            "description": "Comments",
+            "url": "https://www.wsj.com/tech/ai/silicon-valley-promises-ai-will-cure-disease-drugmaker-ceos-arent-buying-it-5218511c",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-08T18:43:07+00:00",
+            "collected_at": "2026-11-08T21:31:40.928486+00:00"
+        },
+        {
+            "id": "166f16d6142b4606a08821ffd02aff06dd224c706e7fb30926a835beeb44cb4b",
+            "title": "Playing Zork 1 on a CP/M emulator on Linux (2021)",
+            "description": "Comments",
+            "url": "https://kevinboone.me/cpmzork.html",
+            "source": "Hacker News",
+            "category": "linux",
+            "tags": [
+                "linux",
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-08T18:33:50+00:00",
+            "collected_at": "2026-11-08T21:31:40.928189+00:00"
+        },
+        {
+            "id": "095458c33232105c780dfad4eb019322ac09bf4d2c17c1abfb658c375fd45887",
+            "title": "Keplr Wallet Breach Triggers $6 Million in Transfers Across Cosmos",
+            "description": "A security vulnerability at Web3Auth has forced Cosmos wallet provider Keplr to suspend Google and Apple logins after private keys were exposed, triggering widespread unauthorized transactions. Blockchain investigators traced more than $6 million in transfers, although recovery operations complicate the actual theft total. Web3Auth Vulnerability Leaves Keplr Social Login Accounts Exposed The trouble began Friday, […]",
+            "url": "https://news.bitcoin.com/security/keplr-wallet-breach-triggers-6-million-in-transfers-across-cosmos/",
+            "source": "Bitcoin.com News",
+            "category": "cybersecurite",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-11-08T18:30:18+00:00",
+            "collected_at": "2026-11-08T21:31:55.747520+00:00"
+        },
+        {
+            "id": "6c056d55d6b7a0ad0c2b652c18e817158bb8f2cd816b2819e38e268de30c78e3",
+            "title": "How to prove equations using diagrams, part 3",
+            "description": "Comments",
+            "url": "https://www.epatters.org/post/e-graphs-3/",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-11-08T18:23:35+00:00",
+            "collected_at": "2026-11-08T21:31:41.090409+00:00"
+        },
+        {
+            "id": "fe5fdb83e1ea95f1b42419b0848c6704005c1a0d97bf5b622b17271058205ad1",
+            "title": "Goldman Sachs Is Pulling Claude Code from Its Bankers and Traders",
+            "description": "Comments",
+            "url": "https://www.thestateofai.com/news/goldman-sachs-claude-code-traders-bankers",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "anthropic",
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-08T18:16:07+00:00",
+            "collected_at": "2026-11-08T21:31:40.927675+00:00"
+        },
+        {
+            "id": "6924233f3e83d09de08a751378d54ee46f5cc222e9792debdbfb5d515714d349",
+            "title": "SNL has a new impression of Elon Musk, ‘the worst thing South Africa has ever done’",
+            "description": "SNL seems to have its knives out for tech executives.",
+            "url": "https://techcrunch.com/2026/11/08/snl-has-a-new-impression-of-elon-musk-the-worst-thing-south-africa-has-ever-done/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-11-08T18:00:04+00:00",
+            "collected_at": "2026-11-08T21:31:39.278573+00:00"
+        },
+        {
+            "id": "b37be5f6cf647e2b718f3cf8ae1de9a1c154addae271afb87b082f5cd5a883b7",
+            "title": "Ads in Popular Apps Give Police a Powerful Tool to Spy on Users",
+            "description": "Comments",
+            "url": "https://www.bloomberg.com/features/2026-police-phone-tracking-advertising-tech/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-08T17:32:55+00:00",
+            "collected_at": "2026-11-08T21:31:40.928516+00:00"
+        },
+        {
+            "id": "2f1c02ddf8130da3cb52aea77277092b3afcc01a81b296f6ce3a5bd7c0b09677",
+            "title": "He arrested a hacker, then spent 18 months clearing his own name. Now he’s a cybersecurity VC.",
+            "description": "Stephen Ward, a former Secret Service agent and Home Depot CISO, is preparing a second fund of roughly $250 million for Brightmind Partners.",
+            "url": "https://techcrunch.com/2026/11/08/the-ex-secret-service-agent-who-flipped-a-hacker-is-now-raising-a-second-250m-cybersecurity-fund/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-11-08T17:30:00+00:00",
+            "collected_at": "2026-11-08T21:31:39.278627+00:00"
+        },
+        {
+            "id": "dcfc87a759380b628913a92dd027a59a388271358b11453c3f6059158266b267",
+            "title": "RAM Altman: Linux Script Emails Sam Altman Daily How Much Unused RAM in Your PC",
+            "description": "Comments",
+            "url": "https://respawnfirst.com/linux-script-emails-sam-altman-unused-ram-ram-altman/",
+            "source": "Hacker News",
+            "category": "linux",
+            "tags": [
+                "linux",
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-08T17:20:29+00:00",
+            "collected_at": "2026-11-08T21:31:40.927786+00:00"
+        },
+        {
+            "id": "fddcd5eaa1cd7d679ab2cd49ae2269abfab2952b0459ec3ce133a94ce687b07d",
+            "title": "A Little Snitch for Windows",
+            "description": "Comments",
+            "url": "https://packethound.app/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup",
+                "windows"
+            ],
+            "published_at": "2026-11-08T17:16:07+00:00",
+            "collected_at": "2026-11-08T21:31:40.927961+00:00"
+        },
+        {
+            "id": "b23be759de5724d3cb7b14afff8198aefcd84e044cee18e26c8c183d9d1a32de",
+            "title": "OKX Freezes MEXC User Deposits Following Strict FinCEN Order",
+            "description": "Social media reports say some exchanges, including OKX, have begun flagging deposits from MEXC-linked addresses after the U.S. Treasury blacklisted the exchange for processing over $16 billion in illicit financial activity tied to sanctioned entities in Iran, Russia, and North Korea. MEXC Customers Face Transaction Holds After U.S. Treasury Blacklist Exchange The U.S. Treasury Financial […]",
+            "url": "https://news.bitcoin.com/exchanges/okx-freezes-mexc-user-deposits-following-strict-fincen-order/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-11-08T17:13:05+00:00",
+            "collected_at": "2026-11-08T21:31:55.747603+00:00"
+        },
+        {
+            "id": "39e23131b287b01bb79c0f984d326d4905563e757edd258107cf2c203d5aa31c",
+            "title": "Playing with the STM32MP2",
+            "description": "Comments",
+            "url": "https://serd.es///2026/11/08/playing-with-stm32mp2.html",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-11-08T17:12:00+00:00",
+            "collected_at": "2026-11-08T21:31:41.090286+00:00"
+        },
+        {
+            "id": "6d709758800f1596479b93892314e06efced4c8bd20e4a2d46bff3ac97ea3298",
+            "title": "A field guide to CAPTCHA types and how they break",
+            "description": "Comments",
+            "url": "https://github.com/vsmutok/FuckCaptcha",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-08T17:09:55+00:00",
+            "collected_at": "2026-11-08T21:31:40.928218+00:00"
+        },
+        {
+            "id": "351cda8f77314e38d03e5a4c50befe84aaa3705eb2d546c405a5bb3e838a4e7a",
+            "title": "What can I realistically do with local AI on a Mac mini M5 Pro (48GB)?",
+            "description": "I just got a Mac mini with an M5 Pro (base CPU config) and 48GB of unified memory. I want to run as much AI locally as makes sense, but it's hard to separate what actually works day to day from benchmark hype. What I'd like to do: Coding: autocomplete and agentic workflows with local models Image generation Anything else genuinely useful: transcription, RAG over my notes, etc. Questions: Which models and quantizations fit comfortably in 48GB and are actually usable, not just \"it runs\"? Which runtime and tools: MLX, llama.cpp, Ollama, LM Studio, ComfyUI, something else? What's your setup, and what did you give up on and go back to cloud APIs for? Real tokens/sec numbers and \"this was a waste of time\" stories are especially welcome.",
+            "url": "https://lobste.rs/s/umsitb/what_can_i_realistically_do_with_local_ai",
+            "source": "Lobsters",
+            "category": "hardware",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-11-08T17:07:51+00:00",
+            "collected_at": "2026-11-08T21:31:41.090007+00:00"
+        },
+        {
+            "id": "3af53f8572641d8a87f7ed86d11e32c3674ea9fb19c0fba639b85f695fbdb15e",
+            "title": "TechCrunch Mobility: The Cybertruck experiment is over",
+            "description": "Welcome back to TechCrunch Mobility, your hub for the future of transportation and now, more than ever, the role AI is playing in it.",
+            "url": "https://techcrunch.com/2026/11/08/techcrunch-mobility-the-cybertruck-experiment-is-over/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-11-08T17:02:00+00:00",
+            "collected_at": "2026-11-08T21:31:39.278670+00:00"
+        },
+        {
+            "id": "820f71b5bbb890b86dbb9931fe735f1dc00182e641fa5790cffcd31d2acb48d6",
+            "title": "Unattended reboots with encrypted disks",
+            "description": "Comments",
+            "url": "https://jmmv.dev/2026/11/zkeys-intro.html",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-11-08T16:58:03+00:00",
+            "collected_at": "2026-11-08T21:31:41.089845+00:00"
+        },
+        {
+            "id": "91f45501b03a14a3597a132c7c612636fc55cae0b29e78dda46598297bc426c4",
+            "title": "Who wants to crowdsource LLM scans of articles submitted to Lobste.rs?",
+            "description": "Like many of us who value the human side of the web, I am looking for ways to keep slop at bay. It seems like LLM detection technology works reasonably well nowadays, with Pangram as the main provider. It is expensive, though! Assuming pangram scans are trustworthy, and it seems they are, we could create a centralized index of pangram scans of articles. I have already set up a prototype where I publish results of my own pangram scans. I could create more users, each tied to its own API key, so others can contribute with scans as well. This is way more resource efficient than everyone running their own scans. What do you think?",
+            "url": "https://lobste.rs/s/jbdtim/who_wants_crowdsource_llm_scans_articles",
+            "source": "Lobsters",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "developpement",
+                "llm",
+                "open-source",
+                "programmation",
+                "rust"
+            ],
+            "published_at": "2026-11-08T16:36:17+00:00",
+            "collected_at": "2026-11-08T21:31:41.089782+00:00"
+        },
+        {
+            "id": "13534bbe6c986f98e67946e91b22ffdba24e3a27e26454fc9e330923b5b6a1d8",
+            "title": "SFLC.in Statement Regarding the Takedown Requests Against Its X Account and Posts",
+            "description": "Comments",
+            "url": "https://sflc.in/sflc-in-statement-regarding-the-takedown-requests-against-its-x-account-and-posts/",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-11-08T16:30:47+00:00",
+            "collected_at": "2026-11-08T21:31:41.090662+00:00"
+        },
+        {
+            "id": "016e48c60c15420a8119a93a1250c93c934dd3bc130e15fb201090e7cae570bd",
+            "title": "Weekly Report: Crypto Market Erases $100B Rally as Bitcoin, XRP Prices Slide",
+            "description": "The crypto market endured a volatile first week of November, briefly gaining approximately $100 billion following the U.S. midterm elections before surrendering those gains amid a global technology stock sell-off. Post-Election Rally Gives Way to Global Market Sell-Off The crypto economy endured a volatile first week of November, with its market capitalization rising by $100 […]",
+            "url": "https://news.bitcoin.com/market-updates/weekly-report-crypto-market-erases-100b-rally-as-bitcoin-xrp-prices-slide/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-11-08T16:05:09+00:00",
+            "collected_at": "2026-11-08T21:31:55.747680+00:00"
+        },
+        {
+            "id": "590b54d892646b6f01bc3a7bac438b6aa8db979a11612122458b88fa6fa79f80",
+            "title": "Guide: Best Zelda Games Of All Time",
+            "description": "Where does the Ocarina of Time remake rank? You probably haven't heard, but there's a new Zelda game out. Launched last week, in fact. Oh, you have? Well then, you may be wondering where it ranks with all the other Zeldas - and indeed with the other Ocarinas of Time. Wonder no more; we asked Nintendo Life readers for their verdict, and you can see the result below. Enjoy! Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/guides/best-zelda-games-of-all-time",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-11-08T16:00:00+00:00",
+            "collected_at": "2026-11-08T21:31:53.984288+00:00"
+        },
+        {
+            "id": "f3cdbd0ed89247a33dbf8eb26cb3d5c20cde575db47f738cc046f13fc3d19b0f",
+            "title": "Iris Ohyama data cloud breach exposes info of 7.7 million customers",
+            "description": "Japanese manufacturer Iris Ohyama, the operator of the Iris Plaza shopping platform, disclosed that personal information belonging to about 7.7 million people may have been exposed after unauthorized access to a third-party cloud service the company used. [...]",
+            "url": "https://www.bleepingcomputer.com/news/security/iris-ohyama-data-cloud-breach-exposes-info-of-77-million-customers/",
+            "source": "BleepingComputer",
+            "category": "cloud",
+            "tags": [
+                "cybersecurite",
+                "malware",
+                "ransomware"
+            ],
+            "published_at": "2026-11-08T15:43:08+00:00",
+            "collected_at": "2026-11-08T21:31:37.306770+00:00"
+        },
+        {
+            "id": "3533c38867255eecb3dfdc429a7f721d44b360be13f04d0ae481232043be392a",
+            "title": "Diamond Foundry creates world's first 200mm single-crystal diamond wafer",
+            "description": "This 200mm single-crystal diamond wafer is designed to efficiently remove heat and prevent hotspots from forming on AI processors.",
+            "url": "https://www.tomshardware.com/pc-components/cooling/diamond-foundry-creates-worlds-first-200mm-single-crystal-diamond-wafer-massive-gem-aims-to-solve-ai-chip-cooling-crisis-envisioned-as-a-cooling-material-for-semiconductors",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "pc"
+            ],
+            "published_at": "2026-11-08T15:25:00+00:00",
+            "collected_at": "2026-11-08T21:31:43.174927+00:00"
+        },
+        {
+            "id": "14052a0d3ed91d5b4545a52342a287c12a72577aa8684c0da79ce0d32f0e8f18",
+            "title": "Saylor Shares $64B Bitcoin Chart, Stirring Strategy Buy Questions",
+            "description": "Michael Saylor shared a chart showing Strategy’s bitcoin holdings valued at $64.44 billion following a sharp market sell-off. His update revisited the company’s acquisition history as Strategy balanced bitcoin purchases with preferred-stock buybacks and cash reserves. Saylor Shares Strategy’s Bitcoin Acquisition Chart Michael Saylor, founder and executive chairman of Strategy Inc. (Nasdaq: MSTR), shared a […]",
+            "url": "https://news.bitcoin.com/featured/saylor-shares-64b-bitcoin-chart-stirring-strategy-buy-questions/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-11-08T15:01:04+00:00",
+            "collected_at": "2026-11-08T21:31:55.747762+00:00"
+        },
+        {
+            "id": "a653dab5f63627d9b5d45e93e7c9a0f76fbb91f5464e61a2ceae87f9679cc0d8",
+            "title": "Ninja’s AutoBarista is impressively versatile, but one feature was a dealbreaker for me",
+            "description": "The AutoBarista's \"Grind iQ\" technology allows the machine to analyze your coffee beans to inform how it pulls a shot of espresso.",
+            "url": "https://techcrunch.com/2026/11/08/ninjas-autobarista-is-impressively-versatile-but-one-feature-was-a-dealbreaker-for-me/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-11-08T15:00:00+00:00",
+            "collected_at": "2026-11-08T21:31:39.278721+00:00"
+        },
+        {
+            "id": "9bed5a9bf4eae0cd3cb5c0bab16d8c2c749c4048034fd25b233b2518dd08f71c",
+            "title": "Logitech G502 X Lightspeed Review: No lights, same price",
+            "description": "Logitech's G502 X Lightspeed strips the G502 X Plus of its lighting, but retains the $160 price tag.",
+            "url": "https://www.tomshardware.com/peripherals/gaming-mice/logitech-g502-x-lightspeed-review",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "git",
+                "gpu",
+                "hardware",
+                "pc"
+            ],
+            "published_at": "2026-11-08T15:00:00+00:00",
+            "collected_at": "2026-11-08T21:31:43.174971+00:00"
+        },
+        {
+            "id": "25230af0dbbac606c1390a5cdf5e69667110b7c1cf218ba95c49a493debfc739",
+            "title": "Japanese arcades suffer week-long blackout following Sega server hack",
+            "description": "The sensory overload in video game arcades in Japan was eerily absent from some venues this week.",
+            "url": "https://www.tomshardware.com/video-games/japanese-arcades-suffer-week-long-blackout-following-sega-server-hack-bandai-namco-titles-resume-trial-operations-as-sega-games-remain-offline",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "pc"
+            ],
+            "published_at": "2026-11-08T15:00:00+00:00",
+            "collected_at": "2026-11-08T21:31:43.175013+00:00"
+        },
+        {
+            "id": "a8d01c56a8899314070ae44366b5b1fc932d80f4646ca2f2074bf54cb3227884",
+            "title": "The end of an era as Linux 7.5 purges the last 30-year-old Intel MMX optimizations from Pentium age",
+            "description": "Linux developers are preparing to make Intel’s ancient MultiMedia eXtensions irrelevant, with the last MMX code now set to be removed from the kernel.",
+            "url": "https://www.tomshardware.com/software/linux/the-end-of-an-era-as-linux-7-5-purges-the-last-30-year-old-intel-mmx-optimizations-from-pentium-age-open-source-os-retires-ancient-1997-pentium-instructions-to-streamline-code",
+            "source": "Tom's Hardware",
+            "category": "linux",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "intel",
+                "linux",
+                "pc"
+            ],
+            "published_at": "2026-11-08T14:40:00+00:00",
+            "collected_at": "2026-11-08T21:31:43.175068+00:00"
+        },
+        {
+            "id": "5ac77fbe4486e20d532348dcb6faf7698d78c240e5b1bd2c41e37c2588a115ea",
+            "title": "Ukraine builds combat robots to hunt Russian troops in underground gas pipelines",
+            "description": "Ukraine is developing a new class of combat robots designed to operate inside underground gas pipelines.",
+            "url": "https://www.tomshardware.com/tech-industry/robotics/ukraine-builds-combat-robots-to-hunt-russian-troops-in-underground-gas-pipelines-ugvs-adapted-following-15-kilometer-subterranean-assault",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "pc"
+            ],
+            "published_at": "2026-11-08T14:36:39+00:00",
+            "collected_at": "2026-11-08T21:31:43.175111+00:00"
+        },
+        {
+            "id": "6bc69733b65166ec7edf04dd8eab8d25e159623ee4c941679790ef889d5eacea",
+            "title": "Nvidia released its 8800 GTX GPU 20 years ago today, celebrates with Steam game homage",
+            "description": "On this day in 2006, Nvidia released the legendary GeForce 8800 GTX graphics card and it is celebrating the event with a very demanding (but free) interactive Steam demo.",
+            "url": "https://www.tomshardware.com/pc-components/gpus/nvidia-released-its-8800-gtx-gpu-20-years-ago-today-celebrates-with-steam-game-homage-interactive-demos-eye-watering-minimum-requirements-include-rtx-4070-32gb-ram-and-30gb-storage",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "nvidia",
+                "pc"
+            ],
+            "published_at": "2026-11-08T14:20:00+00:00",
+            "collected_at": "2026-11-08T21:31:43.175159+00:00"
+        },
+        {
+            "id": "4a35d90f75c3480ec0465b642b96de182c81bd8a2631bf11d65690fe6bb266cc",
+            "title": "Blue Wave, Red Week — Week in Review",
+            "description": "This editorial is from this week’s edition of the newsletter Week in Review, sent to subscribers on Friday. Subscribe to the newsletter to get this weekly editorial the second it’s finished. The newsletter also includes the biggest stories of the week, with a comment on each story. Bitcoin fell to $75,618, a seven-week low near […]",
+            "url": "https://news.bitcoin.com/opinion-and-analysis/blue-wave-red-week-week-in-review/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-11-08T14:00:01+00:00",
+            "collected_at": "2026-11-08T21:31:55.747834+00:00"
+        },
+        {
+            "id": "14c6be8544c775ec6c7f06a26274bb9e1ddbc6f601a856772c0101d3d76dab2c",
+            "title": "Open-source GPU task manager reveals exactly what's eating your VRAM",
+            "description": "A new open-source GitHub project called gputaskman has been released by Microsoft VP Scott Hanselman.",
+            "url": "https://www.tomshardware.com/pc-components/gpus/open-source-gpu-task-manager-reveals-exactly-whats-eating-your-vram-microsoft-vps-new-gpu-taskman-tool-reveals-every-process-using-your-gpu-how-much-memory-each-uses-and-breaks-down-ai-and-llm-workloads",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "git",
+                "gpu",
+                "hardware",
+                "pc"
+            ],
+            "published_at": "2026-11-08T13:40:00+00:00",
+            "collected_at": "2026-11-08T21:31:43.175195+00:00"
+        },
+        {
+            "id": "fdbef32c1ef7878af41e3d82c60a7f86b3c64f6a4853b8718be30dd3b1301ef7",
+            "title": "Following breadcrumbs in code - What accidentally committed Ad-Hoc logs reveal about developer comprehension",
+            "description": "Comments",
+            "url": "https://link.springer.com/article/10.1007/s10664-026-10988-z",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-11-08T13:21:22+00:00",
+            "collected_at": "2026-11-08T21:31:41.090457+00:00"
+        },
+        {
+            "id": "6fd49da430c7405cf3174cad283b082742a633ec94ecc14a624220f91b1ee578",
+            "title": "Hundreds arrested after Microsoft data center protest turns violent",
+            "description": "It's unclear which group entered the construction site first, but the action led to the arrest of 150 to 200 protesters.",
+            "url": "https://www.tomshardware.com/tech-industry/data-centers/hundreds-arrested-after-microsoft-data-center-protest-turns-violent-stop-dirty-data-centers-coalition-demands-halt-to-ai-data-center-expansion-dutch-police-seize-break-in-tools-suspected-stolen-items-from-construction-site",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "pc"
+            ],
+            "published_at": "2026-11-08T13:20:00+00:00",
+            "collected_at": "2026-11-08T21:31:43.175237+00:00"
+        },
+        {
+            "id": "36a165c93981d4132a601555e9a81a2b4de3295b2de7f58eee0edb9f95dc8514",
+            "title": "Two Chinese companies cleared to buy banned Nvidia AI chips have empty offices and unknown addresses",
+            "description": "The offices for New Matrix and Maginfra, both approved to receive H200 chips, appear abandoned, and people in the buildings say they're unfamiliar with the companies or have never seen anyone working there.",
+            "url": "https://www.tomshardware.com/tech-industry/artificial-intelligence/two-chinese-companies-cleared-to-buy-banned-nvidia-ai-chips-have-empty-offices-and-unknown-addresses-investigation-reveals-businesses-have-ties-to-sanctioned-chinese-military-suppliers",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "nvidia",
+                "pc"
+            ],
+            "published_at": "2026-11-08T13:00:00+00:00",
+            "collected_at": "2026-11-08T21:31:43.175289+00:00"
+        },
+        {
+            "id": "2826810ae2f67188cb78a6e77b5a4f64459c1418e0f55396b8f39cb0cb9e0823",
+            "title": "These Finland homes get free heat from bitcoin miners (as long as BTC stays above $70,000)",
+            "description": "",
+            "url": "https://www.coindesk.com/markets/2026/11/08/these-finland-homes-get-free-heat-from-bitcoin-miners-as-long-as-btc-stays-above-usd70-000",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-11-08T12:55:59+00:00",
+            "collected_at": "2026-11-08T21:31:55.416281+00:00"
+        },
+        {
+            "id": "cafb0b06f16b9edbd88d35be7199a4510b9928ac44d433cfae0443dba7e8ba88",
+            "title": "systemd loves Rust",
+            "description": "Comments",
+            "url": "https://amutable.com/blog/systemd-loves-rust",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation",
+                "rust"
+            ],
+            "published_at": "2026-11-08T12:55:05+00:00",
+            "collected_at": "2026-11-08T21:31:41.089684+00:00"
+        },
+        {
+            "id": "bd09dc2284c2f99c1837ba9fe70eebfff69203f856d85292f63c2d661d7d2def",
+            "title": "A bit about email",
+            "description": "Comments",
+            "url": "https://maurycyz.com/misc/email/",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-11-08T12:53:34+00:00",
+            "collected_at": "2026-11-08T21:31:41.089814+00:00"
+        },
+        {
+            "id": "e25923d7d441875588b97c3dda29ac5476fcd4b376efd58bf6e5b58fbfedb0e2",
+            "title": "PC's with 64GB of RAM plummet 18% as memory prices soar",
+            "description": "CPU-Z data reveals PC memory capacity is dropping for the first time ever. Driven by skyrocketing AI DRAM prices, 64GB RAM adoption plummeted 18% YoY.",
+            "url": "https://www.tomshardware.com/pc-components/ram/pcs-with-64gb-of-ram-plummet-18-percent-as-memory-prices-soar-cpu-z-install-base-data-shows-ddr4-making-a-surprise-comeback",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "pc"
+            ],
+            "published_at": "2026-11-08T12:40:00+00:00",
+            "collected_at": "2026-11-08T21:31:43.175329+00:00"
+        },
         {
             "id": "b8776663c6b4d513d74e59b56fb55547a2747fdb8ffc77b5cf41f2bcde177310",
             "title": "My logo heals itself. Then I erased it into a stick.",
@@ -258,6 +1322,21 @@
             "collected_at": "2026-11-08T12:32:32.867705+00:00"
         },
         {
+            "id": "9e3feb6bb8fadf243e727ba998f8f67475f3879b1f790fba01403adb22c3c6bf",
+            "title": "Physicists listened to electrical noise to crack a superconductor mystery",
+            "description": "Tuning in to electronic noise can tell us whether electrons have paired up or not.",
+            "url": "https://arstechnica.com/science/2026/11/physicists-listened-to-electrical-noise-to-crack-a-superconductor-mystery/",
+            "source": "Ars Technica",
+            "category": "technologie",
+            "tags": [
+                "informatique",
+                "innovation",
+                "technologie"
+            ],
+            "published_at": "2026-11-08T12:15:31+00:00",
+            "collected_at": "2026-11-08T21:31:39.096408+00:00"
+        },
+        {
             "id": "50b863715297ad555f5a0f6cfe54978b1639829b5b57a054f1c3b5b22a106857",
             "title": "Brava Security Emerges From Stealth With $15 Million in Funding",
             "description": "Its multi-agent AI platform generates the telemetry an attack would produce to fix gaps in enterprise defenses. The post Brava Security Emerges From Stealth With $15 Million in Funding appeared first on SecurityWeek .",
@@ -438,6 +1517,21 @@
             "collected_at": "2026-11-08T12:32:30.387946+00:00"
         },
         {
+            "id": "1f923716babf3c1ff15ee9cd07dc9f9b950fe6dd327f7c4a714c9f80d5959288",
+            "title": "Writing as a thinking tool",
+            "description": "Comments",
+            "url": "http://muratbuffalo.blogspot.com/2026/11/writing-as-thinking-tool.html",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-08T10:41:52+00:00",
+            "collected_at": "2026-11-08T21:31:40.927934+00:00"
+        },
+        {
             "id": "7ad7847d1570704d587465eeb01651d29a9909881cf9b5ee6e825d0ce623ff70",
             "title": "7 apps that still look terrible on foldables, and Google should call them out first",
             "description": "Developers are gradually adapting to the iPhone Duo, but these app makers still haven't adapted to Android foldables.",
@@ -539,6 +1633,20 @@
             ],
             "published_at": "2026-11-08T09:45:00+00:00",
             "collected_at": "2026-11-08T12:32:43.390401+00:00"
+        },
+        {
+            "id": "a19165a525f682fda9638ae78b0afe2d28ca4317b29f7405cb3313f68c35dd19",
+            "title": "Nintendo's Bill Trinen Explains Why Ocarina Of Time Is The Perfect Place To Start In The Zelda Universe",
+            "description": "Gather round, Kokiri. If you're in a position where you've never actually played a Zelda game before, Nintendo's Bill Trinen just wants to let you know Ocarina of Time is the \"perfect place\" to start. Although this comment just happens to line up with the arrival of the Switch 2 remake, Nintendo's VP of Player & Product Experience really is convinced this is the best game to begin with, as it's a \"foundational story\", where the player is taught everything they need to know about the world and characters. Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/news/2026/11/nintendos-bill-trinen-explains-why-ocarina-of-time-is-the-perfect-place-to-start-in-the-zelda-universe",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-11-08T09:45:00+00:00",
+            "collected_at": "2026-11-08T21:31:53.984484+00:00"
         },
         {
             "id": "2c986ae1e7fe5c1c0b8d6538d6b27e071b10add1c6d9425123df19a820950ba4",
@@ -4461,6 +5569,21 @@
             "collected_at": "2026-11-06T22:36:38.079876+00:00"
         },
         {
+            "id": "8844055d4f3ec016ca85274412a85f5b11f94389afab5fb16b741e375f9a2a01",
+            "title": "Building the next generation of multimodal AI experiences with fal in Microsoft Foundry",
+            "description": "Microsoft and fal partner to expand video generation in Microsoft Foundry, helping developers bring creative ideas into enterprise applications. The post Building the next generation of multimodal AI experiences with fal in Microsoft Foundry appeared first on Microsoft Azure Blog .",
+            "url": "https://techcommunity.microsoft.com/blog/azure-ai-foundry-blog/building-the-next-generation-of-multimodal-ai-experiences-with-fal-in-microsoft-/4570032",
+            "source": "Microsoft Azure",
+            "category": "cloud",
+            "tags": [
+                "azure",
+                "cloud",
+                "microsoft"
+            ],
+            "published_at": "2026-11-06T19:08:44+00:00",
+            "collected_at": "2026-11-08T21:31:44.728917+00:00"
+        },
+        {
             "id": "083100755f603f5cb62d97db3e2f4f72723b90ab8f9e4ff2076e4e19cd6adf6c",
             "title": "Replit rebuilt its sandbox engine with microVMs",
             "description": "Comments",
@@ -7377,6 +8500,21 @@
             ],
             "published_at": "2026-11-06T09:12:59+00:00",
             "collected_at": "2026-11-06T13:32:12.863255+00:00"
+        },
+        {
+            "id": "74bb21ee338affde5d7555f6b1cb775df5a987618895f5e257ba7a118cf270d1",
+            "title": "The Reconstruction of Torn Documents",
+            "description": "Comments",
+            "url": "https://www.bundesarchiv.de/en/stasi-records-archive/the-reconstruction-of-torn-documents/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-06T09:05:18+00:00",
+            "collected_at": "2026-11-08T21:31:40.928079+00:00"
         },
         {
             "id": "f10530c533d9a2bcd5cd1e5201d653e5e329dffb6476bc13a6d2c273ca982d6d",
@@ -15179,6 +16317,21 @@
             "collected_at": "2026-11-05T04:31:07.271920+00:00"
         },
         {
+            "id": "e2fa3e8ac43dcbc312e5907b842298608f8676c6ff2f47fede2af0b5e7d07098",
+            "title": "Edward Hopper's Iconic Painting, \"Nighthawks",
+            "description": "Comments",
+            "url": "https://lithub.com/the-story-behind-edward-hoppers-iconic-painting-nighthawks/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-04T23:23:08+00:00",
+            "collected_at": "2026-11-08T21:31:40.927905+00:00"
+        },
+        {
             "id": "66d5c3a200faaaf2de5b078605989cada12f96d69471d51a94bbffd2063e2995",
             "title": "Dify API keys authorize applications, not every workspace action",
             "description": "Dify API keys authorize applications, not every workspace action Dify provides application APIs for chat, workflows and knowledge-base operations. Its API reference instructs clients to send an API key in the Authorization header with the Bearer scheme and recommends storing the key on the server rather than in a client application. The same guidance appears across several application and dataset endpoints. On 2026-11-05, a count-only ZoomEye query with sub_type=all , page 1 and page size 1 returned 12,968 matches for app=\"Dify\" . The title query returned 11,303. The values are application-surface observations, not a count of exposed workspaces, default credentials or vulnerable deployments. Separate the API from the console An application API key is not the same credential as a console session or a workspace-administration role. It should be bound to the application that needs it and limited to the operations that application performs. A customer-facing chat flow and a batch knowledge-ingestion job should not share a key just because both run in the same workspace. Store keys in a secret manager or protected server environment. Do not embed them in browser JavaScript, mobile packages or public configuration. Mask them in request logs and error trackers. If a key appears in a support bundle, revoke it even when the surrounding request looked unsuccessful. Logging utilities can capture Authorization headers unless they are explicitly configured not to. Dify self-hosted deployments add database, Redis, vector store and model-provider credentials to the environment. The Dify API key does not protect those components. Restrict network access to the management console and database, patch the supporting services, and keep provider keys outside prompts and user-visible workflow logs. A leaked model-provider key can incur cost even when the Dify application key remains valid. Test the application boundary Create a key for one application and verify that it can perform the expected chat or workflow request. Then test access to an unrelated application or administrative endpoint. Do not infer scope from the key's name. Check the version-specific API behavior and the workspace role of the user who created it. Record creation time, last use and owner. Review public web apps and embedding settings separately from API keys. A public link may allow anonymous conversation with a workflow that has tools or knowledge access. Limit the application's tools, model budget and data sources to what the audience should reach. An unauthenticated app can still consume paid resources and expose retrieved content. Monitor API failures, unusual token use, large file operations and knowledge-base changes. Dify documentation warns that API keys should be server-side because leakage can have serious consequences. Make revocation and replacement part of the deployment runbook, then verify that old keys no longer work. The ZoomEye count is useful for locating Dify application surfaces and prioritizing owned-instance checks. It does not establish that any instance permits unauthenticated use. The evidence to collect is the app's authentication mode, key scope, public embed state and downstream tool access, followed by the logs that show what the credential actually did. References Dify knowledge-base API authorization Dify annotation API authorization ZoomEye app=\"Dify\" observation",
@@ -17413,6 +18566,22 @@
             "collected_at": "2026-11-05T04:31:07.272487+00:00"
         },
         {
+            "id": "7c5538e7bf48e72ddf6b1d6518a75d189edc807d7ebc0bd71f36fbf8bda18af6",
+            "title": "Porting Android 16 to my blind mother's keypad phone",
+            "description": "Comments",
+            "url": "https://z1x.us/blog/four-hundred-bucks-of-e-waste",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "android",
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-04T15:18:59+00:00",
+            "collected_at": "2026-11-08T21:31:40.928162+00:00"
+        },
+        {
             "id": "76a95469f31dea7120412e865445366b5a13d77bddf5f16ba832b492ae796a58",
             "title": "Ring Battery Doorbell 2K falls back to its $39.99 all-time low",
             "description": "This Ring Battery Doorbell 2K deal cuts 60% off the RRP, bringing sharp 2K video and two-way talk for much less.",
@@ -19509,6 +20678,21 @@
             ],
             "published_at": "2026-11-04T08:57:10+00:00",
             "collected_at": "2026-11-04T13:34:07.069971+00:00"
+        },
+        {
+            "id": "19bb875381a128eb52c296340aa870b995bd3bf4ced176826817fcdfc01de943",
+            "title": "Show HN: Vegetable Gardening for Engineers",
+            "description": "Comments",
+            "url": "https://jrcpl.us/contrib/2020/gardening-for-engineers/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-04T08:54:27+00:00",
+            "collected_at": "2026-11-08T21:31:40.928020+00:00"
         },
         {
             "id": "23d5cc8219ef6b655f2c55e754d28d956425e03fa689d2d3af6814748d53c7dc",
@@ -21663,6 +22847,21 @@
             ],
             "published_at": "2026-11-03T21:00:00+00:00",
             "collected_at": "2026-11-03T22:44:47.290221+00:00"
+        },
+        {
+            "id": "af32b6413837bf460b8bd12effaeea63ddb3d30db87c9cdab870b56903df7d0e",
+            "title": "Tasfer: a text editor drawn on a 2D canvas",
+            "description": "Comments",
+            "url": "https://www.hamza.se/blog/tasfer",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-03T20:58:40+00:00",
+            "collected_at": "2026-11-08T21:31:40.928567+00:00"
         },
         {
             "id": "e49e97c43fec08c6999d68cd07802f03363a333e029f589891fb25e20b9d4851",
@@ -413515,6 +414714,118 @@
             ],
             "published_at": null,
             "collected_at": "2026-11-07T21:16:32.926166+00:00"
+        },
+        {
+            "id": "d1d29453d583846bd777c2c32627b19bf319942cc3cc4f8b21f68c78605dfa98",
+            "title": "Epic Games Launcher is coming to SteamOS",
+            "description": "In October, Epic Games said that it was \"investigating\" making Fortnite compatible with Valve's Linux-based SteamOS. At the time, Epic Games Launcher was in preview, but SteamOS was not specifically listed as a supported distro. Now, Communications Director Jake Jones has confirmed SteamOS compatibility, along with a handful of other distros, to GamingOnLinux. In response […]",
+            "url": "https://www.theverge.com/games/1029557/epic-games-launcher-is-coming-to-steamos",
+            "source": "The Verge",
+            "category": "linux",
+            "tags": [
+                "gadgets",
+                "internet",
+                "linux",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-11-08T21:31:39.332548+00:00"
+        },
+        {
+            "id": "54c06e97d6e0a2b71c0f98724b3572722a14d752e2ee52e678493122b7f0fd79",
+            "title": "Nvidia is investigating Jensen Huang’s relationship with a Chinese spy",
+            "description": "Nvidia has announced that it is opening an investigation into CEO Jensen Huang and his relationship with Megaspeed executive Alice Huang, who was reportedly recruited by China's Ministry of State Security to spy on the company. A statement posted by the board of directors reads: The NVIDIA Board is initiating an independent investigation in light […]",
+            "url": "https://www.theverge.com/ai-artificial-intelligence/1029562/nvidia-investigating-jensen-huang-relationship-chinese-spy",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "nvidia",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-11-08T21:31:39.332640+00:00"
+        },
+        {
+            "id": "b9c0dd474c98ba84113b49b43813bbe3cfd9a5ff75bc65902eab23da6920ff99",
+            "title": "Apple is racing to make Siri more agentic",
+            "description": "Bloomberg's Mark Gurman says CEO John Ternus is pressuring AI czar Craig Federighi to accelerate the Siri roadmap and deliver a powerful AI agent that can compete with OpenAI's Dots or Meta's Muse. While Federighi has delivered a functional version of Siri AI on an incredibly short timeline, the company has no illusions that it's […]",
+            "url": "https://www.theverge.com/ai-artificial-intelligence/1029552/apple-siri-ai-agentic",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "openai",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-11-08T21:31:39.332722+00:00"
+        },
+        {
+            "id": "c08233254ab55692344230fc658e502255fd7f325c13813a761b5555b7a8d1fe",
+            "title": "Elvis and Eminem rights holders are suing Suno",
+            "description": "Suno is facing yet another pair of lawsuits. A group of rights holders of Elvis Presley's music and the publisher of some of Eminem's biggest records are suing the AI music company, claiming it illegally generates music and lyrics that mimic those artists. The lawyers in the Presley suit claim that Suno has violated Tennessee's […]",
+            "url": "https://www.theverge.com/ai-artificial-intelligence/1029533/elvis-eminem-suno-ai-music-clone-lawsuit",
+            "source": "The Verge",
+            "category": "cloud",
+            "tags": [
+                "aws",
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-11-08T21:31:39.332780+00:00"
+        },
+        {
+            "id": "184c1db3f9a4bbec0a5743d9fcb1c4ec39f5c526d30a9d5da5decd143ff6f669",
+            "title": "Apple’s M5 MacBook Air is down to its lowest price since July",
+            "description": "The latest 13-inch MacBook Air is currently available for $1,099.99, marking the second time we’ve seen this $200 discount following the company’s hefty price increases over the summer. Although the base model — which features Apple’s M5 processor, 16GB of RAM, and 512GB of storage — often sold for around $950 to $1,000 shortly after […]",
+            "url": "https://www.theverge.com/gadgets/1029019/apple-macbook-air-13-15-inch-m5-deal-sale",
+            "source": "The Verge",
+            "category": "hardware",
+            "tags": [
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-11-08T21:31:39.332844+00:00"
+        },
+        {
+            "id": "7ff53c833c04080042abcbe9c8b544a7734725064c28d12bad1a9aa3c74d62f9",
+            "title": "Chatbots might be coming to Apple’s HomeView",
+            "description": "Code in the iOS 27.3 beta suggests that Apple could add support for chatbots to its smart home hub. There's a flag listed for a \"Conversational Apps\" category. While there are no details about what apps would fall under that heading, it seems reasonable that AI chatbots like ChatGPT and Claude could be added to […]",
+            "url": "https://www.theverge.com/tech/1029526/chatbots-might-be-coming-to-apples-homeview",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "anthropic",
+                "gadgets",
+                "internet",
+                "ios",
+                "openai",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-11-08T21:31:39.332909+00:00"
+        },
+        {
+            "id": "6236bf51005cbc771f6adf741b465b660a016816e80f495109f185cc7cedb94a",
+            "title": "There’s no slowing down media’s pivot-to-video 2.0",
+            "description": "This is The Stepback, a weekly newsletter breaking down one essential story from the tech world. For more on the pressures of creating content for the internet, follow Mia Sato. The Stepback arrives in our subscribers' inboxes on Sunday at 8AM ET. Opt in for The Stepback here. How it started Almost exactly a decade […]",
+            "url": "https://www.theverge.com/column/1026252/video-media-news-tiktok-pivot",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-11-08T21:31:39.332974+00:00"
         }
     ]
 }
