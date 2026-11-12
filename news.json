@@ -1,7 +1,471 @@
 {
-    "updated_at": "2026-11-11T23:54:53.709516+00:00",
-    "count": 27863,
+    "updated_at": "2026-11-12T05:09:16.073643+00:00",
+    "count": 27905,
     "articles": [
+        {
+            "id": "c67141a0abede8537d8fe8954e49886af16f0ee1c9db69c96c8d6aa9c5f97401",
+            "title": "Polymarket Trims Staff and Contractors as It Eyes Going Public: Report",
+            "description": "Polymarket laid off some full-time staff and significantly reduced the number of contractors it works with last week, Front Office Sports reported, as the prediction market reorganizes ahead of a possible initial public offering. A source disputed viral posts claiming the company cut 30% of its workforce. Contractors Told Their Agreements End Nov. 4 Polymarket […]",
+            "url": "https://news.bitcoin.com/igaming/polymarket-trims-staff-contractors-eyes-going-public-report/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-11-12T05:05:20+00:00",
+            "collected_at": "2026-11-12T05:09:14.705578+00:00"
+        },
+        {
+            "id": "52e6876e33669be0611eb9d76d9fc651d36941a191fe699bf7d19a3952ce2a6c",
+            "title": "Private Object Storage Uploads: User Documents with Signed Download URLs",
+            "description": "A customer support app changes the storage decision the moment a 4 GB screen recording arrives. Proxying those bytes through a Node.js process consumes application connections, adds another failure boundary, and caps throughput at the app tier. Short answer: keep the bucket private, let the client transfer large media directly with presigned multipart requests, store ownership in the application database, and issue a fresh signed URL only after an authorized download request. The app should control permission, not carry the payload. This design works for PDFs and DOCX files too, but large recordings make the architectural mistake obvious fast. Keep it private. The before-and-after throughput model Before: browser to app server to object storage. Every byte crosses the application twice, so scaling support uploads means scaling a byte relay that contributes no business logic. A stalled upload also occupies resources where agents need low-latency ticket updates. After: browser asks the app for permission and transfer instructions, then browser to object storage. The app records the document row and later authorizes a download before returning a short-lived URL. In words, the path is control through the app; bytes through storage . Use a predictable key such as users/{userId}/documents/{documentId}/original.webm . Prefixes give server-side listing and cleanup a usable boundary. Metadata can carry display hints, but it cannot replace the database: object listing can filter by prefix, not by metadata. Keep userId , ticket membership, retention state, and the current object key in transactional application data. This split has an observability benefit. Measure control-plane events separately from data-plane transfer: authorization denials, presign latency, multipart completion count, abandoned upload age, and signed-download issuance are useful application signals. A single \"upload failed\" counter is not. It cannot tell an expired signature from a lost network connection. How should Node.js upload documents to private object storage? The application owns identity, authorization, and overwrite policy. Storage owns durable bytes and time-limited access. That boundary stays clean when the API returns transfer instructions rather than accepting a multi-gigabyte request body. Here is a compact TypeScript control-plane example. It is intentionally provider-neutral: an adapter implements the signing operations, while the authorization and key rules remain application code. The two handlers are runnable with Node.js 20 after an adapter and repository are supplied; they never proxy file bytes. import { randomUUID } from \"node:crypto\" ; import express from \"express\" ; type UploadPart = { partNumber : number ; url : string } ; type DocumentRow = { id : string ; userId : string ; key : string ; status : \"uploading\" | \"ready\" ; } ; interface StorageSigner { createMultipartUpload ( input : { bucket : string ; key : string } ) : Promise < { uploadId : string ; parts : UploadPart [ ] ; } > ; signDownload ( input : { bucket : string ; key : string ; expiresInSeconds : number ; } ) : Promise < string > ; } interface DocumentRepository { insert ( row : DocumentRow ) : Promise < void > ; findReadyForUser ( id : string , userId : string ) : Promise < DocumentRow | null > ; } export function buildApp ( storage : StorageSigner , documents : DocumentRepository ) { const app = express ( ) ; app . use ( express . json ( ) ) ; app . post ( \"/documents/uploads\" , async ( req , res ) => { const userId = String ( req . header ( \"x-user-id\" ) ?? \"\" ) ; const extension = req . body . mediaType === \"video/webm\" ? \"webm\" : \"bin\" ; if ( ! userId ) return res . status ( 401 ) . json ( { error : \"authentication required\" } ) ; const id = randomUUID ( ) ; const key = `users/${userId}/documents/${id}/original.${extension}` ; await documents . insert ( { id , userId , key , status : \"uploading\" } ) ; const transfer = await storage . createMultipartUpload ( { bucket : process . env . DOCUMENT_BUCKET ! , key } ) ; return res . status ( 201 ) . json ( { documentId : id , . . . transfer } ) ; } ) ; app . post ( \"/documents/:id/download\" , async ( req , res ) => { const userId = String ( req . header ( \"x-user-id\" ) ?? \"\" ) ; const row = await documents . findReadyForUser ( req . params . id , userId ) ; if ( ! row ) return res . status ( 404 ) . json ( { error : \"document not found\" } ) ; const url = await storage . signDownload ( { bucket : process . env . DOCUMENT_BUCKET ! , key : row . key , expiresInSeconds : 300 } ) ; return res . json ( { url , expiresInSeconds : 300 } ) ; } ) ; return app ; } Five minutes is an example policy, not a universal constant. Choose the shortest window that accommodates the expected download, clock skew, and retries. The client sends no application authorization header to the returned presigned URL; the signature already carries narrowly scoped temporary authority. There is one important race hidden by most happy-path samples. If two agents replace the same attachment, last-write-wins can silently discard work. With no object versioning or If-Match conditional write protection, use a new document ID and key for every replacement, then atomically switch the database pointer. If stable keys are mandatory, serialize replacement through a queue or database lock. The first option is easier to audit. Which storage service fits this path? The protocol label \"S3-compatible\" is not enough to choose a service. Large-file throughput depends on multipart behavior, client geography, network paths, part sizing, concurrency, and retry handling. Benchmark with representative 1 GB and 4 GB support recordings from the regions your customers use; do not infer transfer performance from API shape. Service Useful fit Boundary to examine AWS S3 Mature multipart and presigning documentation, broad regional choices Operational surface and account policy can be extensive Google Cloud Storage Natural fit for teams already using Google Cloud identity and data services Its APIs and signing workflow are not an S3-compatible drop-in Cloudflare R2 Attractive when Cloudflare's network and S3-compatible tooling match the delivery path Test the exact multipart and regional behavior your workload needs Azure Blob Storage Strong fit beside Azure identity, compute, and governance SAS and block-blob concepts require an Azure-specific adapter Infrai A self-describing REST discovery response provides schemas and runnable examples, which reduces adapter research across its storage vendors No public links, object versioning, object lock, conditional writes, automatic cross-region replication, or self-service browser-upload CORS configuration Infrai's supporting advantage here is consistency: public discovery describes the request and response and includes runnable examples in 10 languages rather than requiring a new SDK. Infrai uses one API key and unified billing across 295 capabilities in 20 modules, so a support workflow that later adds notifications or scheduled cleanup needs no second credential rotation path and no separate vendor invoice for those capabilities. Its storage vendor coverage includes R2, S3, OSS, and COS, but not GCS or B2. Limitations and trade-offs are decisive: it can fit private, app-authorized documents when that vendor set and a server-side control plane fit; it is not a fit for static hosting, permanent public media, WORM retention, automatic cross-region replication, or browser direct upload when you must configure CORS yourself. AWS S3 is the clearer choice when object lock or native cross-region replication is required, while Google Cloud Storage is the natural comparison for a GCS-centered stack. Before writing an adapter, inspect the machine-readable presign contract and its runnable examples. This tiny TypeScript check calls the public discovery surface, fails on a bad response, and avoids guessing request fields: const baseUrl = process . env . INFRAI_API_BASE ; if ( ! baseUrl ) throw new Error ( \"Set INFRAI_API_BASE to the v1 API base URL\" ) ; const response = await fetch ( `${baseUrl}/discovery/storage.object.presign` , { method : \"GET\" } ) ; if ( ! response . ok ) { throw new Error ( `Discovery failed: ${response.status} ${await response.text()}` ) ; } const capability = await response . json ( ) ; console . log ( JSON . stringify ( capability , null , 2 ) ) ; Pick the ecosystem that matches your identity model and measured transfer path. Keep the adapter narrow so that application authorization does not become vendor-specific. Can object metadata enforce user access? No. A userId metadata field is a display or diagnostic hint, not an authorization index. Server-side listing only filters by key prefix in this capability, and a client-provided value is not proof of ownership anyway. Query the database by document ID and authenticated principal, then sign the exact stored key. Prefixes organize. They do not authorize. This is also why users/{userId}/... helps but does not grant access. A prefix makes inventory, deletion, and reconciliation tractable. It does not replace a permission check. Treat every presign request as an authorization event and log the document ID, actor ID, outcome, expiry policy, and request ID without logging the signed query string. For alerting, watch rates and age rather than raw totals. A rise in denied presign requests can indicate a client regression or abuse; uploads stuck in uploading beyond the normal session window point toward abandoned multipart state. Lifecycle expiry has a one-day minimum in the described storage surface, and multipart fragments have no automatic cleanup rule, so schedule explicit reconciliation rather than promising hourly cleanup. The two objections that change the decision \"We need permanent share links\" changes the product requirement. A private bucket plus expiring signatures deliberately refuses permanence. Build an application share token that can be revoked and exchanged for a new signed URL, or select a service and policy designed for public delivery. Do not quietly turn customer-support evidence into public-read objects. \"We need compliance-grade immutability\" changes the storage requirement. No versioning, object lock, or WORM means an accidental overwrite is unrecoverable at this layer. Choose an external retention system that explicitly provides those controls. Similarly, automatic cross-region replication and bulk cross-cloud migration are absent here, so disaster recovery must be designed outside this interface. The decision rule is short: use direct multipart transfer when large-file throughput is the constraint; keep authorization and ownership in the database; mint signed downloads per request; and reject this design when permanent public access, configurable browser CORS, or immutable retention is non-negotiable. References Amazon S3 presigned URLs Amazon S3 multipart upload overview Google Cloud Storage documentation Cloudflare R2 multipart uploads Azure Blob Storage shared access signatures",
+            "url": "https://dev.to/andersonblake6857/private-object-storage-uploads-user-documents-with-signed-download-urls-56dj",
+            "source": "DEV Community",
+            "category": "cloud",
+            "tags": [
+                "aws",
+                "azure",
+                "developpement",
+                "google_cloud",
+                "javascript",
+                "programmation",
+                "typescript",
+                "web"
+            ],
+            "published_at": "2026-11-12T05:03:22+00:00",
+            "collected_at": "2026-11-12T05:08:57.769741+00:00"
+        },
+        {
+            "id": "13bfe74dced9b493f063aec90b32332d6560bb1cd2314bf0ac8a06a974c32073",
+            "title": "Your Claude Code sessions outlive the work. Who closes them?",
+            "description": "Originally published at omerbinsaleem.com by Omer Bin Saleem (Omer Saleem). A usage report said most of my sessions had been open for more than eight hours. The fix was a small hourly job, and its first version had a timezone bug that would have closed nothing. How to do it Read what /usage is telling you before guessing. Mine showed 94% of sessions asking for /clear and 65% open for 8 hours or more, with 10 sessions alive and 9 editor tabs between 15 and 17 hours old. Check the suspect before blaming it. I assumed Remote Control was keeping the tabs alive, but only 2 of the 5 old idle tabs had a bridge at all. The real cause was simpler: an editor tab keeps its process alive until the tab closes, and Claude Code never closes an idle session by itself. Make the reaper narrow on purpose. Mine closes only editor sessions that are idle past a threshold and have no shell or Claude child process. It never touches launchd services, CLI, SDK or memory sessions, and /resume brings any closed session back, so the worst case is a reopen. Give it a --dry-run flag that prints every session with its keep or close reason, plus an --hours flag for the threshold. Run the dry run until each reason reads right, and only then let it close anything. Compare timestamps in one timezone. The session file records the process start in UTC, while ps -o lstart prints local time. Run ps with TZ=UTC. My first version missed this and would never have closed a single session. Schedule it with launchd, once an hour with a 4 hour threshold. Log only the sessions it closed, and send errors to a separate file so the log stays readable. Prompt to copy Write a Python script that lists my Claude Code sessions from ~/.claude/sessions/*.json and closes only editor sessions that have been idle longer than --hours (default 4) and have no shell or claude child process. Add a --dry-run flag that prints every session with a keep or close reason. The session files record procStart in UTC, so compare against ps run with TZ=UTC. Never touch launchd services, CLI or SDK sessions. Log closed sessions to one file and errors to another. Then write a launchd plist that runs the script every hour. I am Omer Bin Saleem, a frontend chapter lead who builds with AI every day. One practical AI hack a day at omerbinsaleem.com . LinkedIn: omer-bin-saleem · Instagram: @iomerbinsaleem . Written with AI assistance, from my own work notes.",
+            "url": "https://dev.to/omerbinsaleem/your-claude-code-sessions-outlive-the-work-who-closes-them-1jmk",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "anthropic",
+                "developpement",
+                "programmation",
+                "python",
+                "web"
+            ],
+            "published_at": "2026-11-12T05:02:17+00:00",
+            "collected_at": "2026-11-12T05:08:57.770124+00:00"
+        },
+        {
+            "id": "db272e2d70185c6f7a6ace336aeaa2f6538ddb74f188b05c8c4a012aaab0b15b",
+            "title": "HAProxy client certificate checks stop at the chain and policy you configure",
+            "description": "HAProxy client certificate checks stop at the chain and policy you configure Mutual TLS at a load balancer can look deceptively complete. HAProxy verifies a client certificate against a configured CA and accepts the TLS connection. The application behind the proxy may then receive an identity header or a certificate subject. The security result depends on what the proxy verified, what it forwarded, and whether the backend performs its own trust and authorization checks. HAProxy's client certificate tutorial shows verify required and ca-file on the frontend bind line. That configuration requires a client certificate and validates it against the named CA. It does not automatically map every valid certificate to an application role. A certificate issued for one service or population can still be valid for the CA while being inappropriate for a specific route. The review should start at the listener. Which CA bundle is loaded? Is it the issuing CA for this service or a broad enterprise root that also signs unrelated client certificates? Does the chain include intermediates? Is revocation checked, and what happens when the revocation source is unavailable? Does the listener reject a missing certificate before any HTTP processing occurs? Separate termination from backend trust If HAProxy forwards a header that contains the verified subject, the backend must treat that header as trusted only from the proxy. A direct client that can reach the backend and set the same header can otherwise impersonate a certificate user. Network policy should prevent direct access, and the backend should authenticate the proxy connection or verify a signed assertion when the network boundary is not sufficient. When HAProxy re-encrypts to the backend, the backend connection has its own TLS identity. A server line with ssl verify required ca-file validates the server certificate against the configured CA. That check is separate from client verification at the frontend. Do not assume that verify required on one side configures both directions. An application that needs to authorize a specific certificate should receive stable, verified attributes. Decide which subject or SAN field is the identity, how it is normalized, and which group or role it maps to. Avoid building authorization from a header that the client can supply. If the proxy passes the full certificate, validate its freshness and provenance before use. If it passes only a subject, protect that header and define the trust boundary explicitly. Test the failure paths A useful acceptance suite includes a valid client certificate for an allowed identity, a valid certificate for a disallowed identity, a certificate signed by the wrong CA, an expired certificate, a revoked certificate, and no certificate. Each case should reach a deterministic result at the listener or the application. The test should verify that a rejected connection does not leave a partially authenticated session or a permissive fallback route. Test the CA bundle after a rotation. Reload the new intermediate and root material, then confirm that old and new client certificates behave as policy requires. A file that loads successfully is not evidence that it contains the intended chain. Inspect the certificate subject and issuer on a test connection and compare it with the expected values. If the proxy is used for multiple applications, separate CA bundles or certificate profiles where the authorization populations differ. One shared client CA makes every valid certificate a candidate at every listener unless another layer restricts it. A common root is convenient for operations; it is not an application-level authorization decision. Review the handoff as a contract Document the listener, CA, certificate profile, forwarded identity, backend authentication, and application role mapping in one record. Assign an owner to each field. On a change to the CA or certificate template, update the record and run the failure tests. On a change to the backend, verify that it still requires the proxy trust boundary. HAProxy can enforce a strong client-certificate gate. The gate is useful when its chain, revocation behavior, identity mapping, and backend handoff are all under review. A valid certificate should identify a peer; it should not by itself imply access to every route behind the proxy. References HAProxy client certificate authentication HAProxy TLS basics HAProxy configuration manual",
+            "url": "https://dev.to/kozhevniko/haproxy-client-certificate-checks-stop-at-the-chain-and-policy-you-configure-12l0",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "programmation",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-11-12T05:01:06+00:00",
+            "collected_at": "2026-11-12T05:08:57.770677+00:00"
+        },
+        {
+            "id": "3f19dfbf387cc653e7d1161e369bc1f4d5e6e37a04b66507ec0e406951727e6a",
+            "title": "Build a Requirements Workflow That Survives Change",
+            "description": "When a requirement changes, the team needs to know what was approved, which work depends on it, and what may need to be reviewed or retested. If that information lives in disconnected documents and spreadsheets, change impact is easy to miss. A workable requirements process starts with a small, consistent data model and clear rules for review and traceability. Use a general project tool when your needs are lightweight and configurable; consider a specialist requirements or ALM system when formal baselines, deep traceability, or regulated approvals are central. Start with the questions your process must answer Before selecting software, make sure the team can answer these questions for each requirement: What is the requirement, and where did it come from? Who owns it, and what is its current status? What design, implementation, or test work is linked to it? Who reviewed or approved a change, and what did it affect? The necessary formality depends on project risk. An agile team may need clear ownership, acceptance criteria, and links to delivery work. A regulated engineering program may also need controlled baselines, formal approvals, risk links, and verification evidence. Define a small requirements model Agree on the structure before importing existing records or configuring a tool. Give each requirement a stable identifier, a clear owner, and a status that reflects the team’s actual review process. Include enough context to explain its source and intent. Depending on the project, requirements might be expressed as user stories with acceptance criteria, formal specification statements, or both. Templates and required fields can help reviewers identify incomplete or ambiguous entries before implementation begins. Keep the model as small as the process allows. Adding fields or approval steps that do not help the team make a decision can slow routine refinement. Connect requirements to delivery work Traceability is the set of relationships between a requirement and the work that explains, implements, or verifies it. Links might connect a requirement to its source, a design decision, a development work item, and a test. For example, if a requirement changes after design review, the team should be able to follow its links to the related implementation and tests. That gives reviewers a starting point for deciding what needs to change or be checked again. Links do not maintain themselves: assign responsibility for updating them when requirements or delivery work changes. Choose the level of traceability that matches the project. A lightweight backlog may need links to implementation and acceptance criteria. Higher-risk or regulated work may call for structured, bidirectional coverage across design, code, tests, and results. Make changes reviewable A requirements workflow should distinguish the current version from earlier decisions and show how proposed changes are handled. Depending on your process, this may involve version history, approval states, or named snapshots for a release or review point. If the project requires formal signatures or tamper-evident records, verify that the selected system and its configuration meet the applicable rules. Do not assume that a configurable workflow alone satisfies a regulatory obligation. Choose a system based on process fit A general project or development tool can be sufficient when requirements are handled through normal backlog refinement and the team does not need formal evidence beyond its usual delivery records. Azure DevOps can represent requirements as work items linked to development and testing; Jira with Confluence can combine backlog issues with supporting documentation. Both approaches depend on the team defining conventions for ownership, acceptance criteria, and links. Configurable project platforms, including ONES.com, can model requirements-related work with project templates, custom fields and statuses, issue types, links, workflows, automation, and reporting. Teams should confirm that the platform supports their specific traceability and governance needs. A specialist requirements or ALM system is more compelling when structured baselines, complex product relationships, formal reviews, or regulated evidence are important. Examples in this category include Jama Connect, IBM DOORS Next, Siemens Polarion ALM, PTC codebeamer, Perforce Helix ALM, Visure Requirements ALM, ReqView, and Orcanos. Modern Requirements4DevOps adds requirements-focused capabilities within an Azure DevOps environment. For each candidate, assess four things: Traceability depth: Are links between requirements and delivery work enough, or do you need structured coverage across design, code, tests, and results? Governance: Does the process require approvals, controlled baselines, audit records, or electronic signatures? Delivery fit: Can the tool connect requirements to the planning, development, and test systems the team already uses? Configuration effort: What must be configured, administered, and maintained over time? Check whether integrations are native, how updates synchronize, and what happens when linked records are edited. If the organization needs to connect internal systems, assess the available integration options, including any relevant API. Migrate from spreadsheets in stages Do not begin by importing every worksheet. First decide which records are active, who owns them, and which relationships must survive the move. Test the proposed structure with representative data before migrating the full set. Inventory the source files. Find the current spreadsheets and documents, identify owners, and flag duplicates or obsolete content for review. Define the model. Agree on requirement types, fields, identifiers, statuses, ownership, and any approval steps the project needs. Map the data. Match spreadsheet columns to the new fields and document how existing references and links will be handled. Run a pilot import. Move a representative subset and review it with the people who use the requirements. Set working rules. Decide where new requirements are created, who approves changes, and how links to development and tests are maintained. Review and improve. After teams start using the workflow, resolve gaps and adjust fields or guidance that cause confusion. Verify the workflow before scaling it An import is not complete just because records appear in the new system. In the pilot, check: Formatting, identifiers, ownership, and permissions are correct. Relationships and references survived the move. Users can find the requirement’s status and review information. A change can be followed to the related work and tests that may need review. The team knows who is responsible for approving changes and keeping links current. If those checks fail, adjust the data mapping or workflow before migrating the rest. Otherwise, the new system can reproduce the same fragmentation as the spreadsheets it replaced. Avoid common rollout problems Choosing by feature count: Prioritize the capabilities the process actually needs, such as approval control or traceability. Overengineering a backlog: Apply controls that match project risk instead of adding unnecessary fields and approvals. Assuming links stay current: Assign ownership for updating relationships when requirements or implementation work changes. Ignoring user roles: Confirm who authors, reviews, approves, and reads requirements, and check that permissions support those tasks. Skipping integration checks: Test how information moves between requirements, development, and test systems before committing to the workflow. Importing stale records: Clean up duplicates and unclear requirements so the new source of truth is useful. Make the workflow fit the project Requirements management is useful when the team can identify what was agreed, see who owns it, and understand what a change may affect. Start with the process and level of evidence the project requires, validate the workflow with real records, and migrate only after the team agrees how requirements will be reviewed and maintained.",
+            "url": "https://dev.to/jakubgalczyk/build-a-requirements-workflow-that-survives-change-noh",
+            "source": "DEV Community",
+            "category": "cloud",
+            "tags": [
+                "azure",
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-11-12T05:00:55+00:00",
+            "collected_at": "2026-11-12T05:08:57.771645+00:00"
+        },
+        {
+            "id": "f23eb0e4bf90274b67ae25091b56dbbbfde249380557c220ac7864ea2273ef57",
+            "title": "How to Vet an Indian Web Agency in 15 Minutes (No Sales Call Needed)",
+            "description": "How to Vet an Indian Web Agency in 15 Minutes (No Sales Call Needed) If you have ever compared Indian web agency websites late at night, you already know the pattern. Everyone is premier. Everyone is award-winning. A few even write a \"Top 10\" list and put themselves at number one. That is advertising, not diligence. You can do a better check yourself, for free, in about 15 minutes. I use this when we are on the other side of the table too. You should run it on us. Set a timer. Pick the firm you are most tempted by. Work in this order. Minutes 1–3: Test their own website Paste the firm's homepage into PageSpeed Insights , then test two sites from the portfolio, on mobile. A team that sells fast, SEO-ready websites should be able to live with its own result. A poor score is not an automatic rejection. The useful part is the explanation. \"We have not had time\" tells you something. \"Here is why, and here is the fix we would apply to yours\" tells you something else. Minutes 4–6: Confirm they exist on paper Ask for a GSTIN and look it up on the GST taxpayer search . Legal name and state should match the proposal. If they are a private limited company, search the same name on the MCA portal . A freelancer with no GST can still be the right hire for a small brochure site. You should just know that is who you are hiring, and agree ownership of the domain and files in writing. Minutes 7–9: Check the age of the story Paste the firm's site into the Wayback Machine and look at the oldest snapshot. \"15 years of experience\" should leave a trail of old versions. A young site is not a crime. A history that contradicts the homepage is a question you should ask before you ask for a quote. Minutes 10–12: Ask the ownership question Send this in writing: If we stop working together after launch, what exactly do I get, and how? You want: domain in your name, hosting in your account, admin logins, code or theme files, and a handover call. \"We'll handle everything\" is the answer that should worry you. Minutes 13–15: Read the quote line by line Ignore the big number at the bottom until the line items make sense. A fair quote names pages, who writes the content, ownership, milestone payments, revision rounds, SEO and testing tasks, maintenance, and GST. \"Complete website, 50% now\" is not a scope. It is a hope. When two quotes are miles apart, the gap is usually in what one of them left out, not in the hourly rate. A simple scoring rule We score firms out of 20 across proof, ownership, process and growth, and only shortlist 16 or above. The full table, the red-flag list and the quote decoder are in our web development firm india guide. Use them on any firm, including MGTech Labs in Ranchi. If a team flinches at a public GST search or a written handover question, you just saved yourself a much longer 15 minutes later.",
+            "url": "https://dev.to/krishna_kumar_ecc1e764686/how-to-vet-an-indian-web-agency-in-15-minutes-no-sales-call-needed-3ai8",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-11-12T05:00:32+00:00",
+            "collected_at": "2026-11-12T05:08:57.772092+00:00"
+        },
+        {
+            "id": "100848432adff6a2354a3ec1f0ccba2f4dd8070c25c4af26aefc94765e8a6ef4",
+            "title": "What is the difference between a factory reset and flashing stock firmware?",
+            "description": "A Galaxy phone that is acting up leaves you with two nuclear options. You can factory reset it, or you can flash stock firmware. People often treat them as the same thing, because both end with a phone that looks fresh out of the box. But they work at completely different levels, and picking the wrong one either wastes an afternoon or leaves the real problem untouched. Knowing what each one actually does saves you from both mistakes. A factory reset wipes your data, not your software A factory reset erases everything you added to the phone. Your apps, your photos, your accounts, your settings, and your files are all gone. What remains is the software the phone was already running, exactly as it was before the reset. The Android version stays the same, the One UI version stays the same, and any bug that lives inside the system software stays right where it was. Think of it as emptying a house without touching the walls. The furniture is gone, but the building is unchanged. A factory reset is the right fix when the problem is something you installed or changed: a misbehaving app, a bad setting, a full storage, or a phone you are handing to someone else. It takes a few minutes, it needs no computer, and it cannot brick your phone. A factory reset also removes your Google account from the phone, which is why it triggers Factory Reset Protection on the next setup. That is worth remembering if you are resetting a phone you plan to sell. Remove the account yourself first, or the buyer will be locked out. Flashing stock firmware replaces the software itself Flashing stock firmware is a different job entirely. It overwrites the system software on the phone with a fresh copy from Samsung. The Android version, the One UI interface, the modem, the bootloader, and the drivers are all replaced. If the software itself was damaged, modified, or built for the wrong region, flashing is the only way to fix it, because a reset can only wipe data, not repair code. This is why flashing is the fix for a phone stuck in a boot loop, a phone running a custom ROM you want gone, or a phone on the wrong region's firmware. A factory reset would do nothing in any of those cases, because the problem is in the software, not in the data sitting on top of it. Flashing also wipes your data in the process, so a flash includes everything a reset does, plus a complete software replacement. The cost is that flashing needs a computer, a USB cable, Odin, and the exact firmware file for your model and region. It takes longer, and a wrong file or an interrupted flash can brick the phone. It is a repair tool, not a housekeeping tool. When a reset is enough Most everyday phone problems are data problems, and a factory reset handles them. A phone that is slow because of a bad app, a battery that drains because of a setting you changed, a phone full of apps you no longer use, or a phone you are giving away all call for a reset. If the software itself is fine and official, there is nothing to reflash. A reset is also the safe first step. If you are not sure whether the problem is in your data or in the system, reset first. It is quick, it is safe, and if the problem survives the reset, you have learned something useful: the trouble is in the system software, and flashing is the next step. Resetting first costs you nothing but time, and it often turns out to be all you needed. One exception is a phone with a damaged system. If the phone will not boot to the home screen at all, you cannot reach the reset option in Settings, and a recovery-mode reset is the only reset available. If even that fails, the problem is almost certainly in the software, and flashing is the way forward. When only flashing will do Flashing is needed when the software itself is the problem. A custom ROM you want to remove, firmware from the wrong region, a corrupted system partition, a phone stuck on old software that refuses to update, or a phone whose system files were modified all need a flash. No amount of resetting will change the software version or remove a modification, because the reset only touches your data. Flashing is also the only way to change region. If your phone runs firmware for another country and you want the firmware for your own, a reset keeps the same region. A flash with the right CSC file changes it. The same goes for moving between carrier firmware and unlocked firmware. Those are software choices, and only flashing changes them. The rule is simple. If the problem would still exist on a brand new phone of the same model, it is a software problem and flashing is the fix. If the problem came from something you did to the phone, a reset is probably enough. What to check before you choose Before either option, back up what matters. Both a reset and a flash erase your data, so photos, contacts, and files need to be copied somewhere safe first. The difference is that a reset can be undone by restoring a backup, while a flash also changes the software, so you should also note down your model number and CSC before flashing. That way you can check afterwards that the phone is running the firmware you intended. Also check the Knox flag if the phone has been flashed before. A reset never changes it, and a flash to stock firmware does not reset it either. If the flag shows 0x1, the phone was modified at some point, and that will still be true after either option. Knowing this before you start avoids a surprise later. The two tools complement each other. A reset cleans the phone, and a flash rebuilds it. Use the reset for everyday trouble and for handing a phone over. Use the flash when the software itself needs replacing. Picking the right one is the difference between a ten minute fix and an afternoon of unnecessary work. For official firmware downloads and step-by-step flashing guides, visit SamFware , where SamFware keeps the latest stock ROMs for every Galaxy model.",
+            "url": "https://dev.to/samfware/what-is-the-difference-between-a-factory-reset-and-flashing-stock-firmware-1mb2",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "android",
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-11-12T05:00:12+00:00",
+            "collected_at": "2026-11-12T05:08:57.772815+00:00"
+        },
+        {
+            "id": "c58d9dbeddfdc9f85fabd1f00a9d61a4da95b3324c4ede230a92ee52d162b45e",
+            "title": "How to Write a Service Page That Ranks on Google and Gets Enquiries",
+            "description": "Most small business websites have a home page that gets all the attention and a set of service pages that were written in an afternoon and never touched again. That's a missed chance. When someone searches for \"website development in Ranchi\" or \"accounting software for shops\", Google usually wants to show them a page about that one service, not your home page. A good service page does two jobs: it tells Google clearly what you offer and where, and it convinces the person who lands there to get in touch. Here's how I approach both. One service, one page The most common mistake I see is a single \"Services\" page listing everything in short bullet points. It's tidy, but it gives Google very little to work with, and it gives a visitor no reason to trust you. If you offer website development, mobile apps and SEO, give each one its own page. Each page can then target the words people actually search for, answer the questions specific to that service, and carry its own call to action. A short overview page that links to each of them is still useful for navigation. Start with what the searcher wants Before writing, ask: what is someone typing into Google when they need this service, and what are they hoping to find? Search it yourself. Look at the pages that already rank for your main phrase. You're not copying them; you're seeing what kind of answer Google thinks fits. Read the \"People also ask\" box. Those questions are a ready-made list of things your page should answer. Use your own enquiries. The questions customers ask you on calls and WhatsApp are usually the best content you have. The parts every service page needs A clear title and heading The page title (the blue link in Google) and the main heading should say what you do and, if you serve a local area, where. \"Website Development in Ranchi | Your Company\" is plain, but it's far clearer than \"Welcome to Our Digital Solutions\". Keep the title short enough that it doesn't get cut off in search results. An opening that answers \"am I in the right place?\" The first two or three sentences should tell the visitor what the service is, who it's for and what they get. Skip the history of the company here; that belongs lower down or on the About page. What's included and how it works Describe the actual work: what you deliver, the main steps, roughly how long things take, and what you need from the client. People hiring a service are often nervous about the unknowns. A simple step-by-step process removes a lot of that. Proof Real examples do more than adjectives. Link to case studies, show screenshots of past work (with permission), and include genuine reviews. Never make up testimonials or numbers. If you're new and don't have much proof yet, explain your process and qualifications honestly instead. Answers to common questions A short FAQ section covering cost factors, timelines, ownership, support after delivery and anything customers regularly ask. You don't need to publish exact prices, but explaining what affects the price builds trust and filters out poor-fit enquiries. One obvious next step Every service page should end, and ideally also begin, with a clear way to get in touch: a call button on mobile, a WhatsApp link, or a short form. Don't make people hunt for your contact page. Things that quietly hurt service pages Copy-pasted city pages. Creating twenty pages that only swap the city name is a well-known pattern that search engines treat as low quality. Only create location pages where you genuinely serve customers, and make each one meaningfully different. Thin content. Two short paragraphs and a stock photo rarely rank for anything competitive. Write enough to actually answer the visitor's questions. No internal links. Link to each service page from your home page, menu and relevant blog posts, and link related services to each other. This helps both visitors and Google find them. Slow, heavy pages. Large uncompressed images and too many scripts push people away before they read a word. Missing basics. Each page should have a unique title and meta description, a single main heading, descriptive image alt text, and your business name, address and phone number shown consistently with your Google Business Profile. Keep it alive A service page isn't a one-time job. Every few months, check it in Google Search Console: which searches show it, how often people click, and whether it's slipping. Add new case studies, update the FAQs with questions you've been hearing, and fix anything that's gone out of date. Small, regular improvements tend to beat a big rewrite every few years. Final thought If you only have time to improve one part of your website this month, pick the service page that brings in your best customers and make it the clearest, most helpful page on the subject. It will usually do more for your enquiries than another blog post. If you'd like a second pair of eyes on your service pages, our team at Crework Tech offers SEO services in Ranchi and works with businesses across India. We've spent 7+ years building websites and software and helping clients get found online, and we're happy to tell you honestly what's worth fixing first. Akhil Baraik is the founder of Crework Tech, an IT and digital marketing agency in Ranchi, India.",
+            "url": "https://dev.to/creworktech/how-to-write-a-service-page-that-ranks-on-google-and-gets-enquiries-5931",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "git",
+                "programmation",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-11-12T04:59:06+00:00",
+            "collected_at": "2026-11-12T05:08:57.773451+00:00"
+        },
+        {
+            "id": "02bc06fc179468a248fa801c3389f385db31e859413a7f0e895c62ff73b27066",
+            "title": "Freelance Full Stack Developer Without a Degree: Is It Easier to Start Your Career?",
+            "description": "Do you want to become a full stack developer but do not have a computer science degree? Do not let that stop you from exploring web development. Today, many people learn programming through online resources, practical projects, and structured training. A freelance full stack developer works independently to create websites and web applications for clients. Instead of working permanently for one company, you can work on different projects depending on your skills and availability. Moreover, freelancing allows beginners to demonstrate their abilities through real projects. However, you still need strong technical knowledge, problem-solving skills, and professional communication. Let's understand whether becoming a freelance full stack developer without a degree is easier and how you can get started. Why Is Freelancing an Option Without a Degree? One advantage of freelancing is that clients often evaluate your ability to solve their problems rather than focusing only on your educational qualifications. For example, a small business may need a responsive website, an online store, or a booking application. If you can understand the requirements and deliver a working solution, your portfolio can help build client confidence. Additionally, freelancing gives you opportunities to work on different types of projects and improve your technical knowledge. However, this does not mean that every client ignores qualifications. Some projects require professional experience or specific credentials. Therefore, focus on developing practical skills instead of depending only on the idea that a degree is unnecessary. Learn Essential Full Stack Development Skills Before accepting freelance projects, learn the technologies required to build complete web applications. Start with HTML for webpage structure, CSS for styling, and JavaScript for interactive features. Next, learn a front-end framework such as React. It helps you create reusable components and dynamic user interfaces. After gaining confidence, move towards back-end development using Node.js and Express.js. You should also understand databases such as MongoDB or MySQL. These technologies help you store, manage, and retrieve application information. Furthermore, learn Git and GitHub to manage your code and track project changes. Understanding responsive design, APIs, debugging, and basic website security will also make you better prepared for real client requirements. You can explore Full Stack Development training at Excellence Technology to learn about structured web development training. Build a Portfolio Before Finding Clients A portfolio is one of the most useful tools for a beginner freelance full stack developer without a degree. It allows potential clients to see what you can actually build. Start with three or four practical projects. For example, create a personal portfolio website, a blog application, an e-commerce website, and a simple appointment booking system. Include screenshots, project descriptions, technologies used, and links to working demonstrations. Additionally, upload your source code to GitHub and explain how each application works. Try to create projects that solve genuine problems instead of copying tutorials without understanding them. As a result, you will have better examples to discuss when a client asks about your experience. How Can Beginners Find Freelance Opportunities? Once your skills and portfolio are ready, start exploring opportunities that match your experience. Small businesses, startups, educational websites, and local organizations may need website development services. You can also build professional connections through your existing network. For example, approach a local business that needs a basic website and explain how you can help. However, avoid accepting complicated projects before you understand their requirements. Begin with smaller tasks, communicate clearly, and agree on project scope and deadlines. Remember that finding your first client may take time. Therefore, treat freelancing as a gradual learning process rather than expecting immediate income. Is Freelancing Easier Than Getting a Full-Time Job? Freelancing and full-time employment offer different challenges. A traditional developer job may involve technical interviews, formal eligibility requirements, and competition with other candidates. On the other hand, freelancing can allow you to demonstrate your abilities through a portfolio and project discussions. However, freelance work comes with additional responsibilities. You must find clients, understand their expectations, estimate project timelines, manage revisions, and handle payments professionally. For beginners, a practical approach is to build skills and complete personal projects before taking on small freelance assignments. This helps you gain confidence without promising services you cannot yet deliver. Create a Learning Plan and Keep Improving Consistency is more important than rushing through multiple programming courses. Start by learning HTML, CSS, and JavaScript. Then progress to React, back-end development, databases, and deployment. After learning the fundamentals, spend time building projects independently. Practise debugging, reading documentation, and explaining your code. Additionally, improve your communication and time-management skills because freelance clients expect regular updates. You can explore the Excellence Technology professional courses to review available learning options. Choose training based on its practical curriculum, projects, and support rather than relying only on certificates. Conclusion: Is Freelancing a Good Starting Point Without a Degree? Becoming a freelance full stack developer without a degree is possible, but it requires consistent learning, practical experience, and patience. Freelancing may offer more flexibility in how you demonstrate your abilities, yet it also requires you to manage clients and projects independently. Start with HTML, CSS, and JavaScript, learn a complete development stack, and build a portfolio that demonstrates your skills. Then gradually explore smaller projects and improve through real-world experience. Remember: Your degree does not define everything you can achieve. Focus on learning, building useful applications, and delivering quality work. A strong portfolio and dependable professional habits can help you work towards a successful career in freelance full stack development.",
+            "url": "https://dev.to/sourabh_singh_1948d2e0f0a/freelance-full-stack-developer-without-a-degree-is-it-easier-to-start-your-career-pl4",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "git",
+                "java",
+                "javascript",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-11-12T04:58:06+00:00",
+            "collected_at": "2026-11-12T05:08:57.774175+00:00"
+        },
+        {
+            "id": "9bc621501022b612a35363cdc0d239d08d0ab6432fc80583f5e5d347f7c3316d",
+            "title": "esbuild: Bundle JavaScript in Milliseconds, Not Seconds",
+            "description": "You change one line in a small project, save, and wait. The bundler thinks, the terminal scrolls, and a few seconds pass before the page refreshes. Do that forty times in an afternoon and you have lost several minutes to staring at a spinner, plus the focus you lose every time the flow breaks. Most bundlers are slow because they are written in JavaScript and parse everything with a JavaScript parser. esbuild is written in Go, parses in parallel, and treats bundling as a compile step rather than a scripting task. The question is whether that speed is worth changing tools for, and what you give up in return. What I would check before using it My first check is how much the build actually hurts. Two files bundle in milliseconds under any tool. The pain starts with hundreds of modules and a rebuild on every save. If a rebuild already takes seconds, esbuild's speed is the whole point. If builds are already under a second, keep what you have. My second check is what the project needs besides bundling. esbuild handles JavaScript, TypeScript, JSX, CSS, and minification, which covers most apps. It does not type check TypeScript, so a type error sails through the build, and you need a separate tsc run. It has no dev server with hot module replacement, only watch mode and a small serve mode. If the project leans on a framework's dev server, a bigger tool still fits better. My third check is how much configuration the team wants. esbuild is a command and a handful of flags, a relief after a long config file. The trade is that anything unusual needs a plugin, and the plugin ecosystem is smaller than the one around webpack or Vite. Count the custom steps in the current build first. If the list is short, esbuild covers it. My fourth check is the output target. esbuild bundles for the browser and for Node, and this post uses the Node target, which suits command line tools and small servers. My verdict, as judgement: use esbuild when the build is slow enough to notice and the project needs bundling, minifying, and TypeScript stripping rather than a framework's dev server. Skip it when you depend on hot module replacement or heavy plugins. The recommendation flips when the plugin list outgrows the source list, or when the team needs type checking inside the build. A shop price calculator, bundled end to end The example is a small shop price calculator in two files. The entry file, index.js, holds the order and prints the receipt. A helper module, pricing.js, computes line totals, a 10 percent discount on orders over $100, and 8 percent tax. Three tote bags at $18, three mugs at $14.50, and two notebook sets at $9.25 come to a subtotal of $116, so the discount kicks in, which makes the numbers worth checking by hand. Here is pricing.js: function lineTotal ( price , qty ) { return price * qty ; } function applyDiscount ( subtotal ) { if ( subtotal >= 100 ) return subtotal * 0.1 ; return 0 ; } function addTax ( amount ) { return amount * 0.08 ; } module . exports = { lineTotal , applyDiscount , addTax } ; And here is index.js, which imports those three functions and runs the order: const { lineTotal , applyDiscount , addTax } = require ( \"./pricing\" ) ; const order = [ { name : \"Canvas tote bag\" , price : 18.0 , qty : 3 } , { name : \"Ceramic mug\" , price : 14.5 , qty : 3 } , { name : \"Notebook set\" , price : 9.25 , qty : 2 } , ] ; let subtotal = 0 ; for ( const item of order ) { const total = lineTotal ( item . price , item . qty ) ; subtotal += total ; console . log ( `${item.qty} x ${item.name} = $${total.toFixed(2)}` ) ; } const discount = applyDiscount ( subtotal ) ; const afterDiscount = subtotal - discount ; const tax = addTax ( afterDiscount ) ; const grandTotal = afterDiscount + tax ; console . log ( `Subtotal: $${subtotal.toFixed(2)}` ) ; console . log ( `Discount (10% over $100): -$${discount.toFixed(2)}` ) ; console . log ( `Tax (8%): $${tax.toFixed(2)}` ) ; console . log ( `Grand total: $${grandTotal.toFixed(2)}` ) ; The build command is short: bundle the entry file, target Node, and write one output file. ./node_modules/.bin/esbuild index.js --bundle --platform=node --outfile=bundle.cjs This is the real build output: bundle.cjs 1.5kb Done in 4ms Four milliseconds, and a single 1,496 byte file. Opening bundle.cjs shows both files inlined into one: the pricing helpers first, then the entry code, with a small helper at the top that wires the CommonJS modules together. Nothing else is in there, because the only dependency is the project's own helper file. Running the bundle with Node gives the real receipt: 3 x Canvas tote bag = $54.00 3 x Ceramic mug = $43.50 2 x Notebook set = $18.50 Subtotal: $116.00 Discount (10% over $100): -$11.60 Tax (8%): $8.35 Grand total: $112.75 The numbers check out by hand: $116 minus the $11.60 discount is $104.40, and 8 percent tax on that is $8.35, giving $112.75. Running the original index.js directly prints exactly the same receipt, which is the test that matters: the bundle behaves like the source. The thing that went wrong came before the successful build. My first attempt had a typo in the import, require(\"./price\") instead of require(\"./pricing\"), and the build stopped at once: [ERROR] Could not resolve \"./price\" index.js:1:53: 1 | const { lineTotal, applyDiscount, addTax } = require(\"./price\"); | ~~~~~~~~~ 1 error The build exited with code 1 and wrote no bundle file, which is the correct behaviour: a failed build should not leave a stale bundle behind for you to run by mistake. The fix was the missing \"ing\" on the file name, and the next build finished in 4ms. The lesson is small but worth keeping: esbuild reports the bad import with the file and line number, so a broken path is a ten second fix rather than a hunt through the output. Common mistakes and how to fix them First, forgetting the --bundle flag. Without it, esbuild still writes an output file, but the require(\"./pricing\") line stays in place, so the bundle is not self contained. It runs fine while pricing.js sits next to it, then fails the moment you ship the bundle alone, with \"Error: Cannot find module './pricing'\". The fix is to always pass --bundle when you want one file, and to test the bundle in a folder of its own. Second, forgetting --platform=node when bundling for Node. esbuild targets the browser by default, so a file that uses a Node built-in module stops the build with \"Could not resolve 'fs'\", plus a hint to use --platform=node. The fix is to name the platform in the command, and to keep browser and Node builds as separate commands. Third, assuming esbuild type checks TypeScript. It strips types and bundles the code without checking them, so a wrong type in a .ts file builds cleanly and only fails later, in tests or at runtime. The fix is to run tsc --noEmit as a separate step in the same script that runs the build, so type errors still block a release. My call on esbuild esbuild does one job, bundling, and it does it fast enough that the build step stops being something you wait for. The calculator above went from two files to a single 1.5kb bundle in 4ms, and the bundle printed the same receipt as the source, which is all a bundler has to prove. Its limits are plain: no type checking, no hot module replacement, and a smaller plugin world than the big tools. For a small app, a command line tool, or a library build, that trade is easy to take. Try it on one project and time it against your current tool. If the difference is seconds per rebuild, keep it. Further reading esbuild documentation, Getting Started, https://esbuild.github.io/getting-started/ esbuild documentation, API reference, https://esbuild.github.io/api/ esbuild documentation, JavaScript API, https://esbuild.github.io/api/js/ Originally published at https://practicaldevblog.blogspot.com/2026/11/esbuild-bundle-javascript-in.html",
+            "url": "https://dev.to/practicaldevblog/esbuild-bundle-javascript-in-milliseconds-not-seconds-48k9",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "git",
+                "java",
+                "javascript",
+                "programmation",
+                "typescript",
+                "web"
+            ],
+            "published_at": "2026-11-12T04:57:32+00:00",
+            "collected_at": "2026-11-12T05:08:57.775085+00:00"
+        },
+        {
+            "id": "a7f544fd226ff636e475b68366a35ca747c7c09437b0b6d11241288271be68ad",
+            "title": "From User to Contributor: A Beginner's Guide to Open Source Workflow 🐱",
+            "description": "From User to Contributor: A Beginner's Guide to Open Source Workflow 🐱 Open source feels complicated, right? I feel the same sometimes. But you have to take the first step. And honestly, the first step always feels a little scary. We start overthinking, become afraid of making mistakes, and sometimes never even begin. But today, I've built a guide for you guys, so you don't have to experiment with everything or waste hours just understanding how open-source contributions work. Let's become a good cat! 🐱 Steps to Contribute to Open Source Here are some simple steps that can help you become a good cat in the open-source community. 1. Finding Your First Open-Source Project This step is pretty simple. You just need to visit GitHub and find an interesting open-source project that you'd like to contribute to. But where can beginners actually find projects? GitHub Explore: Discover repositories based on your interests and favourite topics. Good First Issue: Find issues marked as beginner-friendly. Projects You Already Use: Explore the tools, libraries, and frameworks you use every day. And guess what? You don't even have to search too hard to find your first project! Necoz has some interesting projects where you can begin your open-source journey. For example: is-kit type-tune Explore them, understand what they do, and see if there's something you can improve. 2. Understanding the Repository You've found a project. Now what? Start understanding it, bro! Before writing a single line of code, take some time to explore the repository. Understand what the project does, how it works, and how its files are organised. Here are some important files you should know about: File Purpose README.md Explains the project, its features, and how to use it. LICENSE Explains the legal permissions and conditions for using and modifying the project. CONTRIBUTING.md Explains how you can contribute to the project. package.json Lists dependencies, scripts, and other project information in Node.js projects. .gitignore Specifies which files Git should ignore. Also, explore existing Issues and Pull Requests . Why does this even matter? Think about it. If you don't know what a project does, how will you understand what needs improvement? You might even start fixing something that another contributor has already fixed! Understanding the repository helps you avoid unnecessary work and gives you a clearer idea of where your contribution can make a difference. 3. Setting Up Your Development Environment After exploring the project, it's time to bring it to your computer and prepare your workspace. But before moving ahead, let's understand three important terms: Fork: Creates your own copy of someone else's repository on GitHub. Clone: Downloads a repository to your local computer. Branch: Creates a separate line of development where you can make changes without directly modifying the main branch. Now let's look at a typical workflow. Step 1: Clone your fork git clone YOUR_FORK_URL This downloads your forked repository to your computer. Step 2: Enter the project directory cd project-name This takes you inside the project folder. Step 3: Create a new branch git checkout -b fix/small-bug This creates a new branch called fix/small-bug and switches you to it. For a Node.js project, you might also need: npm install npm run dev The first command installs the project's dependencies, while the second starts its development server, provided the project has a suitable dev script. Remember, the exact commands depend on the project's technology and documentation. Why use a separate branch? Because your contribution stays isolated. You can work on your changes without disturbing the main development branch. Think of it as having a separate workspace for your experiments. Pretty useful, right? 4. Finding Your First Issue Okay, you've explored the repository and successfully set up your development environment. But now comes an important question: What should you actually contribute to? Don't worry! You don't have to build an entire feature or rewrite someone's project. Most open-source repositories have a section called Issues . Think of it as a place where developers report bugs, suggest improvements, and discuss new features. When exploring issues, look for labels such as: good first issue – Issues suitable for beginners. help wanted – Issues where maintainers need additional help. documentation – Improvements related to project documentation. bug – Something that isn't working as expected. For example, imagine you're exploring a JavaScript library and discover that one of its functions produces an incorrect result. You can investigate the problem, understand its cause, and potentially contribute a fix. A small tip, bro! Before starting work on an issue, read its discussion. Check whether someone is already working on it. If you're unsure, leave a comment asking the maintainer whether you can work on it. Remember, open source is about collaboration, not competing with other contributors. 5. Making Your First Contribution Now comes the fun part! You've selected an issue, understood the problem, and are ready to make your changes. Open the project in your preferred code editor and start working on the issue. Once you've made your changes, it's time to use Git. Here are some useful commands: Step 1: Check your changes git status This shows which files you've modified, created, or deleted. Step 2: Stage your changes git add . This prepares your changes for the next commit. Step 3: Commit your changes git commit -m \"Fix documentation typo\" A commit records your changes with a short descriptive message. Step 4: Push your branch git push origin fix/small-bug This uploads your branch and its commits to your fork on GitHub. Why are commits important? Imagine working on a project for several days. You make multiple changes, and later you need to understand what changed and why. Git commits help you maintain a history of your work. A good commit message also helps other developers understand your contribution. 6. Creating Your First Pull Request (PR) You've made your changes and pushed them to GitHub. So, are you done? Not yet, bro! Now you need to introduce your changes to the original project's maintainers. This is where Pull Requests (PRs) come in. A Pull Request is a proposal asking the maintainers to review your changes and potentially merge them into the original repository. To create one: Visit your forked repository on GitHub. Open the Pull Requests section. Select New Pull Request. Choose your branch as the source and the original project's target branch as the destination. Review the changes and create your PR. Now comes another important thing: writing a good PR description. Your description should explain: What changed? Briefly describe your contribution. Why did you change it? Explain the problem you were trying to solve. How did you test it? Mention how you checked your changes. Related issue: Link the issue your PR addresses, if applicable. For example: ## Changes Fixed an incorrect installation instruction. ## Reason The previous command was outdated. ## Testing Verified the updated command. Closes #12 A clear PR description makes the maintainer's job easier. 7. Code Review and Feedback Congratulations! Your PR is submitted. But wait! Don't expect it to be merged immediately. Your contribution will usually go through a process called Code Review . During this process, project maintainers or other contributors examine your changes. They might: Approve your changes. Suggest improvements. Ask questions about your implementation. Request modifications. Close the PR if it doesn't fit the project's requirements. And that's completely normal! Don't take suggestions personally. Code review is an opportunity to learn how other developers approach problems. If a maintainer requests changes, you can update your existing branch and push another commit. Your existing PR will automatically reflect those new commits. Remember: You don't have to know everything before contributing. Learning through feedback is part of the open-source journey. 8. Getting Your PR Merged Finally, the moment you've been waiting for! Once your PR is approved and the maintainers decide to accept it, they can merge your changes into the target branch. ! You've successfully contributed to an open-source project! 🐱 But what does merging actually mean? It means your proposed changes have been integrated into the project's codebase. Your contribution is now part of the project, alongside the work of other developers. However, remember that not every PR gets merged. Sometimes a contribution is rejected, becomes unnecessary, or needs a different approach. That's okay too. A rejected PR doesn't mean you're a bad developer. It simply means there's something more to understand about the project or its requirements. 9. Keep Contributing and Stay Connected Your first merged PR is not the end of your open-source journey. It's just the beginning! Here are a few things you can do next: Explore more repositories. Help other beginners. Report bugs when you discover them. Improve documentation. Participate in project discussions. Learn from maintainers and experienced contributors. And don't forget to appreciate other contributors' work. Open source isn't just about GitHub contributions. It's about building things together, sharing knowledge, and helping communities grow. Final Words So, was open source really that complicated? Maybe it looked complicated before you understood the workflow. You don't need to be an expert developer, have years of experience, or build something extraordinary to get started. You just need curiosity, patience, and the willingness to learn. Your first contribution might be a tiny documentation fix. Your next one might be a bug fix. And someday, you might even become a maintainer yourself. Keep learning, keep contributing, and always be a good cat! 🐱",
+            "url": "https://dev.to/necoz/from-user-to-contributor-a-beginners-guide-to-open-source-workflow-44h3",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "git",
+                "ios",
+                "java",
+                "javascript",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-11-12T04:57:13+00:00",
+            "collected_at": "2026-11-12T05:08:57.776475+00:00"
+        },
+        {
+            "id": "97f3cd7dc99e42fcd573e9477b44b45635616d27d9eff884ea7a3f096d3b8dc3",
+            "title": "Best Expo templates for React Native, 2026",
+            "description": "Best Expo templates for React Native, 2026 If you are choosing a starter for an app you plan to ship, the question is less \"which template looks best\" and more \"which one will still build after the next SDK upgrade, and which one can an AI coding tool extend without breaking the rules you set\". This guide compares the Expo starters on the criteria that matter for that choice, and it says where each claim comes from. What to compare Starter pages mostly list features. Those lists are useful, but they do not tell you how the template is wired. We judged each option on five things: Expo SDK and React Native version. A template on an old SDK costs an upgrade before you write a line of your own code. The SDK version is in the repo's package.json , and we checked it there, not on the sales page. Auth, data and billing. Whether sign-in, the database and payments are wired, and whether they are wired to real services or to fixtures. Release path. Whether the template gets you to a native build on a device, or stops at the simulator. Maintenance signal. The date of the last commit, and whether the template is still on a supported SDK. Agent readiness. Whether the repo carries the context an AI tool needs to change it safely, such as a project memory file, rules, and prompts for common tasks. The competitor row: NativeLaunch NativeLaunch sells an Expo starter and publishes a \"Best Expo Templates for React Native in 2026\" comparison page at nativelaunch.dev/best-expo-templates. We read the page on 11 November 2026, and it returned HTTP 200. Its own starter is built on Expo SDK 56, according to the same page. The page lists its features as auth, payments, analytics, release workflow and UI quality. The page also gives time estimates for each feature, such as \"Save 25+ Hours\" for payments and \"Save 15+ Hours\" for deployment setup. Those figures are the seller's marketing, not measured results, so we do not repeat them as facts. If you want to test the claim, time your own setup against a fresh clone of each template. We did not confirm a price for NativeLaunch on its own site, so this guide states none. Check the current price on the vendor's page before you buy. The OTF kits Four of our kits are Expo apps. Each one ships as a private repo, and each has a live demo you can open before you buy. Fitness Kit ( expo ~58.0.21 , React Native 0.88.1). A fitness app with activity rings, workout logging, nutrition and workout programs. The kit page is at otf-kit.dev/templates/fitness-kit. Booking Kit ( expo ~58.0.21 , React Native 0.88.1). Appointment booking for coaches, therapists and consultants, with calendar and slot selection. Its data layer is Supabase. The kit page is at otf-kit.dev/templates/booking-kit. Marketplace Kit ( expo ~58.0.21 , React Native 0.88.1). A two-sided services marketplace with buyers, sellers, orders and chat. The kit page is at otf-kit.dev/templates/marketplace-kit. Arcade Kit ( expo ~58.0.21 , React Native 0.88.1). A games storefront with a catalog, rails and a game detail page. The kit page is at otf-kit.dev/templates/arcade-kit. All four kit pages returned HTTP 200 on 11 November 2026. The SDK and React Native versions above are from each kit's package.json . Before you start any of them, check that file again, because a kit's version can change between releases. All four kits ship a CLAUDE.md file with the stack, the folder map and the rules the AI tool should follow. That file is the first thing to read in any of them. How to choose Choose by the app you are building, not by the number of screens in the demo. If you are building a fitness or wellness app, start with the Fitness Kit, since its rings, logging and plan screens are already built. If your app is a booking product, the Booking Kit's slot logic and Supabase setup save the most time. If you are building two-sided marketplace flows, the Marketplace Kit covers the order and chat paths. The Arcade Kit suits a catalog or storefront product. If none of these fits, a free starter is a reasonable base. The Expo team's own examples and the widely used open-source starters are free, and a paid template only earns its price if it saves you the setup work you would otherwise do yourself. Working with an AI coding tool An AI tool is only as good as the context it reads. A starter that carries clear rules, a folder map and tested prompts for common changes gives the tool a fair chance to make a correct change on the first try. A starter with none of that leaves the tool to guess the conventions from the code, which is where most of the breakage comes from. Before you choose, open the repo and read its project memory file. Check whether the rules say which folders hold the UI primitives, where the data hooks live, and how to add a screen. If those answers are missing, expect to spend the first week teaching the tool the codebase. What to check before you buy Run through this list on any starter, paid or free: The SDK and React Native versions in package.json , and the date of the last commit. A native build on a device, not only the web preview. The sign-in path, using a real account, not a demo login. The data layer, and whether it runs against a real database or fixtures only. The license, and what you may ship to customers. Where to go next Start with the live demos. Open each kit's demo on a phone, sign in where the kit allows it, and walk the main flow. Then read the kit's CLAUDE.md . If the demo and the rules match what you need, the kit is a fair choice. The kit pages are at otf-kit.dev/templates/fitness-kit, /templates/booking-kit, /templates/marketplace-kit and /templates/arcade-kit. Every kit runs on Expo SDK 58, so the upgrade steps from our guide, \"How to upgrade an Expo app one SDK version at a time\", apply once you move to a later SDK. Read that guide at otf-kit.dev/blog/expo-sdk-upgrade-guide before you plan the first upgrade, so you know what the build step involves on a device.",
+            "url": "https://dev.to/davekurian/best-expo-templates-for-react-native-2026-2cji",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "anthropic",
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-11-12T04:56:49+00:00",
+            "collected_at": "2026-11-12T05:08:57.777208+00:00"
+        },
+        {
+            "id": "69096c5db56dd3d9125462c790e4281f87d71fe19bac706c2b0cf7c6714d289f",
+            "title": "How HEIC to JPG Conversion Works Under the Hood",
+            "description": "If you have ever tried to upload an iPhone photo to a website and been told the file type is not supported, you have met HEIC. Converting HEIC to JPG means decoding a photo stored with HEVC video compression inside a HEIF container, then re-encoding the same pixels as a JPEG. The image itself survives the trip — what changes is the wrapper and the compression method, which is why almost every website, app and printer can suddenly open it. Try the free HEIC to JPG Converter — convert your iPhone photos in your browser. Free, no sign-up, your photos are never uploaded. What is HEIC, and why does your iPhone use it? HEIC is Apple's name for photos stored in the HEIF container with HEVC (H.265) compression. Apple made it the iPhone camera default in iOS 11 in 2017 because HEVC squeezes the same photo into roughly half the space of JPEG at the same quality, and it can also hold 16-bit colour, live photos and bursts in a single file. HEIF (High Efficiency Image File Format) is the container — the box the picture lives in. HEVC (High Efficiency Video Coding, also called H.265) is the compression that squeezes the pixels inside that box. HEIC is simply the file extension Apple uses when a HEIF file contains HEVC-compressed images. The underlying standard, ISO/IEC 23008-12, was finalised by the Moving Picture Experts Group (MPEG) in mid-2015, and Apple was the first major adopter, shipping HEIC as the iPhone camera default in iOS 11 in 2017 (Wikipedia, \"High Efficiency Image File Format\"). Phones were shooting bigger photos, 4K video and live photos, and HEVC cut photo sizes roughly in half, so a phone could hold twice as many pictures without a bigger storage chip. Why can't most websites and apps open HEIC files? Most of the web was built around JPEG, which has worked everywhere since 1992. HEIC arrived 25 years later and needs an HEVC decoder, which many browsers, Windows PCs and web services still do not ship — partly because HEVC carries patent licensing costs. That is why a photo that opens fine on your iPhone shows up as an error elsewhere. JPEG became universal because it was free to use and every device agreed on it. HEVC, by contrast, is covered by patent pools, and companies that ship a decoder pay licensing fees. Browser makers and many web services decided the cost was not worth it, so Chrome, Firefox and most upload forms still cannot read HEIC directly. Windows needs a paid extension before its Photos app will open one, and many Android phones only gained HEIC support with Android 10 in 2019. How does HEIC to JPG conversion actually work? Conversion has three steps. First the tool reads the HEIF container and pulls out the image data, metadata and any extra pictures. Then it decodes the HEVC-compressed pixels back into a full image. Finally it re-encodes those pixels as a JPEG, applying JPEG's own compression and writing a standard file any device can open. Step one is unpacking the container. A HEIC file is not just pixels: it is a structured file built on the same ISO base media format that MP4 video uses. Inside it sit the compressed image data, the EXIF metadata (date, camera settings, location), a thumbnail, and sometimes extra images, like the frames of a live photo. The converter reads this structure and picks the main image. Step two is the hard part: decoding HEVC. The pixels are stored the way a video codec stores a frame — split into blocks, predicted from neighbouring blocks, and squeezed with a transform. Decoding reverses all of that and rebuilds the full grid of pixels. This step needs a real HEVC decoder, which is why some older tools cannot convert HEIC at all. Step three is encoding JPEG. The decoded pixels are fed to a JPEG encoder, which splits the image into 8×8 blocks and throws away the fine detail you are least likely to notice. The result is written out as a standard .jpg file, with the metadata copied across if the tool supports it. Why is converting HEIC to JPG lossy — and does it matter? JPEG compression throws away fine detail the eye barely notices, so converting from HEIC to JPG loses a little information permanently. In practice it rarely matters: at high quality settings the difference is invisible in normal viewing. Keep the original HEIC if you plan to edit the photo later. The loss comes from JPEG itself. HEIC's HEVC compression is also lossy, so the photo has already lost some information once, on the phone. Converting adds a second round, because JPEG discards a different set of fine details. Each round is small, but the damage is cumulative — never convert the same photo back and forth repeatedly. For everyday sharing and printing, a high-quality conversion is indistinguishable from the original. It only matters for heavy editing: if you plan to push the exposure or print very large, start from the original HEIC and convert only the finished copy. What happens to photo quality and metadata during conversion? Quality depends on the JPEG quality setting — 90% or above keeps photos looking the same for everyday use. Metadata such as the date, location and camera settings can be carried over, but some converters drop it. One thing that does not survive is HEIC's 16-bit colour: JPEG stores 8 bits per channel, so extreme edits may show banding. The 16-bit to 8-bit step is the one real downgrade. A HEIC file holds 65,536 shades per colour channel; a JPEG holds 256. You cannot tell the difference in a normal photo, but if you later brighten a dark sky or push the colours hard, the missing shades can show as visible bands instead of a smooth gradient. Keep the original HEIC as your archive copy. Metadata lives in the file's EXIF block — date, GPS location, camera model and exposure settings — and a good converter copies it into the new JPEG. Some converters strip it on purpose, as a privacy feature, so location data is not shared by accident. If the date matters to you, check that it survived before you delete the original. How can I convert HEIC to JPG without uploading my photos? Use a converter that runs entirely in your browser, like the HEIC to JPG tool on ToolsOfWeb. Your photo is decoded and re-encoded on your own device, so it never travels to a server. Just drop in the file, pick a quality, and download the JPG. Here is the whole process, start to finish: Open the HEIC to JPG Converter and drop in your .heic file. Choose a quality setting — high for photos you will keep or print, medium for quick sharing. The tool decodes the HEVC data and re-encodes it as JPEG, right in your browser. Download the .jpg and use it anywhere: websites, email, printers, Windows PCs. If the file you need is a different format, the Image Format Converter handles PNG, WebP, JPEG and more the same way. And if the converted JPG is still too large to upload, the Image Compressor can shrink it further — the guide on how to compress images without losing quality walks through the settings step by step. FAQs Is HEIC better than JPG? HEIC stores the same quality in about half the space of a JPEG, supports 16-bit colour, and holds live photos and bursts in one file. JPG wins on compatibility: it opens on every device, browser and website, while HEIC still needs a modern Apple device or a converter. For storing photos, HEIC is better; for sharing, JPG is safer. Does converting HEIC to JPG reduce quality? Slightly, yes, because JPEG is a lossy format — it permanently discards fine detail to shrink the file. At a high quality setting (90% or above) the loss is invisible in normal viewing. Avoid converting the same file twice, and keep the original HEIC if you plan to edit the photo later. Can I convert HEIC to JPG on Windows? Yes. The easiest way is a browser-based converter, which works on any operating system because the conversion happens on the page, not on your computer's built-in software. The HEIC to JPG Converter runs entirely in your browser on Windows, Mac or Linux — no app to install and no extension to buy. Will my photo's location and date survive the conversion? It depends on the converter. A good one copies the EXIF metadata — date, camera settings and GPS location — into the new JPEG. Some converters strip it on purpose, as a privacy feature, so location data is not shared by accident. Check your tool's settings before converting, and verify the date on the converted file before deleting the original. Try the free HEIC to JPG Converter — convert your iPhone photos in your browser. Free, no sign-up, your photos are never uploaded.",
+            "url": "https://dev.to/usamafarooq/how-heic-to-jpg-conversion-works-under-the-hood-44h",
+            "source": "DEV Community",
+            "category": "linux",
+            "tags": [
+                "android",
+                "developpement",
+                "ios",
+                "linux",
+                "programmation",
+                "web",
+                "windows"
+            ],
+            "published_at": "2026-11-12T04:56:44+00:00",
+            "collected_at": "2026-11-12T05:08:57.778237+00:00"
+        },
+        {
+            "id": "0a7fd303a43b8569f851a7ca8513d58fa9e560a0afea633fe33a6ac5de83c5fb",
+            "title": "ScreenConnect Attacks Target at Least 288 Endpoints Across 48 Organizations With Rogue Clients",
+            "description": "ConnectWise has taken the precautionary step of disabling five third-party extensions in partner environments following reports of unauthorized access. In an advisory posted on its site, the company said there is no evidence that the incident involves a compromise of its infrastructure or a vulnerability in the ScreenConnect software. \"Our initial assessment suggests the activity may involve",
+            "url": "https://thehackernews.com/2026/11/screenconnect-attacks-target-at-least.html",
+            "source": "The Hacker News",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "hacking",
+                "vulnerabilites"
+            ],
+            "published_at": "2026-11-12T04:39:48+00:00",
+            "collected_at": "2026-11-12T05:08:54.644953+00:00"
+        },
+        {
+            "id": "271f5d0fa3609755e5315a4555cd9fb1fb58afb27acdb3717e20d2899d80e20e",
+            "title": "Darling Development Update – Q4 2026",
+            "description": "Comments",
+            "url": "https://blog.darlinghq.org/2026/11/08/development-update-q4-2026/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-12T04:32:31+00:00",
+            "collected_at": "2026-11-12T05:08:57.504987+00:00"
+        },
+        {
+            "id": "478e6fab3b251480fcc90afd208d18e72eb638b5d7b8d28af7c2dd93cca0c4f9",
+            "title": "Bitcoin listless, Nvidia perps crash 7% as CEO Jensen Huang reportedly faces the axe",
+            "description": "",
+            "url": "https://www.coindesk.com/markets/2026/11/12/bitcoin-listless-nvidia-perps-crash-7-as-ceo-jensen-huang-reportedly-faces-the-axe",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto",
+                "nvidia"
+            ],
+            "published_at": "2026-11-12T04:03:47+00:00",
+            "collected_at": "2026-11-12T05:09:14.488558+00:00"
+        },
+        {
+            "id": "c52ee581e7e92a397fb639753d9f7583a399c9833af30dd8a71c3ff9f4976338",
+            "title": "XRP Large Wallets Keep Growing Through a 30% Slide Toward $1.05",
+            "description": "XRP wallets holding at least 10,000 tokens increased as the cryptocurrency fell roughly 30% over seven weeks, according to Santiment. The firm viewed the divergence as an accumulation signal, with $1 emerging as the immediate price level to defend. XRP Large Wallet Count Expands During Price Decline Blockchain analytics firm Santiment highlighted growth in large […]",
+            "url": "https://news.bitcoin.com/market-updates/xrp-large-wallets-keep-growing-through-a-30-slide-toward-1-05/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-11-12T03:45:35+00:00",
+            "collected_at": "2026-11-12T05:09:14.705690+00:00"
+        },
+        {
+            "id": "e0ab18f93e557472f14aa9e9834384f8bfcc7a796af19898cce9c75db8365d8a",
+            "title": "Skyrim Celebrates 15 Years Of Adventure With Switch eShop Sale, Get 60% Off",
+            "description": "Play it again, for Todd. Forget Zelda and GTA for just a moment, as Bethesda needs to remind us about its epic fantasy RPG, The Elder Scrolls V: Skyrim . Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/news/2026/11/skyrim-celebrates-15-years-of-adventure-with-switch-eshop-sale-get-60percent-off",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-11-12T03:45:00+00:00",
+            "collected_at": "2026-11-12T05:09:13.078760+00:00"
+        },
+        {
+            "id": "a552875406bb3160c61364bce8d481550c85395465eb574b1961480abc1fe77c",
+            "title": "Who could replace Jensen Huang? A highly unscientific list of possible successors",
+            "description": "Nvidia has no succession plan and a CEO in hot water, so we’ve drafted a shortlist.",
+            "url": "https://techcrunch.com/2026/11/11/who-could-replace-jensen-huang-a-highly-unscientific-list-of-possible-successors/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "nvidia",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-11-12T03:13:10+00:00",
+            "collected_at": "2026-11-12T05:08:55.683992+00:00"
+        },
+        {
+            "id": "2c971fc5640cd3f4784600c820d0c9b6ed7b753abc36ca8e4a2e59999b75e806",
+            "title": "Witcher 3's New Expansion Pairs Geralt's Polish Voice Actor With AI, But It's A \"Special Case\"",
+            "description": "CDPR got the actor's blessing, after he suffered a stroke. The Witcher 3 is getting a brand new expansion next year titled ' Songs of the Past ' and it's been revealed CD Projekt Red has used AI to help out with voice dialogue. Before you get those pitchforks out, this is a \"special case\", according to the Polish developer. As highlighted by Game File reporter Stephen Totilo, CDPR called on the AI company 'Respeecher' to \"record and tweak\" the Polish voice of Geralt, Jacek Rozenek, after he suffered a stroke in 2019. Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/news/2026/11/witcher-3s-new-expansion-pairs-geralts-polish-voice-actor-with-ai-but-its-a-special-case",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-11-12T02:55:00+00:00",
+            "collected_at": "2026-11-12T05:09:13.078903+00:00"
+        },
+        {
+            "id": "a9d8c654e954b7f3a8aa21a6c4af40c5474bc6faa9c33edd7727ad2f97a9f037",
+            "title": "Lean Grimoire",
+            "description": "Comments",
+            "url": "https://terrytao.wordpress.com/2026/11/11/lean-grimoire/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-12T02:36:48+00:00",
+            "collected_at": "2026-11-12T05:08:57.505092+00:00"
+        },
+        {
+            "id": "f006178b0cfbcd1a4b5e03d1b5ad7144c33b5ce4f8181bc4fa7f1d884759ad4d",
+            "title": "Bitcoin Faces Deeper Reset Risk as Bitfinex Warns of $70K Drop",
+            "description": "Bitfinex warned that bitcoin risked a prolonged decline as weak fund flows, uneven corporate demand, and broader market pressures tested its recovery. The exchange also flagged growing futures exposure and steeper altcoin losses. Bitcoin Faces a $75,717 Recovery Test Crypto exchange Bitfinex warned Nov. 11 that bitcoin risked a deeper reset, meaning a prolonged decline, […]",
+            "url": "https://news.bitcoin.com/market-updates/bitcoin-faces-deeper-reset-risk-as-bitfinex-warns-of-70k-drop/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-11-12T02:30:56+00:00",
+            "collected_at": "2026-11-12T05:09:14.705825+00:00"
+        },
+        {
+            "id": "7c413c5b5223a5760079bec0892f6eba625bf03921259c82233698ccd9d9db80",
+            "title": "Critical RCE Vulnerability in Apache HTTP Server",
+            "description": "Comments",
+            "url": "https://www.wiz.io/blog/cve-2026-119618-rce-apache-http-server-vulnerability",
+            "source": "Hacker News",
+            "category": "cybersecurite",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-12T02:11:11+00:00",
+            "collected_at": "2026-11-12T05:08:57.504624+00:00"
+        },
+        {
+            "id": "59712de5a43d509206a2f57d5e076ff71e29f76849c94bdaddbea1782fe93875",
+            "title": "BTC, ETH and XRP Fear Hits ‘Boiling Point’ as Rally Hopes Rise",
+            "description": "Santiment reported bearish social sentiment across bitcoin, ethereum, and XRP as cryptocurrency prices faced renewed pressure. The analytics firm argued that widespread pessimism could create conditions for a recovery, with XRP recording the weakest ratio among the three assets. Bearish Commentary Outweighs Optimism Across Three Major Assets Santiment, a crypto analytics firm that tracks online […]",
+            "url": "https://news.bitcoin.com/market-updates/btc-eth-and-xrp-fear-hits-boiling-point-as-rally-hopes-rise/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto",
+                "ethereum"
+            ],
+            "published_at": "2026-11-12T01:15:25+00:00",
+            "collected_at": "2026-11-12T05:09:14.705938+00:00"
+        },
+        {
+            "id": "87800d9dfbf8d4a6f43781e2626503ea10f97fda708e15444c7d99ead5dcbde9",
+            "title": "Russian cloud Yandex says drone attacks on its datacenters caused data loss",
+            "description": "Now enables backup by default and hints a little on-prem infra never hurt anyone",
+            "url": "https://www.theregister.com/off-prem/2026/11/12/russian-cloud-yandex-says-drone-attacks-on-its-datacenters-caused-data-loss/5309234",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-11-12T01:10:24+00:00",
+            "collected_at": "2026-11-12T05:08:56.598909+00:00"
+        },
+        {
+            "id": "6cb51ebe747314a762f245d0db623be17205fceebd7ddfa1a5ae44a2a3012c04",
+            "title": "Chinese AI Project Scouts Spies in Taiwan Chip Industry",
+            "description": "The CCP built a Big Data system to scrape reams of information and learn about individuals abroad, to potentially target and exploit them. Think Alice Huang Lite.",
+            "url": "https://www.darkreading.com/threat-intelligence/chinese-ai-project-scouts-spies-taiwan-chip-industry",
+            "source": "Dark Reading",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "enterprise-security"
+            ],
+            "published_at": "2026-11-12T01:00:00+00:00",
+            "collected_at": "2026-11-12T05:08:55.204008+00:00"
+        },
+        {
+            "id": "f06afad95fd280ed49928db4ad2f9c57102c3d958429ef96d2187222fdd8cd8f",
+            "title": "How Observe.AI Used MongoDB Resharding to Scale Its AI Platform",
+            "description": "Launched in 2017, Observe.AI was originally known for its expertise in conversation intelligence and contact center analytics. In recent years, however, the company has grown into a comprehensive agentic AI platform, and now has three core offerings: AI agents for customers that resolve customer requests across voice and chat. AI agents for frontline teams. These include Observe.AI’s recently launched Companion Agent, which provides human team members real-time guidance and automates work before, during, and after customer interactions. AI agents for operations that evaluate interactions, generate coaching, uncover operational insights, and drive continuous improvement across contact centers. Observe.AI uses MongoDB Atlas as the foundational data layer for its AI platform and relies on it to store raw customer conversations, AI-generated enrichments, model configurations, and agent metadata. MongoDB's flexible document model enables rapid iteration as AI models evolve, while its scalability—supporting over 100 clusters and 50+ TB of data—has made it the trusted system of record powering our platform's intelligence layer. Recently, the team wanted to continue scaling with MongoDB in a way that preserved application availability, reduced operational risk, and created a predictable runway for continued data growth. The team partnered with MongoDB Consulting ’s professional services to scale a production-critical MongoDB Atlas deployment to support Observe.AI’s conversation intelligence platform. The project was a joint engineering effort between Observe.AI and MongoDB that used MongoDB resharding as a practical, online mechanism for redistributing large collections across a broader shard footprint. Expanding a constrained shard footprint At the time of the project, the cluster had the following characteristics: A sharded MongoDB Atlas deployment with two data shards plus config servers. Approximately 13 TB of compressed data per data shard, representing roughly 50 TB of uncompressed data overall. Each shard runs on the M140 tier with a disk limit of approximately 14 TB, leaving limited available headroom. A sustained ingest rate of roughly 50 GB per day, making proactive capacity expansion important for safe long-term operations. Several multi-TB collections with significant index footprint and production traffic. This setup had worked at an early stage in the company's cycle, but was no longer fit for purpose and could lead to performance issues or service degradation that would directly impact customers. The engineering objective of the MongoDB–Observe.AI effort was clear: to expand a constrained shard footprint to a healthier horizontal layout, while also keeping the application online and minimizing disruption to production workloads. Beyond balancer: a faster redistribution for large-scale data movements After adding new shard capacity, the team evaluated the default balancer-driven redistribution path. They determined that the balancer was the right tool for ongoing incremental balancing, but the volume of data to be redistributed was large enough that relying on chunk migrations alone would have extended the migration window and kept the original shards under elevated pressure for longer than desired. The team also tackled a number of other constraints. First, the new shard capacity could receive data, but the pace of redistribution was bounded by balancer and range-deletion throughput; range deletion also created additional background load on shards that were already carrying production traffic. Secondly, existing shards periodically experienced high WiredTiger cache pressure, making it important to avoid prolonged competition between application traffic, balancing, and cleanup activity. Finally, the team wanted a controlled, predictable migration path rather than an extended background redistribution process. They concluded that the balancer should continue to handle incremental corrections, but a faster and more explicit redistribution mechanism was needed for the initial large-scale data movement. The four-step resharding plan Instead of relying solely on balancer migrations, the MongoDB–Observe.AI team designed a controlled resharding plan: Scale out the cluster Increase capacity by adding multiple new shards (not just one) so that, after redistribution, each shard would hold a manageable share of the ~50 TB dataset. Prepare the cluster for resharding Ensure no ongoing migrations or resharding jobs. Pin the config servers to remain embedded/dedicated as appropriate for this topology. Disable range deletions and disallow chunk migrations for critical collections so that resharding traffic does not compete with the balancer and range deleter for IOPS. Run resharding on the largest collections For each large collection ( collection6 , collection7 , collection8, etc.), run reshardCollection to redistribute data across the new shard set, keeping the same shard key but changing the ownership distribution. Execute resharding sequentially per collection to avoid overloading donors, recipients, or the config server. Table 1. Resharding performance metrics. 4. Clean up and return to normal operations Once data has been redistributed: Remove old empty shards from the cluster. Remove temporary zone configurations that were only needed during the migration. Re‑enable balancing and range deletions for the now‑healthy collections. Resharding driving greater optimization, performance, and reliability The joint effort gave Observe.AI a safer and more scalable data foundation for continued platform growth. Thanks to resharding, the cluster moved from a limited disk runway to a healthier multi-month capacity position, while large multi-TB collections were redistributed across the expanded shard footprint using online resharding rather than relying only on extended balancer-driven chunk migration. Production reads and writes continued during the clone and catch-up phases, with only the final commit phase requiring a brief write-blocking critical section. The team reduced sustained pressure on the original shards and created more room for future ingest growth, maintenance, and operational flexibility. Finally, after the migration, the MongoDB balancer returned to its normal role of incremental rebalancing, while the heavy data movement was handled through the more appropriate resharding workflow. The project highlighted how sharding and resharding can be used proactively as part of ongoing capacity management, helping optimize storage utilization, manage growing data volumes, and maintain platform performance and reliability as workloads scale. Combining horizontal scale-out and resharding: A winning combo The key idea behind MongoDB’s resharding capability is simple— sharding should not be the last‑resort, once‑in‑a‑lifetime operation you dread. It should be a practical, fast tool you can use whenever your workload outgrows its current shape. If you treat sharding as “too expensive” and delay it until your primary is holding tens of TBs, you pay that cost back many times in: Oversized single replica sets, Operational risk, And slow, painful balancing when you finally add shards. By combining horizontal scale-out with resharding, which has been available since MongoDB 8.0 launched in 2024, you can start small, grow organically, and still have a predictable, efficient path to redistribute data when your cluster—and your business—takes off. Observe.AI’s platform processes billions of customer interactions each year, so the infrastructure has to scale as seamlessly as the business. Working alongside the MongoDB team enabled Observe.AI to redistribute more than 50 TB of production data with virtually no disruption to customers. MongoDB 8.0 resharding provided the operational confidence to expand capacity proactively instead of reacting to infrastructure limits, allowing Observe.AI’s engineering teams to stay focused on delivering innovation for customers.",
+            "url": "https://www.mongodb.com/company/blog/innovation/how-observe-ai-used-mongodb-resharding-scale-ai-platform",
+            "source": "MongoDB",
+            "category": "bases_de_donnees",
+            "tags": [
+                "database",
+                "intel",
+                "mongodb",
+                "nosql",
+                "rust"
+            ],
+            "published_at": "2026-11-12T01:00:00+00:00",
+            "collected_at": "2026-11-12T05:09:08.292453+00:00"
+        },
+        {
+            "id": "0820b7359c32c6feceec934e55732703e5803c740369c1ecb890192991c5702a",
+            "title": "Lara's New Tomb Raider Game Is Apparently On Its Way To Switch 2",
+            "description": "Did Amazon just confirm it? Tomb Raider: Legacy of Atlantis (a reimagining of Lara's original 1996 game) was confirmed for the Switch 2 earlier this year, and will be launching alongside other versions next February. Now, in an update, it seems her \"next all-new entry\" Tomb Raider Catalyst could also be on the way to the hybrid platform. This new title, developed by Crystal Dynamics, arrives in 2028 , and while there's no Nintendo announcement just yet, an updated Amazon News post might have already confirmed it. Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/news/2026/11/laras-new-tomb-raider-game-is-apparently-on-its-way-to-switch-2",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-11-12T00:45:00+00:00",
+            "collected_at": "2026-11-12T05:09:13.079015+00:00"
+        },
+        {
+            "id": "a39e48c35074df99c28491eca7a623b8c55f9f638030b7e6ddc7582b73ffa8ef",
+            "title": "Strategy Loses MSCI Index Spot as Bitcoin Bet Faces New Test",
+            "description": "MSCI confirmed Strategy’s removal from its USA Index, setting up portfolio changes for funds tracking the benchmark. The decision followed a dispute over how the index provider classifies companies whose businesses center on holding assets. Funds Face Strategy’s November Index Exit Index provider MSCI named Strategy Inc. (Nasdaq: MSTR) for removal from its USA Index […]",
+            "url": "https://news.bitcoin.com/featured/strategy-loses-msci-index-spot-as-bitcoin-bet-faces-new-test/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-11-12T00:05:38+00:00",
+            "collected_at": "2026-11-12T05:09:14.706045+00:00"
+        },
         {
             "id": "65b96c238445cdedc96b3e82ec1a6dd0c150d0317effbb199d997528a4ce6af2",
             "title": "Gilbert + Tobin rethinks the business of law with AI",
@@ -16,6 +480,35 @@
             ],
             "published_at": "2026-11-12T00:00:00+00:00",
             "collected_at": "2026-11-11T03:58:38.658292+00:00"
+        },
+        {
+            "id": "9a08fb8455b5f6d0633f2479bf5cb698ec11e33c138c281099e797bbab748276",
+            "title": "Japan Pushes Emergency Funding for Cybersecurity as AI-Assisted Breaches Rise",
+            "description": "The package adds public-private cyber responders, an AI-focused team run by the economic ministry, and more leeway to use the government's new active cyber-defense powers.",
+            "url": "https://www.darkreading.com/cybersecurity-operations/japan-emergency-funding-cybersecurity-ai-assisted-breaches",
+            "source": "Dark Reading",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "enterprise-security"
+            ],
+            "published_at": "2026-11-12T00:00:00+00:00",
+            "collected_at": "2026-11-12T05:08:55.204081+00:00"
+        },
+        {
+            "id": "943d5264270c6e4bbd26aa93ef2c5bd2d17e81bbb9acaa9bf826e99cb16626dd",
+            "title": "The Myth of Neutral Code",
+            "description": "Comments",
+            "url": "https://foss.life/notes/2026/the-myth-of-neutral-code/",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-11-11T23:59:09+00:00",
+            "collected_at": "2026-11-12T05:08:57.676091+00:00"
         },
         {
             "id": "2c1c14009b34ac8bb9e2d456ed9c21a0593b3ef24d53b588133e84e65f28b7f4",
@@ -274,6 +767,22 @@
             "collected_at": "2026-11-11T23:54:40.960053+00:00"
         },
         {
+            "id": "1f5e80ecd028db80123c1deeae936045cb2f4306aa829e087c7ab4672478d354",
+            "title": "Ornith-1.0-9B and Ornith-1.0-35B models now available on Amazon SageMaker JumpStart",
+            "description": "DeepReinforce AI's Ornith-1.0-9B and Ornith-1.0-35B models are now available on Amazon SageMaker JumpStart, expanding the portfolio of foundation models available to AWS customers. These two models are part of the Ornith 1.0 family of open-source, self-scaffolding agentic coding models released under the MIT license, achieving state-of-the-art performance among open-source models of comparable size on coding benchmarks such as Terminal-Bench 2.1, SWE-Bench, NL2Repo, and OpenClaw. These models address different agentic coding challenges with specialized capabilities: Ornith-1.0-9B is a lightweight 9B-parameter dense model post-trained on Qwen 3.5 9B, designed for efficient single-GPU deployment. With a 256K-token context window and 32 decoder layers, it is well-suited for individual developers and small teams running agentic coding workflows on a single GPU — including laptops with consumer-grade hardware. Its self-improving training framework uses reinforcement learning to jointly optimize scaffold generation and solution rollouts, enabling the model to discover better search trajectories and generate higher-quality code solutions. Ornith-1.0-35B is a 35B-parameter Mixture-of-Experts (MoE) model post-trained on Qwen 3.5, delivering stronger agentic coding performance while remaining deployable on a single 24GB consumer GPU. Like its smaller sibling, it employs reinforcement learning to jointly optimize the scaffolds that drive coding tasks and the resulting solution rollouts, discovering superior code trajectories. Its MoE architecture activates only a subset of parameters per token, providing a strong balance of quality and efficiency for production agentic coding workloads. With SageMaker JumpStart, customers can deploy any of these models with just a few clicks to address their specific AI use cases. To get started with these models, navigate to the SageMaker JumpStart model catalog in the SageMaker console or use the SageMaker Python SDK to deploy the models to your AWS account. For more information about deploying and using foundation models in SageMaker JumpStart, see the Amazon SageMaker JumpStart documentation .",
+            "url": "https://aws.amazon.com/about-aws/whats-new/2026/01/ornith-1-0-9b-ornith-1-0-35b-on-sagemaker-jumpstart/",
+            "source": "AWS What's New",
+            "category": "cloud",
+            "tags": [
+                "amazon",
+                "aws",
+                "cloud",
+                "python"
+            ],
+            "published_at": "2026-11-11T23:36:00+00:00",
+            "collected_at": "2026-11-12T05:09:00.453239+00:00"
+        },
+        {
             "id": "c80b16c4f3bf86c6aa9f5ef80a8cdeefcac75a5d8b558125a88b75f8227d2b12",
             "title": "Nvidia’s stock drops as board reportedly preps to oust CEO Jensen Huang",
             "description": "As soon as Wednesday evening, Nvidia's board could decide to remove its founder and CEO of 33 years.",
@@ -303,6 +812,22 @@
             ],
             "published_at": "2026-11-11T23:22:29+00:00",
             "collected_at": "2026-11-11T23:54:40.730729+00:00"
+        },
+        {
+            "id": "8fb2921730aed5b7e2bf801d0f802089b3dc95b2f1010a5376f3de40018e1c46",
+            "title": "DeepSeek-V4-Pro, DeepSeek-V4-Flash, and DeepSeek-V4.1-Flash models now available on Amazon SageMaker JumpStart",
+            "description": "DeepSeek's DeepSeek-V4-Pro, DeepSeek-V4-Flash, and DeepSeek-V4.1-Flash models are now available on Amazon SageMaker JumpStart, expanding the portfolio of foundation models available to AWS customers. These three open-weight Mixture-of-Experts (MoE) language models, released under the MIT license, deliver frontier-class performance across reasoning, coding, and agentic workloads while activating only a fraction of their total parameters per token, enabling high efficiency at scale. These models address different AI challenges with specialized capabilities: DeepSeek-V4-Pro is designed for complex reasoning and high-quality text generation at flagship scale. This 1.6T-parameter MoE model activates 49B parameters per token and supports a 1M-token context window, making it well-suited for long-document analysis, multi-step reasoning, and demanding generation tasks that require maximum model capacity. DeepSeek-V4-Flash delivers strong performance at significantly lower compute cost as an efficient 284B-parameter MoE model activating 13B parameters per token. It supports the same 1M-token context window as V4-Pro, making it ideal for latency-sensitive and cost-conscious production deployments across a wide range of language tasks. DeepSeek-V4.1-Flash provides next-generation agentic efficiency with native multimodal support. Built on a novel Causal Encoder-Decoder (CED) architecture with a 552B-parameter backbone, it activates just 8B parameters during prefill and 16B during decode, supporting a 1M-token context window and 384K max output tokens. Its Compressed Sparse Attention 2 (CSA2) and FP4 KV caching reduce the global KV cache footprint to roughly 1/4 of V4-Flash, delivering substantially improved cost efficiency for agentic workloads, coding, and vision tasks. With SageMaker JumpStart, customers can deploy any of these models with just a few clicks to address their specific AI use cases. To get started with these models, navigate to the SageMaker JumpStart model catalog in the SageMaker console or use the SageMaker Python SDK to deploy the models to your AWS account. For more information about deploying and using foundation models in SageMaker JumpStart, see the Amazon SageMaker JumpStart documentation .",
+            "url": "https://aws.amazon.com/about-aws/whats-new/2026/01/deepseek-v4-pro-v4-flash-v4.1-flash-on-sagemaker-jumpstart/",
+            "source": "AWS What's New",
+            "category": "cloud",
+            "tags": [
+                "amazon",
+                "aws",
+                "cloud",
+                "python"
+            ],
+            "published_at": "2026-11-11T23:18:00+00:00",
+            "collected_at": "2026-11-12T05:09:00.453495+00:00"
         },
         {
             "id": "b908c072a557d814cedf9334de9d646c28a7fb9633e391bd3e64354a526e32d1",
@@ -336,6 +861,23 @@
             ],
             "published_at": "2026-11-11T23:10:17+00:00",
             "collected_at": "2026-11-11T23:54:38.876518+00:00"
+        },
+        {
+            "id": "d3cafa8c4cc3a21459bc57093a0324c16ef21aa0527918ef1ef5790a525f08d6",
+            "title": "Sprout Pi lets old iPods run Linux apps and stream Spotify",
+            "description": "Sprout is an open source replacement motherboard for iPods that keeps the original screen and click wheel, but adds Wi-Fi, Bluetooth and streaming apps. You're reading Sprout Pi lets old iPods run Linux apps and stream Spotify , a blog post from OMG! Ubuntu . Do not reproduce elsewhere without permission.",
+            "url": "https://www.omgubuntu.co.uk/2026/11/sprout-upgrades-ipod-modern-features",
+            "source": "OMG! Ubuntu",
+            "category": "linux",
+            "tags": [
+                "bluetooth",
+                "desktop",
+                "linux",
+                "ubuntu",
+                "wifi"
+            ],
+            "published_at": "2026-11-11T23:10:00+00:00",
+            "collected_at": "2026-11-12T05:09:01.575717+00:00"
         },
         {
             "id": "5970fcbf47291b1ac6bb567af9c89176d666052ce3a694f022a59560ceb02a34",
@@ -446,6 +988,22 @@
             "collected_at": "2026-11-11T23:54:42.870298+00:00"
         },
         {
+            "id": "c4aa53a5506ac6f458731f06993763aee2ed2c002a5df5e4cb45d0fd4dffacb5",
+            "title": "Nvidia is preparing to oust Jensen Huang",
+            "description": "Comments",
+            "url": "https://www.wsj.com/business/nvidia-is-preparing-to-oust-nvidia-ceo-jensen-huang-30f421ad",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "nvidia",
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-11T22:31:06+00:00",
+            "collected_at": "2026-11-12T05:08:57.504663+00:00"
+        },
+        {
             "id": "90e91921653245c7efa2f066b871b6ddcbfcf1ca40c1730e207cd4cf6778933b",
             "title": "Lock Your GitHub Actions",
             "description": "Comments",
@@ -460,6 +1018,21 @@
             ],
             "published_at": "2026-11-11T22:16:41+00:00",
             "collected_at": "2026-11-11T23:54:40.730019+00:00"
+        },
+        {
+            "id": "0de9825e0c756423f2aa36b44c55dc05c2d4c9b4d78af88f1455b31dbf974df6",
+            "title": "Jensen Huang said to have had relationship with executive who reports to him",
+            "description": "Comments",
+            "url": "https://www.nytimes.com/2026/11/11/technology/jensen-huang-nvidia-affair.html",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-11T22:03:58+00:00",
+            "collected_at": "2026-11-12T05:08:57.505394+00:00"
         },
         {
             "id": "b622a6c84c79747a70f5e23b7fe8d3e2809dbb212940a24a09b30b95e540d6e8",
@@ -596,6 +1169,21 @@
             ],
             "published_at": "2026-11-11T21:00:00+00:00",
             "collected_at": "2026-11-11T23:54:42.870419+00:00"
+        },
+        {
+            "id": "7d8cc8220b67c7476413620553d89435f842bc8a7b33ec9664c9f24a1a11696c",
+            "title": "AWS Network Security Manager now available in AWS European Sovereign Cloud and Additional New Regions",
+            "description": "AWS Network Security Manager is now available in AWS European Sovereign Cloud Region and Thirty-One new Regions Today, AWS announces the general availability of AWS Network Security Manager in the AWS European Sovereign Cloud Region and additional regions. Network Security Manager is a comprehensive network security management solution designed to simplify security policy deployment and enforcement at scale. Network Security Manager supports AWS WAF and AWS Shield in AWS European Sovereign Cloud Region. The additional regions are: US East (Ohio); US West (N. California); US West (Oregon); Asia Pacific (Mumbai); Asia Pacific (Hong Kong); Asia Pacific (Taipei); Asia Pacific (Seoul); Asia Pacific (Osaka); Asia Pacific (Hyderabad); Asia Pacific (Singapore); Asia Pacific (Sydney); Asia Pacific (Melbourne); Asia Pacific (Malaysia); Asia Pacific (New Zealand); Asia Pacific (Thailand); Asia Pacific (Johor); Asia Pacific (Tokyo); Canada (Central); Canada West (Calgary); Mexico (Central); Europe (Frankfurt); Europe (Zurich); Europe (Stockholm); Europe (Ireland); Europe (Milan); Europe (Spain); Europe (London); Europe (Paris); Israel (Tel Aviv); South America (São Paulo), Africa (Cape Town). Network Security Manager features always-on security deployment automation that applies AWS WAF security protection to Internet facing assets like AWS Application Load Balancer. This automated approach helps security teams deploy and manage WAF rules and AWS Shield Advanced protections efficiently, ensuring consistent security posture across targeted accounts and resources. Teams can centrally manage security policies, automatically detect configuration drift, and apply remediation by reducing the operational overhead of manual security management while maintaining comprehensive protection. To see which regions AWS Network Security Manager is available in, visit the AWS Region Table . For pricing information, visit the AWS Network Security Manager Pricing page . for standard regions, and the European Sovereign Cloud Pricing page.",
+            "url": "https://aws.amazon.com/about-aws/whats-new/2026/11/network-security-mgr-eu-sovereign-cloud/",
+            "source": "AWS What's New",
+            "category": "cloud",
+            "tags": [
+                "amazon",
+                "aws",
+                "cloud"
+            ],
+            "published_at": "2026-11-11T21:00:00+00:00",
+            "collected_at": "2026-11-12T05:09:00.453775+00:00"
         },
         {
             "id": "3c445f1213014085411eae5032630d832f1bedb1ddb83ebbfeea95c6566ccf74",
@@ -4709,6 +5297,23 @@
             ],
             "published_at": "2026-11-11T00:00:00+00:00",
             "collected_at": "2026-11-11T23:54:41.651202+00:00"
+        },
+        {
+            "id": "cc7fdfa5e49dd7bb99e8b021efae6bba8516cd53074ad7ca320bfda9aa7caaf6",
+            "title": "AI Is the New Electricity. And the Meter Is Running.",
+            "description": "AMD helps enterprises scale AI while managing costs with leadership compute, open platforms and ecosystem partnerships that give them flexibility to run workloads wherever they deliver the most value.",
+            "url": "https://newsroom.amd.com/news/ai-new-electricity-meter-running/",
+            "source": "AMD",
+            "category": "hardware",
+            "tags": [
+                "amd",
+                "cpu",
+                "gpu",
+                "radeon",
+                "ryzen"
+            ],
+            "published_at": "2026-11-11T00:00:00+00:00",
+            "collected_at": "2026-11-12T05:08:59.937420+00:00"
         },
         {
             "id": "b98c614e45321b756d748a78063ceafc3dcac918faff39bdc16105b5ecd37c72",
@@ -10531,6 +11136,21 @@
             "collected_at": "2026-11-10T14:02:19.498835+00:00"
         },
         {
+            "id": "dfc0fbadd1862f63b6f587319f08a29b4679c8ecd8b5e4724e04a5b8b89db1e4",
+            "title": "Stingray Fish Laser",
+            "description": "Comments",
+            "url": "https://www.stingray.no/en/technology/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-10T03:29:55+00:00",
+            "collected_at": "2026-11-12T05:08:57.505059+00:00"
+        },
+        {
             "id": "a41b3bf4ab07178dcc3c55d842f24c546cc00f3d6d3e05d69a23f0c016d42c3c",
             "title": "Bitcoin faces U.S. CPI test as analysts warn inflation relief may not be enough",
             "description": "",
@@ -12812,6 +13432,21 @@
             ],
             "published_at": "2026-11-09T17:31:00+00:00",
             "collected_at": "2026-11-10T01:01:27.813588+00:00"
+        },
+        {
+            "id": "d12741213f45e7e6dfb9cf4abfbe2718ce08258c4bf99048a84b048ba9f24bbf",
+            "title": "Did Life Begin in an RNA World?",
+            "description": "Comments",
+            "url": "https://www.quantamagazine.org/did-life-begin-in-an-rna-world-20261109/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-09T17:27:24+00:00",
+            "collected_at": "2026-11-12T05:08:57.504866+00:00"
         },
         {
             "id": "84f3b5d3194b1b5f10500c29bc1bc46cf38c53d26dee27e84682eeab3f872c5c",
@@ -17631,6 +18266,21 @@
             "collected_at": "2026-11-08T21:31:43.175159+00:00"
         },
         {
+            "id": "b27a8b780bd85797952cf1cd1d63ee79beb3d536207fc4c330371d85e92a178c",
+            "title": "The Learjet Repo Man (2009)",
+            "description": "Comments",
+            "url": "https://www.salon.com/2009/06/06/lear_jet_repo_man/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-08T14:06:18+00:00",
+            "collected_at": "2026-11-12T05:08:57.505309+00:00"
+        },
+        {
             "id": "4a35d90f75c3480ec0465b642b96de182c81bd8a2631bf11d65690fe6bb266cc",
             "title": "Blue Wave, Red Week — Week in Review",
             "description": "This editorial is from this week’s edition of the newsletter Week in Review, sent to subscribers on Friday. Subscribe to the newsletter to get this weekly editorial the second it’s finished. The newsletter also includes the biggest stories of the week, with a comment on each story. Bitcoin fell to $75,618, a seven-week low near […]",
@@ -17771,6 +18421,21 @@
             ],
             "published_at": "2026-11-08T12:40:00+00:00",
             "collected_at": "2026-11-08T21:31:43.175329+00:00"
+        },
+        {
+            "id": "ddd97f7dd9b6780aa6d52ccfc7eb7c4f6e52326de722a13d0aa19da55992cb1b",
+            "title": "How to make a CNC plasma cutter with high-frequency start",
+            "description": "Comments",
+            "url": "https://incoherency.co.uk/blog/stories/cnc-plasma-cutter.html",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-08T12:34:04+00:00",
+            "collected_at": "2026-11-12T05:08:57.505165+00:00"
         },
         {
             "id": "b8776663c6b4d513d74e59b56fb55547a2747fdb8ffc77b5cf41f2bcde177310",
