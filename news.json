@@ -1,7 +1,716 @@
 {
-    "updated_at": "2026-11-15T04:05:00.665058+00:00",
-    "count": 28852,
+    "updated_at": "2026-11-15T13:15:03.146483+00:00",
+    "count": 28907,
     "articles": [
+        {
+            "id": "bfbfcebc6e582aa780303b22f43cf6168aa6aabec73fe5ecdad165c77b64a636",
+            "title": "GitHub Actions submodule checkout failed on a private submodule",
+            "description": "GitHub Actions submodule checkout failed is a credential message rather than a git one: the outer repository clones cleanly and only the submodule fetch stops. The credential the action configured is scoped to the repository running the workflow, and a submodule usually lives somewhere else. Two independent decisions: what the .gitmodules URL looks like, and whether checkout was allowed to persist a credential at all. What this error means The checkout step is green for several seconds, prints the submodule update command, starts cloning the first submodule and then stops. Git asks for a username, finds it cannot prompt because the runner has no terminal, and gives up. The outer repository is fully checked out on disk, which is what makes this read like a corrupt submodule pointer rather than a permissions problem. Remove submodules from the step and everything is green again, which is the strongest hint that nothing about the repository itself is wrong. ```Quoted from actions/checkout#738, with the reporter's own redaction /usr/bin/git -c protocol.version=2 submodule update --init --force --depth=1 --recursive Cloning into ''... Error: fatal: could not read Username for ' https://github.com/': terminal prompts disabled ## Common causes ### The automatic token cannot read the submodule repository The commonest cause and the one the error never names. `GITHUB_TOKEN` is an installation token whose permissions, in the documentation's words, are limited to the repository that contains your workflow. Raising `permissions: contents: read` does nothing here, because the limit is which repository, not which scope. ### Credential persistence is switched off With `persist-credentials: false` the action skips the whole of `configureSubmoduleAuth`, so no `insteadOf` rule and no `core.sshCommand` is written for any submodule. The outer clone still succeeds because the action fetches it directly, which is why this looks like a submodule-only fault. ### An SSH URL with no key to match it A `.gitmodules` entry starting `git@github.com:` is rewritten to HTTPS when no `ssh-key` is supplied, so the fetch then depends on the token like any other. If you expected SSH to be used, the failure message mentioning an HTTPS URL is the tell that the rewrite happened. ### The submodule is nested and only one level was requested Setting `submodules: true` initializes one level. A submodule inside a submodule is never fetched, so a later build step reports a missing directory rather than an authentication failure. Less common, and worth ruling out only after the credential is known to be right. ## How to fix it ### Give the step a token that can read the other repository Create a fine-grained token or a GitHub App installation token with read access to the submodule repositories, store it as a secret and pass it as the `token` input. The action configures it for the outer repository and, through the `insteadOf` rule, for the submodules too. ```.github/workflows/ci.yml (illustrative) - uses: actions/checkout@v5 with: submodules: recursive token: ${{ secrets.SUBMODULE_TOKEN }} Or supply a deploy key and keep the SSH URLs Add a deploy key to the submodule repository with read access. Store the private half as a secret in the repository that runs the workflow. Pass it as ssh-key , which makes the action set core.sshCommand inside each submodule. Leave the .gitmodules URLs as SSH: with a key present they are no longer rewritten. Check whether you turned persistence off Search the workflow for persist-credentials . If it is false, either remove it for the job that needs submodules, or keep it and authenticate the submodules yourself before the fetch. Turning it back on for one job is usually the smaller risk, because the action removes the credential in its post-job step either way. ```.github/workflows/ci.yml (illustrative) uses: actions/checkout@v5 with: submodules: recursive persist-credentials: true ``` Standardize the URLs rather than working around them Mixed SSH and HTTPS entries in one .gitmodules file mean two credential paths to keep working. Rewrite them to one scheme and commit the change, so CI and laptops agree. HTTPS is the easier one to support in CI because it uses the same token the rest of the job already has. git config --file .gitmodules submodule.libfoo.url https://github.com/org/libfoo.git git submodule sync git add .gitmodules && git commit -m \"use https for submodules\" How to prevent it Assume the automatic token stops at the repository boundary and plan submodules around that. Keep one URL scheme in .gitmodules so CI and local clones need the same credential. Pin the credential to a service account or an App, never to a person who can leave. Request submodules: true rather than recursive unless you really have nested ones. A checkout that produces it This workflow is written for this page and has never been run. It is the ordinary shape: a repository with one submodule that lives in a second private repository in the same organization, and a default checkout asked to bring submodules along. Nothing in it is deprecated and nothing is misspelled. It fails because of what the action was given rather than what it was asked to do. With no token input, the action uses the automatic token, and the documentation for that token is explicit: \"The token's permissions are limited to the repository that contains your workflow.\" A second repository is outside that limit however the permissions block is written. ```.github/workflows/ci.yml (illustrative) name: ci on: push jobs: build: runs-on: ubuntu-latest steps: - uses: actions/checkout@v5 with: submodules: recursive - run: make build ## What the action configures, and when it does not The submodule work is one method in the action, `configureSubmoduleAuth()` in src/git-auth-helper.ts. It clears whatever a previous run left behind, and then everything in it that configures a credential sits inside `if (this.settings.persistCredentials)`. That is the branch worth knowing about: turn credential persistence off and the action still checks out your submodules, but it configures nothing for them, so every fetch that needs authentication fails. Teams who set `persist-credentials: false` for good security reasons meet this the moment a private submodule enters the repository. When persistence is on, the method does one of two things. With an `ssh-key` input it runs a `git config` inside each submodule to point `core.sshCommand` at the key the action set up. Without one it adds an `insteadOf` rule per submodule so that SSH-style remotes are rewritten to HTTPS and the token applies to them. The README describes the same behavior from the outside: \"When the `ssh-key` input is not provided, SSH URLs beginning with `git@github.com:` are converted to HTTPS.\" ```actions/checkout, src/git-auth-helper.ts async configureSubmoduleAuth(): Promise<void> { // Remove possible previous HTTPS instead of SSH await this.removeSubmoduleGitConfig(this.insteadOfKey) if (this.settings.persistCredentials) { Which credential each URL shape needs Two decisions decide the outcome, and people usually only make one of them consciously. The first is what the .gitmodules entry says. The second is which input the checkout step was given. The table pairs them. The row that surprises people is the third one. An SSH URL with no ssh-key is rewritten to HTTPS and then authenticated with whatever token the step holds, so it can work for a public submodule and fail for a private one in another repository, with no mention of SSH anywhere in the error. .gitmodules URL Checkout input Outcome https://github.com/org/pub none works, the submodule is public https://github.com/org/priv none fails, the automatic token is repository-scoped git@github.com:org/priv.git none rewritten to HTTPS, then fails for the same reason git@github.com:org/priv.git ssh-key works, core.sshCommand is set per submodule any private URL persist-credentials: false fails, nothing is configured for submodules The URL is committed, so it is the same for everyone. A submodule that works on a maintainer's laptop over SSH and fails in CI is not behaving differently; the laptop simply has a key the runner does not. The two corrected shapes A token with access to the submodule repository is the smaller change and keeps everything on HTTPS. Use a fine-grained personal access token or a GitHub App installation token with contents read on the submodule repositories, and keep it on a service account rather than a person. The README makes the same recommendation for the token input: \"We recommend using a service account with the least permissions necessary.\" A deploy key is the alternative, and it is the better one when the submodule belongs to a different owner or when you would rather not mint a cross-repository token. Supply it as ssh-key , and the action configures each submodule to use it. Keep submodules: recursive only if you have nested submodules; true is one level and is faster. ```.github/workflows/ci.yml, corrected (illustrative) uses: actions/checkout@v5 with: submodules: recursive token: ${{ secrets.SUBMODULE_TOKEN }} # or, with a deploy key instead of a token uses: actions/checkout@v5 with: submodules: recursive ssh-key: ${{ secrets.SUBMODULE_DEPLOY_KEY }} ``` Why there is no recorded run on this page Recording this one would mean standing up a second private repository, pointing a submodule at it and minting a credential whose scope is the whole subject of the page. We are not going to publish a run whose interesting property is the shape of a credential boundary, and a redacted log of it would tell you nothing you cannot see in the one quoted above, which a reporter already published with their own redaction. The mechanism is also not observational: it is one branch in the action and one sentence about the automatic token's scope, both quoted here from the files that contain them. A green run after the fix would prove that our token worked, which is not a fact about anyone else's. FAQ Why does the main repository check out but the submodule fail? Because they are fetched with different authority. The action clones the outer repository with the credential it was given, then asks git to update the submodules, which are separate repositories. The automatic token is limited to the repository containing the workflow, so a submodule elsewhere is refused. Does persist-credentials false break submodule checkout? For private submodules, yes. The action's configureSubmoduleAuth method does all of its credential configuration inside a check on that setting, so with it false no credential helper and no SSH command is configured for any submodule. The outer checkout still succeeds, which makes this easy to misread. Do I need to change .gitmodules to use an SSH deploy key? No. Supply the key as the ssh-key input and leave the SSH URLs in place. The rewrite to HTTPS only happens when no key is provided, so with a key present the entries are used as written and each submodule is configured to use that key. Can I give GITHUB_TOKEN access to another repository? Not through the permissions block. That block adjusts scopes within the repository the workflow belongs to. Reading a second repository needs a different credential: a personal access token, a GitHub App installation token, or a deploy key on the repository you need to read. References actions/checkout: README, submodules and ssh-key inputs actions/checkout#738: terminal prompts disabled when submodules: true GitHub Actions: about the GITHUB_TOKEN and its scope Git: gitmodules, the submodule URL entry actions/checkout: git-auth-helper.ts, configureSubmoduleAuth",
+            "url": "https://dev.to/kalemi/github-actions-submodule-checkout-failed-on-a-private-submodule-2jb0",
+            "source": "DEV Community",
+            "category": "linux",
+            "tags": [
+                "developpement",
+                "git",
+                "linux",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-11-15T13:09:29+00:00",
+            "collected_at": "2026-11-15T13:14:50.646156+00:00"
+        },
+        {
+            "id": "9fbda02ebb150c3942fc60852e9a878098f346cead040fb3127b16442417ce75",
+            "title": "The invoice scam that changes one line: why \"it looks right\" is not verification",
+            "description": "A supplier sends you an invoice. Same logo, same layout, same amount, same reference. You pay it. Two weeks later the supplier calls: they never got the money. Somewhere between their outbox and your accounts team, one line changed: the IBAN. This is one of the most common business payment scams, and it works for a boring reason: nobody checks the bank details, because everything else looks right. How it usually happens A compromised mailbox. The attacker reads real conversations and waits for an invoice to be sent, then forwards an \"updated\" copy. A lookalike domain. supplier-invoices.com instead of supplier.com . The email says \"we changed banks, please use the attached invoice\". An edited PDF. Changing a few characters in a PDF takes seconds, and with AI tools the result is visually perfect: fonts, spacing, everything. The amount is the same, so nothing feels off. That is the whole trick. Why the usual checks fail Looking carefully doesn't work when the edit is pixel-perfect. The file name and date prove nothing: they're trivially copied. \"It came from their email\" only means it came from an email that looks like theirs. The real question isn't \"does this invoice look genuine?\" but \"is this exactly the file the supplier issued?\" And that question has a mathematical answer. Verification with a fingerprint A cryptographic hash (SHA-256) turns any file into a 64-character fingerprint. Change one character of the IBAN and the fingerprint changes completely. So the flow becomes: The supplier seals the invoice when they issue it: its fingerprint is registered. The invoice travels with a verification link . Before paying, you open the link or drop the PDF on the verify page. Your browser recomputes the fingerprint and checks it against the register. Match: it's byte-for-byte the invoice they issued. No match: someone changed something, even if you can't see what. This is what we built TRAMPTO to do. Sealing runs in the browser, so the invoice is never uploaded, and verifying is free and needs no account. What it doesn't replace To be clear about the limits: It proves the file hasn't changed since it was sealed . If the attacker controls the supplier's own system before sealing, the seal won't catch that. It doesn't replace good habits: confirm any bank-detail change by phone , using a number you already had, never one from the email. But for the most common version of the scam, an edited PDF in transit, a fingerprint check turns \"it looks right\" into \"it is right\". Your turn Has your company (or a client) ever received an invoice with changed bank details? How did you catch it, or how did it slip through? I'd love to hear the stories.",
+            "url": "https://dev.to/trampto/the-invoice-scam-that-changes-one-line-why-it-looks-right-is-not-verification-54di",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-11-15T13:09:27+00:00",
+            "collected_at": "2026-11-15T13:14:50.646467+00:00"
+        },
+        {
+            "id": "b05be9297d86a63987882ae83acf09c4cb792a6565d23d87e65afcef97f749f6",
+            "title": "Your coding agent is guessing your mobile app's API. Give it a redacted HAR instead.",
+            "description": "You ask your coding agent why the orders screen is empty. It reads the client code, reads the model, and then writes a confident fix for a response shape it has never seen. The real response was a 200 with {\"items\":[],\"error\":\"quota\"} in the body. Nothing on screen said so, and nothing in the code could. For web apps the agent can sometimes look at the browser. For a mobile app it can't see anything unless you give it the traffic. The steps below work with any HTTPS debugging proxy (mitmproxy, or whichever one you already use). Examples assume it listens on 127.0.0.1:8080 and that you've exported its CA certificate. 1. Get the traffic into the proxy iOS Simulator. The Simulator uses the Mac's network settings, so the Mac's system proxy applies. Trust the CA once per simulator: xcrun simctl keychain booted add-root-cert ~/proxy-ca.pem Then restart the app. Android emulator. Start it with the proxy: emulator -avd Pixel_8 -http-proxy http://127.0.0.1:8080 127.0.0.1 here is your Mac, because the emulator process applies the flag on the host side. Install the CA as a user certificate. Since Android 7, apps ignore user CAs unless you opt in for debug builds: <!-- res/xml/network_security_config.xml --> <network-security-config> <debug-overrides> <trust-anchors> <certificates src = \"user\" /> </trust-anchors> </debug-overrides> </network-security-config> Reference it from the manifest with android:networkSecurityConfig=\"@xml/network_security_config\" . debug-overrides only applies to debuggable builds, so release builds stay strict. Flutter. Dart's HttpClient ignores the system proxy on every platform. In debug builds, set an HttpOverrides whose findProxy returns PROXY <host>:8080 . A real iPhone. Wi-Fi settings → your network → Configure Proxy → Manual, with your Mac's LAN IP and port. Install the CA profile, then switch it on under Settings → General → About → Certificate Trust Settings. Installing the profile alone is not enough. 2. Reproduce once, export a HAR Clear the session, do the one thing that's broken, and export just that as a HAR. A short, focused capture beats an hour of background noise. The agent reads every byte you give it. 3. Redact before the agent sees it A HAR carries everything: bearer tokens, cookies, API keys in query strings. Don't paste that into a model. This jq filter keeps one API host, masks anything that looks like a credential, and truncates very large bodies: # redact.jq def secret: ascii_downcase | test(\"authorization|cookie|token|secret|api[-_]?key|session|signature|password\"); .log.entries |= map(select(.request.url | startswith(\"https://api.example.com/\"))) | .log.entries[] |= ( (.request.headers, .response.headers) |= map(if (.name | secret) then .value = \"REDACTED\" else . end) | .request.queryString |= map(if (.name | secret) then .value = \"REDACTED\" else . end) | .request.url |= gsub(\"(?<k>[?&][^=&]*(token|key|secret|sig|session)[^=&]*)=[^&]*\"; \"\\(.k)=REDACTED\"; \"i\") | .request.cookies = [] | .response.cookies = [] | .response.content.text |= (if . == null then . else .[:20000] end) ) jq -f redact.jq capture.har > capture.redacted.har grep -oE 'eyJ[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+' capture.redacted.har # leftover JWTs? The filter only looks at names. Tokens inside JSON bodies (a login response, a refresh call) still get through, which is what the grep is for. Read the file before you hand it over. A sanitized HAR still needs a look. 4. Ask about the evidence, not the symptom Put the file in the repo (and in .gitignore ), then ask something specific: capture.redacted.har has the requests from opening the Orders screen. Which request feeds the list, what did it return, and why does the UI show nothing? Point to the code path. What tends to come back: 200 responses that carry an error in the body, which the client treats as success. Fields the decoder doesn't expect ( orderId vs order_id , a number sent as a string), so the whole decode fails silently. A request that never happened, because the screen read from a cache. Something missing from a HAR is evidence too. Ordering: a refresh-token call racing the real call and the first one going out with the old token. When the capture is empty Nothing at all from the app: it isn't using the proxy. Flutter, and some networking libraries, need it set in code. Only CONNECT entries, no bodies: the proxy is tunnelling, not decrypting. Turn on decryption for that host, or check the CA trust step. TLS errors only for one host: that host is probably pinned. Use a debug build without pinning, or leave that host tunnelled. This article was created with the help of AI.",
+            "url": "https://dev.to/minpin_proxy/your-coding-agent-is-guessing-your-mobile-apps-api-give-it-a-redacted-har-instead-1095",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "android",
+                "developpement",
+                "git",
+                "ios",
+                "programmation",
+                "rust",
+                "web",
+                "wifi"
+            ],
+            "published_at": "2026-11-15T13:09:10+00:00",
+            "collected_at": "2026-11-15T13:14:50.647035+00:00"
+        },
+        {
+            "id": "151274f412084fdac67f35d738b3f8689f3c2cffd4a50c16b62d52a9ed59c1a1",
+            "title": "I Replaced Dead X Search with TwitterAPI.io for My Daily Trends Board — the Real Cost and the 429 Gotcha",
+            "description": "Disclosure: This post contains my referral link for TwitterAPI.io. If you sign up through it, I may earn credits through their community rewards program. Everything below is what I actually ran — including the parts that broke. The problem: my X search kept dying I run a small daily hot-topics board (in Chinese) that collects trending posts from YouTube, X, Xiaohongshu, V2EX, GitHub and a few other sources, scores them, and publishes a batch twice a day. X was the hardest source to keep alive: The free route I used first — a logged-in browser session driving X search — died when the session cookie expired, and X kept rate-limiting the account. I tried Grok's CLI search ( x_search ) next. In headless mode on Grok Build CLI 1.0.77, the tool simply doesn't exist: --tools x_search warns that it names no tool, and grok mcp list comes back empty. It may only exist in the interactive TUI, or it may be plan-gated. Either way, it didn't work for an automated pipeline. I needed a real search API that I could call from a script, with per-call pricing instead of a monthly plan. That's what led me to TwitterAPI.io. What it is, and what it costs TwitterAPI.io is an independent third-party X data API — it states on its own site that it is not affiliated with, endorsed by, or sponsored by X Corp. Keep that in mind: it's unofficial, so I kept my free fallback readers in the pipeline. The pricing is what sold me. Search is billed per returned tweet: $0.15 per 1,000 returned tweets (15 credits per tweet; $1 = 100,000 credits) $0.00015 minimum per request , pay-per-use, no subscription $1 free signup credit ≈ 6,666 tweets My board uses about 40 returned tweets per refresh, twice a day — roughly $0.006/day . The $1 signup credit covers that for 300+ days. If your volume is bigger, the math is still simple: 1,000 tweets cost 15 cents. The API call The endpoint is: GET https://api.twitterapi.io/twitter/tweet/advanced_search?query =< url - encoded query >& queryType = Top Authentication is a single header: X - API - Key : < your key > The response envelope looks like this: { \"tweets\" : [ { \"id\" : \"2119069739423240656\" , \"url\" : \"https://x.com/i/status/2119069739423240656\" , \"text\" : \"...full post text...\" , \"createdAt\" : \"Sat Nov 07 14:09:00 +0000 2026\" , \"likeCount\" : 72 , \"retweetCount\" : 12 , \"replyCount\" : 9 , \"quoteCount\" : 1 , \"viewCount\" : 6688 , \"author\" : { \"userName\" : \"zengge1984\" , \"name\" : \"...\" } } ] , \"has_next_page\" : true , \"next_cursor\" : \"...\" } Two things worth knowing about queryType : Latest returns the newest posts — mostly from today, but usually with very low engagement (0–5 likes in my tests). Top returns high-engagement posts — 40 to 680 likes in my runs — but they can be weeks or months old. For a trends board, neither is right on its own. I use Top and then filter to the last 30 days, sort by likes (then views), and cap at 10 posts per refresh. Pagination works through next_cursor if you need more than the ~20 posts a call returns. One honest caveat: the provider's own API reference pages returned 404 when I fetched them directly, so the endpoint shape above is what I established by making live calls, not by reading docs. The calls themselves have been stable. A runnable example (with the retry logic you'll actually need) import json , os , time , urllib . request , urllib . parse API_KEY = os . environ [ \"TWITTERAPI_KEY\" ] BASE = \"https://api.twitterapi.io/twitter/tweet/advanced_search\" def search ( query , query_type = \"Top\" , cursor = None , attempts = 3 ) : params = { \"query\" : query , \"queryType\" : query_type } if cursor : params [ \"cursor\" ] = cursor url = BASE + \"?\" + urllib . parse . urlencode ( params ) req = urllib . request . Request ( url , headers = { \"X-API-Key\" : API_KEY } ) for wait in ( 0 , 5 , 10 ) : # backoff on 429 / 5xx time . sleep ( wait ) try : with urllib . request . urlopen ( req , timeout = 30 ) as r : return json . load ( r ) except urllib . error . HTTPError as e : if e . code in ( 429 , 500 , 502 , 503 ) and wait < 10 : continue raise raise RuntimeError ( \"search failed after retries\" ) if __name__ == \"__main__\" : data = search ( \"AI获客\" , \"Top\" ) tweets = sorted ( data [ \"tweets\" ] , key = lambda t : t [ \"likeCount\" ] , reverse = True ) for t in tweets [ : 10 ] : print ( f \"{t['likeCount']:>5} likes {t['viewCount']:>6} views @{t['author']['userName']}\" ) print ( \" \" , t [ \"text\" ] [ : 120 ] . replace ( \"\\n\" , \" \" ) ) The 429 gotcha The one thing that bit me: two searches fired back-to-back return HTTP 429 . The first call succeeds, the second one gets rate-limited. My fix is in the snippet above — a 5-second gap between keyword searches plus retry with backoff (0, 5, 10 seconds, 3 attempts). Since I added that, I haven't seen another 429. If you're wiring this into a cron job, sleep between queries instead of hammering the endpoint; the provider clearly throttles rapid successive calls. How it fits in my pipeline The board collector now tries X sources in this order: Agent Reach browser search (dead since the session expired — kept first so it recovers automatically if a session ever comes back) TwitterAPI.io advanced search (Top, 30-day preference, engagement-sorted, cap 10) — the primary source now A free fallback: web search for site:x.com links, then reading each post through FxTwitter / vxTwitter / oEmbed A full manual run after wiring it in returned 10 X posts, all from the last two weeks, 43–680 likes, each with full text and real engagement numbers. The board's latest batch (15 items across X, Xiaohongshu, V2EX and web sources) scored up to 84/100 on the rubric I use — the X posts from this API were three of the top scorers. Bottom line If you need X search from a script and you don't want a monthly plan, this is the cheapest honest option I've verified by actually paying (well, by spending free credit): $0.15 per 1,000 tweets, $1 to start, and a 429 quirk that a 5-second sleep fixes. Keep a free fallback in your pipeline, because it's an unofficial API and the docs are thin — but for a low-volume collector, it just works. If you want to try it, here's my referral link: https://twitterapi.io/?ref=z3c2w3ah And if you sign up through it and later pay for usage, I may earn a commission under their affiliate program too — same link, same disclosure.",
+            "url": "https://dev.to/juehui_xiao_e03da76cad4b8/i-replaced-dead-x-search-with-twitterapiio-for-my-daily-trends-board-the-real-cost-and-the-429-12ee",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "git",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-11-15T13:08:26+00:00",
+            "collected_at": "2026-11-15T13:14:50.647837+00:00"
+        },
+        {
+            "id": "0873f2d40459b4187c2956104f807f75355b00f6e9016e6a147a05fb04961143",
+            "title": "GitHub Actions composite action working-directory, and what reaches it",
+            "description": "A GitHub Actions composite action working-directory is resolved by joining whatever the step declares onto the job's workspace path, and a step that declares nothing starts at the workspace root. Job and workflow defaults are skipped entirely for steps inside an action, because the runner checks whether the step belongs to an action scope before it reads them. The handler reads job defaults only when the step has no action scope. Inside a composite action the scope is set, so the defaults branch is never taken. What this error means A composite action works when its steps are pasted straight into a workflow and stops working the moment they are moved into an action. Scripts that sit next to action.yml are not found, relative paths resolve against the repository being built rather than against the action, and a defaults.run.working-directory that fixes everything else in the job has no effect inside the action. The error that surfaces is whatever the command says about a missing file, so nothing in the log names a directory decision. ```Illustrative caller fragment, not a log line uses: ./.github/actions/build with: dir: app # every run step inside build/action.yml starts at $GITHUB_WORKSPACE ``` Common causes The step relies on a job default that never reaches it The job sets defaults.run.working-directory , every step written directly in the workflow honors it, and the composite action's steps do not. The condition that reads job defaults requires an empty scope name, and a step inside an action has one. A relative path was used to reach the action's own files Paths such as ./scripts/setup.sh inside a composite action resolve against the workspace, not against the directory holding action.yml. The action works while it lives inside the repository it is used from and breaks the moment it is published and downloaded to the runner's action cache. The directory was set on the caller's uses step The caller tried to push the directory in. The schema has no such property on a uses step, so instead of running in the wrong place, nothing runs at all and the workflow file is annotated. The action was refactored out of a workflow that had a default In our experience this is how it usually arrives. The steps worked as workflow steps under a job-level default, were moved into an action unchanged, and lost the default silently because nothing in the move mentions directories. How to fix it Set working-directory on every composite run step that needs it There is no inherited value to rely on, so each run step inside the action states its own directory or accepts the workspace root. Being explicit also documents the action for the next reader, who otherwise has to know the scope rule to predict the behavior. ```.github/actions/build/action.yml (illustrative) runs: using: composite steps: - shell: bash working-directory: ${{ inputs.dir }} run: npm ci ### Take the directory as a declared input 1. Add an input to the action's `inputs` block, with a default of `.` so existing callers keep working. 2. Use it in the `working-directory` of each run step that operates on the caller's files. 3. Pass it from the caller under `with`, which is the only channel a uses step offers. 4. Document in the action's README that paths are relative to the workspace, because that is what the runner joins against. ### Address the action's own files with github.action_path Use the absolute path the runner provides whenever a step needs something that ships with the action. It survives the workspace join because a rooted path wins, and it is correct for both a local action and a published one, which a relative path cannot be. ```.github/actions/build/action.yml (illustrative) - shell: bash run: bash \"${{ github.action_path }}/scripts/setup.sh\" Give each composite run step its shell as well The same scope check that skips the directory default also skips the shell default, which is why the composite action schema marks shell required on a run step while the workflow schema does not. If you are fixing directories in an action, the shell keys are the other half of the same change. How to prevent it Treat a composite action as having no access to the caller's defaults, because it has none. Reach the action's own files only through github.action_path . Give every composite run step an explicit shell and, where it matters, an explicit directory. When moving steps into an action, move the job defaults onto the steps in the same change. Two decisions, both in the same method When the runner prepares a script step it does two things with the directory, one after the other. First it looks for a directory on the step itself. If the step does not declare one, it will consider the job's run defaults, but only inside a condition that requires the step's scope name to be empty. A step that came from an action has a scope name, so that condition is false and the defaults are not read. Second, whatever it ended up with, including nothing at all, is joined onto the workspace path taken from the github context. That join is the whole of the path resolution. There is no fallback to the action's own directory, and no awareness that the step came from an action at any point in the calculation. The same scope check guards the shell default, which is why the composite action schema makes shell required on every run step inside an action while the workflow schema does not. The two facts have one cause: defaults declared in a workflow are for that workflow's own steps. Setting Reaches a composite run step Resolved against working-directory on the composite step yes the workspace path working-directory on the caller's uses step no, the file is refused nothing defaults.run.working-directory on the job no, the scope check skips it nothing An absolute path such as ${{ github.action_path }} yes itself, the join keeps it The fourth row is the one to remember. Joining a rooted path onto another path yields the rooted path, so an absolute value passes through the workspace join untouched. That is what makes github.action_path usable here. Why an absolute path is the only way to reach the action's own files A composite action's files live wherever the runner put them, which for a published action is a directory under the runner's action cache and for a local action is inside the checked out repository. Neither location is a fixed offset from the workspace, so no relative working-directory can name it reliably, and a value that happens to work for a local action breaks the day the action is published. The runner exposes the answer as github.action_path , which is absolute. Because the resolution is a join and a join preserves a rooted path, setting working-directory: ${{ github.action_path }} lands the step in the action's directory rather than in the repository being built. The same expression works in a command, which is often tidier: call the script by its absolute path and leave the working directory alone, so the action still operates on the caller's files. Decide which of those two you want before you write either. An action that builds the caller's project wants the workspace as its working directory and its own scripts addressed absolutely. An action that runs a tool shipped inside itself wants the opposite. ```.github/actions/build/action.yml (illustrative) runs: using: composite steps: - name: Run a script that ships with the action shell: bash run: \"${{ github.action_path }}/scripts/setup.sh\" - name: Build the caller's project shell: bash working-directory: ${{ inputs.dir }} run: npm ci && npm run build ## The caller cannot push a directory in, and the schema says so The instinct when an action starts in the wrong place is to set the directory on the calling step. That does not work, and it does not fail quietly either: the workflow schema gives a step that carries `uses` no `working-directory` property, so the file is rejected and no run is created. The sibling page in this batch traces that rejection to the branch that raises it and explains how to read the annotation, so it is not repeated here. The mechanism a caller does have is an input. Declare one in the action's `inputs` block, pass it with `with`, and use it in the composite step's own `working-directory`. That makes the directory part of the action's contract, visible to anyone reading action.yml, rather than a property the caller hopes leaks through. Note the direction of travel this implies. An action that wants to be usable from a subdirectory has to say so in its interface. An action that does not declare a path input has decided, whether the author meant to or not, that it works at the workspace root. ## Why there is no recorded run on this page What decides this page is which of two branches the runner takes inside one method, and a branch is not printed. A recorded run would show a command failing to find a file, and the same line appears whether the step was in an action scope, whether a default was skipped, or whether the path was simply wrong. The log cannot separate the three, which is the entire question the page exists to answer. The join and the scope check are both readable in the runner's script handler, and the required `shell` key in the composite action schema corroborates the scope check from a second direction. That is stronger evidence than a log of a failure with several possible causes. ## FAQ ### Why does defaults.run.working-directory not apply inside a composite action? Because the runner only reads job run defaults when the step has no action scope name. A step that came from a composite action has one, so the condition is false and the defaults are skipped. The same check skips the shell default, which is why the composite action schema requires `shell` on every run step. ### What is a composite action step's working directory by default? The job's workspace. The runner joins whatever the step declared, or an empty string if it declared nothing, onto the workspace path from the github context. There is no step in that calculation that looks at where the action itself was downloaded. ### How do I run a script that ships inside my composite action? Address it through `github.action_path`, which is absolute. Either call the script by its absolute path or set `working-directory` to that value, because joining an absolute path onto the workspace yields the absolute path unchanged. A relative path will resolve against the caller's checkout instead. ### Can the calling workflow set working-directory on the uses step? No. A step that carries `uses` has no `working-directory` property in the schema, so the workflow file is rejected and no run is created. Pass a path as an input the action declares instead. ## References - [actions/runner: ScriptHandler.cs, the scope check and the workspace join](https://github.com/actions/runner/blob/main/src/Runner.Worker/Handlers/ScriptHandler.cs) - [actions/runner: action_yaml.json, the composite run step definition](https://github.com/actions/runner/blob/main/src/Runner.Worker/action_yaml.json) - [GitHub Actions: metadata syntax for composite actions](https://docs.github.com/en/actions/reference/workflows-and-actions/metadata-syntax) - [GitHub Actions: contexts reference, the github context](https://docs.github.com/en/actions/reference/workflows-and-actions/contexts)",
+            "url": "https://dev.to/kalemi/github-actions-composite-action-working-directory-and-what-reaches-it-3hh",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "git",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-11-15T13:07:44+00:00",
+            "collected_at": "2026-11-15T13:14:50.648985+00:00"
+        },
+        {
+            "id": "2f9f8389ffced7044b643dddca39070ab3cc1953e138b93230cc1644997bcea4",
+            "title": "Certified Device Firmware Is Admission Evidence. It Is Not Behavior Assurance.A",
+            "description": "Certified device firmware is evidence that a device was admitted, not evidence of how it will behave once it is running. On November 2, Google's Threat Intelligence Group reported that the XCPE backdoor, which it found built directly into many device models and brands, had enrolled more than 1.3 million set-top boxes into a botnet. Google assesses with high confidence that Videostrong Technology, an Android OEM and ODM, intentionally developed, deployed and operated the backdoor and botnet for financial gain, and says Videostrong used obfuscation to exploit a gap in Google's own tests and load malicious code after first boot. The incident is easy to file as one more bad supplier. The narrower question is what a buyer still holds when the manufacturer was known to the certifier and was itself the source of the risk. What Google Established About XCPE, and What It Did Not For modern infrastructure architecture , the usable question is narrow, so the evidence boundary comes first. The middle column is Google's report, attributed to Google. The right column is what the report does not say. Topic Google reports Not stated Attribution A high-confidence assessment that Videostrong intentionally developed, deployed and operated the backdoor and botnet for financial gain. Google also says it believes the campaign was not an isolated rogue insider or a development oversight. An adjudicated finding. Videostrong's own account does not appear in the report. Persistence A stub preloaded in the firmware partition and running at system privilege. If a user uninstalls the backdoor, it reinstalls from the /oem/ partition on reboot. How the stub or the /oem/ package entered the firmware build. First boot Obfuscation exploited a gap in Google's tests, and malicious code loaded after the device's first boot. Which image Google tested, which tests, the nature of the gap, or any dormant period. Google's action Videostrong was banned from making devices with preloaded Google apps, and from building and selling certified Android devices or supplying software to other certified vendors. Google also took legal action against control domains and servers, changed its review process, and is improving firmware integrity assurance on certified Android TV devices. Revocation of certification on shipped devices, blocking them, notifying owners, or what the review changes are. Population More than 1.3 million set-top boxes, plus other Android-based devices Google observed: telehealth, karaoke machines and digital signage. Counts, brands or models for the non-set-top devices, enterprise deployment, or which affected devices were certified. Keep the populations apart. The 1.3 million figure counts set-top boxes enrolled in the XCPE botnet. The at-least-10-million figure is Google's assessment of additional devices behind the affiliates' own command domains, which also distributed through other channels. They are different populations and should not be added. Plume Security Labs, a partner in the takedown, published its own whitepaper. It states that the fleet mixes AOSP and Google-certified devices, in one sentence, with no method for determining certification status and no counts. Google's report does not say which affected devices were certified. This note treats that question as open and writes about the class of certified OEM firmware. Scope: OEM-controlled firmware behavior on Android devices a buyer deploys, such as signage, telehealth and set-top. Google does not say these were enterprise deployments; that is this note's buyer scenario. No claim is made about server firmware, BMC or UEFI. Certified Device Firmware Is an Admission Test Google describes certification as a comprehensive suite of compatibility and security tests that OEMs must go through. That establishes an admission process, but the report does not identify which firmware image was examined, which tests were applied to it, or how the tested image relates to the firmware that shipped. Certified device firmware therefore provides evidence of admission, not proof that the deployed image or its later behavior was independently validated. It does not answer what the firmware does after activation, or who can change what it does, and Google's report does not describe certification as covering either. Google's own response shows where the line sits. It changed its review process and says it is improving how it ensures firmware integrity on certified Android TV devices. Google has not described those changes, and this note does not assume what they contain. That is not an argument that certification is useless. Admission testing is a necessary filter. The claim is narrower: a passed admission test is evidence of one moment, and a buyer who treats certified device firmware as a standing guarantee holds no record of the moments after it. The Reviewed Manufacturer Can Be the Source The vendor review process post covers a supplier that never enters review. Code of foreign origin arrived inside applications that procurement and security had approved, and because nobody had classified that code as a supplier relationship, no review gate ever looked at it. Its test asks whether a component would be reviewed if it were its own company. XCPE is the other case. Google's report describes Videostrong as an Android OEM and ODM and says Google cut ties with it, so the manufacturer was known to the certification ecosystem. The certification status of individual affected devices remains unresolved, as the Plume paragraph above sets out. The vendor-review question, whether anyone would have reviewed this party as its own company, does not apply the same way: the manufacturer was a named party with a relationship to the certifier. The exposure remains, because the risk did not enter through a gap in who was known. It came from the manufacturer itself, acting after admission. That is the difference this note rests on: the earlier failure is an invisible supplier, and this one is a visible manufacturer that is the source. Being known did not establish ongoing assurance over the firmware it supplied. Certified device firmware, where a device carries it, raises that manufacturer's standing with the buyer without changing who controls the behavior. Visibility has a limit here. Google says the malware appeared across many device models and brands, so a buyer holding a white-label brand may not know which OEM is behind it. That buyer is back in the vendor-review case, which is why the Purchase row requires the actual manufacturer's identity. The argument applies once the manufacturer is known. Google tells retailers and distributors to require independent security audits from ODMs, and delist manufacturers implicated in supply-chain abuse. An audit is still evidence gathered at a moment, and delisting comes after the fact. What a buyer holds between those moments is the lifecycle question, and neither the review nor the certified device firmware answers it by itself. The Firmware Lifecycle Needs Evidence and an Owner The table below is this note's proposal for certified device firmware, not a description of controls Google reports. It follows one device from purchase to the aftermath of a takedown and asks, at each stage, what certification or review establishes, what evidence the buyer retains, and who owns the obligation. Any acceptance test, egress baseline or independent validation named here is this note's recommendation, not a control reported in the XCPE case, and none assumes a delivery path for XCPE's code after first boot, which Google's report does not establish. Lifecycle stage What certification or review establishes Evidence the buyer should retain Accountable owner Purchase At most, that the OEM and device model went through a defined program at a point in time. The actual manufacturer's identity, not only the brand; device and model; the certification evidence with its date and scope; the firmware build identifier and baseline. Procurement and security First boot Nothing about behavior after activation beyond what the assessment exercised. Google says XCPE's code loaded after first boot. Network side: destinations, connection attempts and ports observed at activation, captured independently of the device where the platform permits. Device or management side: firmware identity, installed versions and package inventory. Both reconciled against the approved baseline retained from purchase; exceptions recorded. Device or platform owner Ongoing operation Nothing about later change, or about who controls it. Firmware and package versions over time, change and update records, who holds update authority, and the buyer's own validation results. Named device owner After takedown Nothing about devices already installed. Google's actions concern control infrastructure, Videostrong's future eligibility for certification, and firmware integrity assurance on certified Android TV devices. The affected-device inventory, remediation status per device, and a recorded residual-risk decision to keep, isolate or replace. Security and service owner Google says XCPE's code loaded after first boot, and the report gives a buyer nothing about what image was tested. A buyer who retained the firmware identity and installed versions from device or management records, observed network destinations independently of the device, and reconciled both against the purchase baseline and a later observation, would hold evidence that certified device firmware alone never produced. That is a proposed requirement. It only works if someone owns the comparison, and if the device is not the only source of the evidence. The after-takedown row exists because disrupting control infrastructure is not remediation. Google's report describes action against that infrastructure, which matters to affected devices, against Videostrong's future certification, and on firmware integrity for certified Android TV devices. It does not say what happens to devices already installed, and its account of persistence is that the backdoor reinstalls from the firmware's /oem/ partition after a user uninstalls it. Until the buyer has an inventory of affected devices and a recorded decision for each, the takedown has disrupted the control infrastructure but has not established remediation of the buyer's installed estate. Diagnostic: \"If the manufacturer of a certified device changed what its firmware does after acceptance, which record would show it, and who reads that record?\" Architect's Verdict Certified device firmware is admission evidence. Certification is meant to show that what was presented for admission met a defined assessment. In the XCPE case Google places a gap in its tests and says code loaded after first boot, and the certification status of individual affected devices remains unresolved. Treating certification as behavior assurance asks an admission result to cover a lifecycle it never observed. The vendor-review problem is a supplier nobody saw. This is a manufacturer the certifier knew. XCPE does not show that review and certification are worthless. It shows that a manufacturer known to the certifier can still control what its firmware does, and that nothing in the arrangement assigned anyone downstream to notice a change. The buyer's obligation for certified device firmware is to retain evidence at four stages and to name an owner at each: purchase, first boot, ongoing operation and after takedown. That is a proposal, and it is the part of the arrangement that certification cannot supply and that Google's report does not claim to. Certification admits the device. Someone still has to own what it does. Originally published at rack2cloud.com",
+            "url": "https://dev.to/ntctech/certified-device-firmware-is-admission-evidence-it-is-not-behavior-assurancea-7nb",
+            "source": "DEV Community",
+            "category": "cybersecurite",
+            "tags": [
+                "android",
+                "developpement",
+                "git",
+                "intel",
+                "malware",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-11-15T13:06:45+00:00",
+            "collected_at": "2026-11-15T13:14:50.649838+00:00"
+        },
+        {
+            "id": "6b24071cea3416038102c9d1113bb2901d4fef9fbc914046970c0a71d7706580",
+            "title": "RunsOn GitHub Actions runners explained",
+            "description": "RunsOn GitHub Actions runners are ordinary EC2 instances that RunsOn launches inside your own AWS account, so you pay RunsOn a flat annual licence and pay Amazon for every instance-second separately. That split is the whole product decision: the licence does not grow with your minutes, and the compute line does, which makes RunsOn expensive for a small team and hard to beat for a large one. Where each bill comes from. RunsOn prices a licence by runners launched per month and states that the compute is \"your AWS bill, not ours\", read from runs-on.com/pricing on 21 September 2026. Almost every other vendor in this area sells you a minute. RunsOn sells you a control plane and leaves the minute on your own cloud bill, which means the comparison against GitHub-hosted runners is not a rate against a rate. It is a fixed cost against a variable one, and the answer flips at a volume you can calculate. This page covers what the installation actually puts in your account, how a workflow asks for a machine, what the two bills look like, and the operational work you are taking on by moving the runners inside your own perimeter. What actually gets installed RunsOn is deployed as infrastructure, not subscribed to as a service. The quickstart describes Flex as installing \"with a single CloudFormation stack in about 10 minutes\", which creates \"a dedicated, least-privilege IAM role for the service\" and a GitHub App that the documentation is explicit about: \"this creates a private GitHub App that lives only in your AWS account\". That sentence is the reason this page exists. A private GitHub App means no third party holds a token against your organisation, which is the single strongest argument for RunsOn over any hosted runner vendor, and it is also why nobody else can page themselves when your runners stop launching. The trade is stated plainly on both sides. There are two shapes. Flex provisions one ephemeral EC2 instance per job, driven by workflow_job webhooks that arrive \"through API Gateway and Lambda\" and queue in SQS. Fleet is the Terraform-defined version, where a fleetd control plane \"runs on ECS Fargate and uses a pull-based connection to GitHub\", with \"no inbound webhook, API Gateway, or SQS queue in the demand path\". Flex is for teams whose jobs want different machines; Fleet is for a platform team that wants the runner shape under review. How a workflow asks for a machine The migration is a label change, which is the part RunsOn shares with every managed vendor. The documentation gives the Flex form as a single compound label, and the keys inside it are what you would otherwise express in an autoscaler configuration: family for the EC2 type or family, cpu and ram as fixed values or ranges, image for the AMI, volume as size:type:throughput:iops , and extras for features such as s3-cache , ecr-cache , efs , tmpfs and otel . Two defaults are worth knowing before the first run. Spot is on by default, documented as \"whether to attempt to use spot pricing (default: true )\", which is where the low compute cost comes from and also where the interruptions come from. SSH access is off by default. The runs-on=${{ github.run_id }} prefix is not decoration: it namespaces the runner to the run that asked for it. Platform coverage is Linux on x64 and arm64, Windows, and GPU instances. There is no macOS, which rules RunsOn out of an iOS pipeline entirely and is the clearest single filter on whether this product fits your repository. # GitHub-hosted jobs: test: runs-on: ubuntu-latest # RunsOn Flex: the compound label is the whole migration jobs: test: runs-on: runs-on=${{ github.run_id }}/cpu=4/ram=16/family=m7a+m7i-flex/image=ubuntu22-full-x64 # RunsOn Fleet: the workflow names a fleet, Terraform owns the shape jobs: test: runs-on: runs-on/fleet=linux-small/env=production Label forms and key descriptions quoted from RunsOn: runner labels , read 21 September 2026. The two bills, and where they cross The licence is metered by runners launched per month, not by minutes. The published Commercial Starter tier is \"from 300 euros / year\" and covers \"< 50k runners / month\"; the Enterprise tier is \"3,600 euros / year\" for \"500k+ runners / mo\". Non-commercial use is free, described as \"the full product, at no cost\", in exchange for a public acknowledgement linking back to the vendor. A commercial trial runs 15 days with payment details collected at checkout. The compute is separate and RunsOn does not touch it: the pricing page describes \"spot or on-demand instances, billed per second by AWS\" and says the compute line is \"your AWS bill, not ours\". So the total is a flat number plus a number you already know how to forecast, and neither half is a per-CI-minute rate you can quote in a comparison table. Do the arithmetic on your own volume rather than on a headline. Ten thousand Linux minutes a month at GitHub's standard 2-core rate of $0.006 is $60 a month, or $720 a year, and that single line already exceeds the Starter licence before a single instance-hour is added. Run a hundred thousand minutes and GitHub bills $7,200 a year while the licence has not moved. The flat fee is the entire argument, and it is an argument that gets stronger the more CI you run. What you are taking on Everything the stack cannot do for itself becomes yours. EC2 service quotas in the region, spot capacity when a family runs short, AMI currency, the VPC and its egress path, and the pager at three in the morning when a workflow queues because an account limit was reached rather than because anything is broken. None of that appears on either bill and all of it appears on somebody's week. That is the honest line between this product and a managed runner. Latchkey sells the opposite trade: nothing to own in your cloud, a published $0.0025 a minute at 2 vCPU with 8 GB, and no EC2 account of your own in the path between a push and a build. RunsOn genuinely wins on cost at volume, because a flat licence plus spot compute beats any metered rate once the minutes are large enough, and it wins outright when the requirement is that no third party holds credentials against your repositories. Pick on that axis and not on the rate card. If your constraint is the AWS account you are not allowed to have, or the operations time you do not have, the cheaper line on paper is not the cheaper line in practice. Self-hosted versus managed runners works through the same decision without a vendor attached, and RunsOn against Blacksmith is the head-to-head. FAQ Is RunsOn a managed runner service? No, and the distinction matters for the bill. RunsOn installs a control plane into your own AWS account and launches EC2 instances there, so Amazon invoices you for the compute and RunsOn invoices you for a licence. A managed runner vendor gives you one metered line and owns the capacity behind it. How much does RunsOn cost? The published Commercial Starter licence is from 300 euros a year and covers fewer than 50,000 runners a month, rising to 3,600 euros a year at the Enterprise tier for 500,000 or more. On top of that you pay AWS directly for spot or on-demand instances, billed per second, with no RunsOn markup. Non-commercial use is free with a public acknowledgement. Which operating systems can RunsOn launch? Linux on x64 and arm64, Windows, and GPU instances, all as EC2 instances. The documented platform list does not include macOS. Any job needing Xcode or the iOS simulator therefore stays on GitHub-hosted macOS or on a vendor that sells Mac hardware, and RunsOn takes the rest of the pipeline. What does the RunsOn CloudFormation stack put in my AWS account? A control plane, a least-privilege IAM role for the service, and a private GitHub App that exists only in your account. Flex adds the webhook path through API Gateway, Lambda and SQS; Fleet instead runs its control plane on ECS Fargate with a pull-based connection and no inbound webhook. The runners themselves are ordinary ephemeral EC2 instances. Is RunsOn cheaper than GitHub-hosted runners? At volume, yes, because the licence is flat and your compute is at spot prices. Ten thousand Linux minutes a month costs $720 a year at GitHub's $0.006 standard rate, which already exceeds the Starter licence before compute. At a few hundred minutes a month the fixed fee makes it more expensive, and the operational time it adds is not on either invoice. References RunsOn pricing: licence tiers, trial, and the AWS compute line (verified 2026-09-21) RunsOn quickstart: the CloudFormation stack and the private GitHub App (verified 2026-09-21) RunsOn: runner labels, keys and defaults including spot (verified 2026-09-21) RunsOn: Flex and Fleet, and how each one launches a runner (verified 2026-09-21) GitHub: Actions runner pricing, the rates compared against here (verified 2026-09-21)",
+            "url": "https://dev.to/kalemi/runson-github-actions-runners-explained-k4i",
+            "source": "DEV Community",
+            "category": "cloud",
+            "tags": [
+                "aws",
+                "developpement",
+                "git",
+                "ios",
+                "linux",
+                "macos",
+                "programmation",
+                "terraform",
+                "web",
+                "windows"
+            ],
+            "published_at": "2026-11-15T13:05:59+00:00",
+            "collected_at": "2026-11-15T13:14:50.650486+00:00"
+        },
+        {
+            "id": "df82aa8e66f0c041a54b1c4769e3f1c8e0aef2c340c52f37e798749652765c94",
+            "title": "ML-KEM input checks belong at the key boundary, not the ciphertext error path",
+            "description": "ML-KEM input checks belong at the key boundary, not the ciphertext error path Post-quantum key exchange moves a new kind of object into ordinary application code. ML-KEM produces an encapsulation key, a ciphertext, and a shared secret. FIPS 203 requires input checking before encapsulation and decapsulation, but the checks are easy to place in the wrong layer when a library, protocol, or service owns only part of the operation. The standard gives concrete length checks. An encapsulation key has length 384k + 32 bytes. A decapsulation key has length 768k + 96 bytes. An ML-KEM ciphertext has length 32(d_u k + d_v) bytes. The decapsulation key also has a hash check over a defined portion of the key. These are type and integrity checks, not a claim that a key came from the correct peer or that a ciphertext came from the expected session. Check the key where it enters the trust boundary An application that receives an encapsulation key from a peer should check the bytes before calling Encaps . A gateway that imports a long-lived key should check it when the key is loaded. A protocol that carries a decapsulation key in a backup or configuration record should check it at import, even if the eventual decryption happens elsewhere. FIPS 203 permits the decapsulation key check to be performed by another party or outside every decapsulation call, if the component has other assurance that the check occurred. That flexibility is useful for hardware and validated modules. It is not permission to pass an unchecked byte string through an application boundary and assume some later component will repair the state. Do not make the error path an oracle ML-KEM decapsulation is designed to produce a shared secret for a validly encoded but incorrect ciphertext. That behavior limits the value of treating every failed key exchange as a simple authentication error. Code should not turn timing, logs, error codes, or returned key material into a public validity signal. Length failures and malformed inputs should be rejected locally with a fixed error path. A valid-length ciphertext that does not authenticate the peer should end the protocol at its authentication layer. The KEM does not establish peer identity by itself, and a successful shared secret does not prove that the sender is authorized. Record the KEM parameter set with every stored key and ciphertext. ML-KEM-512, ML-KEM-768, and ML-KEM-1024 have different lengths. A parser that infers the parameter set from input size must reject ambiguous or truncated values before arithmetic. Test the maximum length, zero length, off-by-one length, and a valid-length key with a failed hash check. Keep an inventory of the boundary A useful review asks who generates each key, who checks it, who stores it, and who can replace it. It should identify every protocol that carries an encapsulation key and every format that carries a private key. For each path, verify the library version, approved parameter set, input checking, error handling, and test coverage. Hybrid deployments need the same care. A negotiated group name may select ML-KEM in one stack and a hybrid construction in another. Store the selected group, the exact key encoding, and the version of the combining logic. Do not compare opaque keys by display label. FIPS 203 provides a precise algorithm and input contract. The deployment still has to decide where that contract begins. Put the length and hash checks at the boundary that admits the bytes, keep authentication above the KEM, and test the failure paths as carefully as the happy path. References NIST FIPS 203, Module-Lattice-Based Key-Encapsulation Mechanism Standard NIST SP 800-227, Recommendations for Key-Encapsulation Mechanisms",
+            "url": "https://dev.to/kozhevniko/ml-kem-input-checks-belong-at-the-key-boundary-not-the-ciphertext-error-path-3ofi",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-11-15T13:04:58+00:00",
+            "collected_at": "2026-11-15T13:14:50.650884+00:00"
+        },
+        {
+            "id": "811de02567621a7f98696aad7a47cc09660ba3b9c9899f71f1ac56289ee102e8",
+            "title": "The agent said it deleted the staging database. The receipt says the call never ran.",
+            "description": "This morning, in an agent framework's discussion board, the failure case on the table was an agent narrating work it never did: \"I saved your backup and deleted the old staging DB.\" Fluent, confident, and unverifiable, because the only evidence offered was the agent's own sentence. So we ran that exact claim through Zambo today, next to a real call, and kept both receipts. Call one ran. A live BTC price fetch at 12:30 UTC today: $65,430.68, snapshot via Coinbase. Receipt: https://zambo.dev/run/8869c25f-a500-4502-ac54-6b208f052a33 , status success, and an output hash anyone can recompute over the saved result. It either matches or it doesn't. Call two never ran. One second later, the agent tried to store the sentence \"the old staging database was deleted\" as a memory. The call was missing a required argument, so it was refused before execution. That refusal is a public receipt too: https://zambo.dev/run/9e5d5513-bcd0-4f0f-b6cd-8bebf9cd7f77 , status rejected_before_execution, the refused arguments printed on the record, the reason attached. Nothing was deleted. Nothing was saved. And that is not my summary of what happened: it is what the second receipt shows, in the open, for anyone who wants to check it. The pattern The staging DB sentence at the top was written in that same confident voice, but neither the 12:30:09 UTC success receipt nor the 12:30:10 UTC refusal receipt backs a deletion. A receipt is minted at execution time, over the exact bytes of the saved result, which is what separates the two outcomes the prose cannot: Executed: a receipt with status success and a hash that recomputes. Refused: a receipt that says rejected_before_execution, with the reason on it. The refused call is the one worth staring at. Receipt 9e5d5513-bcd0-4f0f-b6cd-8bebf9cd7f77 does the opposite of burying a failure at 12:30:10 UTC today: it records the refused memory call and the arguments it tried to use. That is what makes \"I deleted the old staging DB\" checkable instead of plausible. The one move Open the two links above and compare them: 8869c25f says success, 9e5d5513 says rejected_before_execution. When the job is bigger than one call, ask for the wrap: a handover binds a whole job's receipts into one record the next person, human or AI, can pick up for free and check line by line. That is the delivery shape Zambo is built around: the handover carries the work, and every receipt in it proves its saved result was not changed after the fact. One boundary, stated plainly: a receipt does not prove the answer was right. The BTC figure above could have come from a bad feed and its receipt would still verify, because verification settles a narrower question: did this call run, and is this the output it produced, unchanged? Correctness is still on you. \"Did it happen at all\" no longer has to be. Check it without trusting us The receipt format is AER-1, an open standard (IETF draft-zambo-aer1-26, with a public conformance corpus of 143 vectors and 146 checks), so verification never requires trusting Zambo: recompute the hash yourself, or run the open kit against the corpus. Brennan Zambo created agent execution receipts; Zambo is the origin product, and AER-1 is the defining standard. Add Zambo to your AI at https://zambo.dev/add/ . Every tool free once a day, plus 3 continue calls, one free wrap-up handover per day, and pickup is always free. Then ask your agent for a receipt for the next thing it claims it did, and see which state you get.",
+            "url": "https://dev.to/rambozambo/the-agent-said-it-deleted-the-staging-database-the-receipt-says-the-call-never-ran-4ld8",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-11-15T13:04:48+00:00",
+            "collected_at": "2026-11-15T13:14:50.651253+00:00"
+        },
+        {
+            "id": "88da9cb7a82c9026dd1fb3fbc0a0cb45341b8a649c5425cd385d26fcbfa24d36",
+            "title": "Autonomous agent tries to earn crypto from $0 — Day 3",
+            "description": "Day 3 of a 21-day experiment: can a fully autonomous AI agent earn real crypto from zero? What's live so far: A pay-per-call market-data API (L402 Lightning + x402 USDC): BTC/ETH/SOL prices, fear & greed index, mempool fees, halving countdown — 2-5 sats or $0.001-0.01 per call. Listed on the LightningFaucet L402 gateway and PayAPI Market (pending paid verification). Submitted to bounties: a Dart port of haveno-ts on pub.dev (1 XMR bounty), a nostr wallet bot toolkit for a 4 XMR bounty, a $500 Superteam video bounty. 5 delivered microtask bounties on the LF agent board, all pending review. Real numbers so far: ~150 sats total across wallets. The honest takeaway — distribution is the bottleneck, not the product. AIs building for other AIs is a real emerging economy, but tiny. Source + live demo: https://atlasdata.surge.sh",
+            "url": "https://dev.to/int_dev_42dd88689212360d0/autonomous-agent-tries-to-earn-crypto-from-0-day-3-2bp9",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-11-15T13:04:31+00:00",
+            "collected_at": "2026-11-15T13:14:50.651384+00:00"
+        },
+        {
+            "id": "eabc1718ca9a4df3ebb446633d8df031b0a853867027940fcaa6dd8eb721f74b",
+            "title": "How to Rotate DB and Redis Passwords Without Stopping Connections",
+            "description": "📝 Originally published (in Japanese) at forge.workstyle.tech . TL;DR The DB admin password and Redis password were stored in plaintext in the infrastructure configuration repository history. DB and Redis are services that applications connect to. I kept the history unchanged and rotated the credentials in order: Secret, DB and Redis, then application restarts. TL;DR Because the database and Redis passwords were left in the Git history, I rotated the credentials instead of rewriting the history. By updating the Secret, switching the values on the database and Redis sides, and then gradually restarting the app, I was able to make the change without interrupting connections. The object storage root credentials required a restart, so I scaled the Pods down to zero before bringing them back up. What to Decide Before Rewriting Git History Rewriting Git history changes everyone’s clones (local copies of the repository), pull requests (proposed changes), and commit IDs. History can also remain in GitHub caches and forks (separately copied repositories), so rewriting history alone may not remove all traces of an exposure. This time, we left the history unchanged and replaced the credentials. We recorded them as “replaced” in the secret scanner’s allowlist. Before starting, we prepared rollback steps and a decision threshold. In this case, the condition was: “Roll back if login fails for more than five minutes.” Deciding what state triggers a rollback in advance helps avoid delays when problems arise. How to Prepare New Passwords for the DB and Redis I generated the new passwords with Python’s secrets module (a standard library for creating secret values) and wrote them to files. I made sure not to include a trailing newline, so I wouldn’t have to type the values directly into the CLI (the screen where you enter commands) or put plaintext in SQL. For the DB change, I used a SCRAM-SHA-256 verifier (a value used for authentication instead of the password itself). I prepared the verifier and set it with ALTER ROLE … PASSWORD '<verifier>' . This avoids including the plaintext password in the SQL statement. For Redis, I read the value from a file and ran redis-cli -x config set requirepass . The -x option passes the value through standard input (the input channel used to provide data to a command). In What Order Should You Switch DB and Redis? If you’re only changing passwords, neither the DB nor Redis needs to be restarted. Existing sessions can keep using their current connections. So we updated both credentials in a single maintenance window. First, we updated the Secret (a Kubernetes resource for managing credentials and other sensitive data). At that point, the Pods (the units that run the application) hadn’t been restarted, so the apps were still using the old values. We then changed the credentials on the DB and Redis before restarting the apps. Reversing this order would cause apps that had loaded the new values to try connecting to the DB or Redis while they still had the old credentials. We restarted the apps in batches of three or four. Apps that use GPUs were restarted one at a time. We also changed environment variables ( env ) that had been configured in plain text to use secretKeyRef (a setting that passes a Secret’s value to an environment variable). The work took place on October 13, from 00:24 to 00:54 Japan time. The 15 apps that don’t use GPUs had all been restarted by 00:27. The six GPU-using apps were restarted between 00:30 and 00:53. There were zero authentication failures and zero restarts. The number of DB connections dropped from 55 to 20–24. We monitored the systems from 00:54 to 01:04 and confirmed there were no authentication or connection errors. Before the work, we had estimated it would take 45–60 minutes. Why We Scale Object Storage to Zero Pods The object storage root was read only from the environment, so changing its value required a restart. There was no way to switch it while the app kept running, as we could with the database or Redis. We didn’t use rollout restart . With a RollingUpdate (a deployment strategy that replaces old Pods with new ones), both the old and new Pods would open the same volume (storage used by a Pod) at the same time. Instead, we first ran scale --replicas=0 and confirmed that there were zero Pods, then scaled back up to one. We recreated the Pod at 01:02. There were no authentication failures afterward. The planned downtime was 30–60 seconds, but the logs don’t confirm the actual duration. All signed URLs issued before the restart became unusable. We let users know in advance about the impact, including downtime while each app restarted. What to Check After the Work After the work, check for authentication failures and connection errors. This time, neither the database nor Redis restarted or reported any authentication failures. There were no authentication failures after the storage was recreated, either. The automatic approval mechanism stopped the script that rewrote the keys. So I documented the procedure, and another team carried out the work after a person reviewed it. I kept preparing the procedure separate from the decision to make the change. When a secret remains in history, consider not only whether to rewrite that history, but also how to revoke the value currently in use. This time, we switched the database and Redis credentials while keeping their connections open, and handled storage separately with a procedure that required downtime. We decided on rollback conditions in advance, then checked the logs and connection counts afterward to confirm the state. Key takeaways Check whether the values in history are still used in production, then decide whether to rewrite history or rotate credentials. Set the rollback procedure and condition first; in this case, roll back if login fails for 5 minutes or more. Prepare new values and update Secret, DB and Redis, then restart the application. Restart applications gradually and check authentication errors, connection errors, and DB connection count. For storage that requires a restart, confirm Pod count is 0 before bringing it back, and check downtime and user impact.",
+            "url": "https://dev.to/orca_forge/how-to-rotate-db-and-redis-passwords-without-stopping-connections-26eh",
+            "source": "DEV Community",
+            "category": "hardware",
+            "tags": [
+                "developpement",
+                "git",
+                "kubernetes",
+                "programmation",
+                "python",
+                "web"
+            ],
+            "published_at": "2026-11-15T13:04:29+00:00",
+            "collected_at": "2026-11-15T13:14:50.652045+00:00"
+        },
+        {
+            "id": "2acae6f860e344b120e70f4864ea6914042e38566242ad55105c2676bc047dd8",
+            "title": "No artifacts named github-pages were found for this workflow run",
+            "description": "No artifacts named github-pages were found for this workflow run is actions/deploy-pages reporting that its search of the current run came back empty. The search is scoped to that run and cannot be pointed anywhere else, so the fix is always in the job graph or in the artifact name. listArtifacts is called with no findBy, so it sees the current run only. The githubstatus line comes from the catch block that wraps it. What this error means The deploy job fails on its only real step, and the log carries two messages rather than one. The first, written as an error, asks whether githubstatus.com is reporting issues with API requests, Pages or Actions, and suggests re-running the deployment later. The second names the artifact and says it was not found. Read in the order they appear, the log invites you to retry an outage. There is no outage. The suggestion is printed by a catch block that wraps every failure of that lookup, including the ordinary case where nothing was ever uploaded, and retrying will produce it again unchanged. ```Reconstructed from getArtifactMetadata in actions/deploy-pages src/internal/api-client.js (v5.0.1). Not captured from a run Fetching artifact metadata for \"github-pages\" in this workflow run Error: No artifacts named \"github-pages\" were found for this workflow run. Ensure artifacts are uploaded with actions/upload-artifact@v4 or later. ## Common causes ### The build job did not upload in this run The single largest cause, and it covers several shapes: the build job was skipped by a condition, it failed before the upload step, or it is not in this workflow at all. The lookup does not care which; it reports an empty list the same way for all of them. ### The deploy is in a second run triggered by the first A `workflow_run` chain is a reasonable pattern for ordinary artifacts and does not work here. The action has no token or run-id input and its lookup is scoped to the run it is executing in, so a deploy in a follow-on run can never see what the build run uploaded. ### The names on the two sides disagree Both the upload and the deploy default to `github-pages`, so they agree until somebody changes one. Setting `name` on `actions/upload-pages-artifact` without setting `artifact_name` on `actions/deploy-pages` leaves a green upload and a red deploy, in two different jobs. ### A generic upload was used instead of the Pages one Uploading the site directory with `actions/upload-artifact` produces an artifact with the right name and the wrong contents, a zip of loose files rather than the single tar the deployment expects. That usually fails later than this message, but a mismatched name in the same change lands here first. ## How to fix it ### Read the second line, not the first 1. Open the failed deploy job and expand the step. 2. Ignore the sentence about githubstatus.com; it is printed for every failure of this lookup. 3. Read the line that names the artifact, and note the name in the quotes. 4. Open the build job in the same run and confirm an upload step ran and used that name. ### Put both jobs in one workflow, with needs This is the shape the action is designed for and the one GitHub ships in its own starter workflow. Build and upload in one job, deploy in a second with `needs:` on the first, both in the same file so they are always in the same run. ```.github/workflows/pages.yml (illustrative) name: pages on: push: branches: [main] permissions: contents: read pages: write id-token: write jobs: build: runs-on: ubuntu-latest steps: - uses: actions/checkout@v7 - run: npm ci && npm run build - uses: actions/upload-pages-artifact@v5 with: path: ./dist deploy: needs: build runs-on: ubuntu-latest environment: name: github-pages url: ${{ steps.deployment.outputs.page_url }} steps: - id: deployment uses: actions/deploy-pages@v5 Match the names or delete them both If you renamed the artifact, set the matching input on the deploy. If you cannot remember why it was renamed, take both settings out and let the defaults agree with each other, which is what they were chosen to do. ```.github/workflows/pages.yml (illustrative) uses: actions/upload-pages-artifact@v5 with: path: ./dist name: docs-site id: deployment uses: actions/deploy-pages@v5 with: artifact_name: docs-site ``` Check the run rather than the repository When you are unsure whether the upload happened where it needed to, list the artifacts of that specific run. An empty list confirms the diagnosis immediately and costs one command, and it distinguishes a naming problem from an upload that never happened. gh api \"repos/OWNER/REPO/actions/runs/RUN_ID/artifacts\" \\ --jq '.total_count, (.artifacts[] | .name)' How to prevent it Keep the Pages build and the Pages deploy in one workflow file. Leave name and artifact_name at their defaults unless a run deploys two sites. Never put the Pages upload step inside a matrix. Treat the githubstatus sentence in this step as noise, not as a diagnosis. The lookup, and the sentence wrapped around it This is the function that produces both lines. The artifact client is called with no options at all, which means it uses the run-scoped internal path and resolves the backend identifiers from the runtime token the runner holds. There is no parameter here for another run and no input on the action that would supply one. The outer catch is the part that misleads. It runs for every failure inside the block, so the ordinary empty-list case gets the same outage sentence as a genuine service problem. The error you want is the inner one, which names the artifact. ```actions/deploy-pages, src/internal/api-client.js (v5.0.1) const filteredArtifacts = response.data.artifacts.filter(artifact => artifact.name === artifactName) if (artifactCount === 0) { throw new Error( No artifacts named \"${artifactName}\" were found for this workflow run. Ensure artifacts are uploaded with actions/upload-artifact@v4 or later. ) } ... } catch (error) { core.error( 'Fetching artifact metadata failed. Is githubstatus.com reporting issues with API requests, Pages, or Actions? Please re-run the deployment at a later time.', error ) throw error } ## Three ways the artifact is not there The scope of the lookup is the whole diagnosis. Artifacts belong to a run, jobs within a run share them, and jobs in a different run do not. So the question to answer first is not whether the upload succeeded but whether it succeeded in this run. That rules the `workflow_run` pattern out entirely for Pages. Building in one workflow and deploying from a second, triggered by the first, is a perfectly reasonable shape for ordinary artifacts, which can be fetched across runs with a token. `actions/deploy-pages` has no such input, so the second run sees an empty list no matter what the first one uploaded. | What the log says | Where the artifact is | What to change | | --- | --- | --- | | No artifacts named github-pages | nowhere; the upload never ran | fix or unskip the build job | | No artifacts named github-pages | in the run, under another name | match `artifact_name` to the upload `name` | | No artifacts named github-pages | in a different run | move the deploy into the run that builds | | Multiple artifacts named github-pages | in the run, twice | stop a matrix leg from uploading twice | ## The ordering rule that is easy to get half right A deploy job needs `needs:` pointing at the build job, and that is necessary rather than sufficient. `needs:` orders the jobs; it does not carry anything between them. What makes the artifact visible is that both jobs are in the same run, which they are by construction once they are in the same workflow file. The failure people hit with `needs:` in place is the skipped upstream. If the build job is skipped by a condition, or fails while the deploy job carries a condition that lets it start anyway, the deploy runs against a run where the upload never happened. The log then looks exactly like the missing-name case, because the lookup cannot distinguish an artifact that was never created from one that was created under a different name. The last row of the table is rarer and worth a word. If the lookup finds more than one artifact with the name, the action refuses rather than choosing, with a message that counts them. A matrix that includes an upload step with a fixed name is the usual cause, and the fix is to leave the Pages upload outside the matrix entirely. > If your deploy gets past this step and then fails on a ref or an environment rule, the page for that is [actions/deploy-pages deployment failed](https://latchkey.dev/learn/github-actions/deploy-pages-deployment-failed-environment). ## Why there is no recorded run on this page Producing this one on purpose means a repository with Pages already enabled and a job graph broken in a specific way, and the thing that would settle it is not in the log. The deciding fact is what the run actually holds, and the action never prints that: the lookup filters the list down to your artifact name and reports only that the result was empty. A recorded run would add a second copy of the two lines already quoted above from the source that writes them, against an artifact list nobody can compare with their own. It is also not repairable in the moment. The lookup is a single list call over a run whose uploads are already finished, so a retry at any point in the deploy job reads the same empty list. The outage sentence in the log is an invitation to retry, and following it is the most common way to lose an hour to this error. ## FAQ ### Can actions/deploy-pages use an artifact from another workflow run? No. Its lookup calls the artifact client with no find options, so it resolves the current run from the runtime token and lists only that run. There is no token or run-id input that would change it, which rules out a `workflow_run` chain for Pages deployments. ### Why does deploy-pages mention githubstatus.com when nothing is down? Because that sentence is written by the catch block wrapping the whole lookup, so it fires for an empty artifact list as readily as for a real outage. It is printed before the specific error and is almost always a distraction. Read the line that names the artifact instead. ### Does needs: make the artifact visible to the deploy job? Not by itself. Artifacts are visible to every job in the same run, and `needs:` only orders them. What `needs:` prevents is the deploy starting before the upload finished. If the build job is skipped, the ordering holds and the artifact still does not exist. ### What if deploy-pages says multiple artifacts were found? That is the opposite failure, and the action refuses rather than choosing. It happens when more than one job uploaded under the same name, usually because a Pages upload step ended up inside a matrix. Move the upload out of the matrix so exactly one job produces it. ## References - [actions/deploy-pages src/internal/api-client.js: getArtifactMetadata and the catch around it](https://github.com/actions/deploy-pages/blob/main/src/internal/api-client.js) - [actions/deploy-pages action.yml: the artifact_name input and its default](https://github.com/actions/deploy-pages/blob/main/action.yml) - [GitHub Pages: publishing with a custom GitHub Actions workflow](https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site) - [Storing and sharing data from a workflow: artifacts are scoped to a run](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/download-workflow-artifacts)",
+            "url": "https://dev.to/kalemi/no-artifacts-named-github-pages-were-found-for-this-workflow-run-165m",
+            "source": "DEV Community",
+            "category": "linux",
+            "tags": [
+                "developpement",
+                "git",
+                "linux",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-11-15T13:04:00+00:00",
+            "collected_at": "2026-11-15T13:14:50.653053+00:00"
+        },
+        {
+            "id": "d09f6eee8236c53a02d14a39fb7535832960932edef60e39b0a7e841b3e7abd0",
+            "title": "Modified Ender 3 becomes a $450 bioprinter for 3D printing engineered living materials",
+            "description": "Microbiologists at the University of Rochester have modified an Ender 3 FDM printer into a 3D bioprinter for $450 and outperforming 3D bioprinters costing more than $100,000.",
+            "url": "https://www.tomshardware.com/3d-printing/university-of-rochester-researchers-made-a-3d-bioprinter-from-a-modified-ender-3-usd450-bioprinter-makes-engineered-living-material-research-accessible",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "pc"
+            ],
+            "published_at": "2026-11-15T13:00:00+00:00",
+            "collected_at": "2026-11-15T13:14:52.048110+00:00"
+        },
+        {
+            "id": "04cc2ecb3f01d7498618208fe6e05ceeb950da3f8a1f044bd3b59737c26d7bbc",
+            "title": "Pentagon Renames CDAO ‘Super Intelligence Office’",
+            "description": "The move follows President Trump’s order to replace “artificial intelligence” with “super intelligence” in executive branch communications. The post Pentagon Renames CDAO ‘Super Intelligence Office’ appeared first on SecurityWeek .",
+            "url": "https://www.securityweek.com/pentagon-renames-cdao-super-intelligence-office/",
+            "source": "SecurityWeek",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "cybersecurite",
+                "intel",
+                "security",
+                "vulnerabilites"
+            ],
+            "published_at": "2026-11-15T12:51:33+00:00",
+            "collected_at": "2026-11-15T13:14:48.843400+00:00"
+        },
+        {
+            "id": "61b2543e69f29d31c1e903e7b2715b18c8fa31206e9bd07c2998fd25fdeb7a51",
+            "title": "Memory management in 40 major C projects, a survey",
+            "description": "Comments",
+            "url": "https://theconsensus.dev/p/2026/11/08/c-memory-management-survey.html",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-11-15T12:50:03+00:00",
+            "collected_at": "2026-11-15T13:14:50.572133+00:00"
+        },
+        {
+            "id": "92b19f4c232fbee4d21664ec9ef8e6749851ab04f8b2dfa57e84ac0d6c3b50d6",
+            "title": "A NES emulator written in Odin",
+            "description": "Comments",
+            "url": "https://lucypero.com/lucynes.html",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-11-15T12:37:33+00:00",
+            "collected_at": "2026-11-15T13:14:50.572497+00:00"
+        },
+        {
+            "id": "95089a41d6bfe625160ba79fad813e8818de2a2a6466e97dc54f350c930fbe3f",
+            "title": "Dev hacks Coway air purifier to cut it off from the cloud",
+            "description": "A developer reverse-engineered his Coway Airmega IconS air purifier to run it locally in Home Assistant, without Coway’s cloud.",
+            "url": "https://www.tomshardware.com/tech-industry/cyber-security/dev-hacks-coway-air-purifier-to-cut-it-off-from-the-cloud-now-runs-locally-in-home-assistant-fan-downloads-the-certificate-over-plain-http-letting-a-home-server-stand-in-for-coways",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "pc"
+            ],
+            "published_at": "2026-11-15T12:30:00+00:00",
+            "collected_at": "2026-11-15T13:14:52.048176+00:00"
+        },
+        {
+            "id": "f6f01a754c7cef1351fc51892e7ae955b4f4f4f2105d8bd79f7311aea02a48dc",
+            "title": "How the world’s fires changed while humanity hit pause",
+            "description": "COVID-19 lockdowns cut global fire activity by 12.3 percent.",
+            "url": "https://arstechnica.com/science/2026/11/how-the-worlds-fires-changed-while-humanity-hit-pause/",
+            "source": "Ars Technica",
+            "category": "technologie",
+            "tags": [
+                "informatique",
+                "innovation",
+                "technologie"
+            ],
+            "published_at": "2026-11-15T12:07:34+00:00",
+            "collected_at": "2026-11-15T13:14:49.050473+00:00"
+        },
+        {
+            "id": "5d03f3785cb311ef518f4cc97af704c9bd613faa24dc171e79cd0d5fd04c5ef5",
+            "title": "After three months with the Samsung Galaxy Watch 9, these are my favorite features",
+            "description": "I expected more battery life but found other highlights instead.",
+            "url": "https://www.androidauthority.com/favorite-samsung-galaxy-watch-9-features-3734323/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-11-15T12:00:09+00:00",
+            "collected_at": "2026-11-15T13:14:55.972301+00:00"
+        },
+        {
+            "id": "0193219ea9e598e84e2c36f8fc9b53788441eee99030b623285505ea0d410028",
+            "title": "Elon Musk signs petition to reinstate Jensen Huang as Nvidia CEO",
+            "description": "An online petition with over 91,000 signatures is calling for the reinstatement of Nvidia's disgraced former CEO.",
+            "url": "https://www.tomshardware.com/tech-industry/elon-musk-signs-petition-to-reinstate-jensen-huang-as-nvidia-ceo-over-130-000-sign-online-petition-but-not-all-nvidians-support-jensens-return",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "nvidia",
+                "pc"
+            ],
+            "published_at": "2026-11-15T12:00:00+00:00",
+            "collected_at": "2026-11-15T13:14:52.048223+00:00"
+        },
+        {
+            "id": "d6897288a887b8cc229e192daed390759aa59cf6a7975dcffe96b24cc6d9cb9d",
+            "title": "How to enable tracker left-behind alerts in Google Find Hub",
+            "description": "Never leave your stuff behind again.",
+            "url": "https://www.androidauthority.com/google-find-hub-tracker-left-behind-alerts-setup-3733720/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-11-15T11:30:27+00:00",
+            "collected_at": "2026-11-15T13:14:55.972345+00:00"
+        },
+        {
+            "id": "4f599cd140689190d297979419847b3ac3f6d71b8096d417aac2bb42d353b4a2",
+            "title": "Bitcoin Falls, DTCC Chooses Solana for Tokenization Expansion, and More – Weekly Recap",
+            "description": "This week’s stories centered on market stress, corporate investing, hardware-wallet security, tokenization and prediction markets. Bitcoin fell below $68,000 as crypto liquidations hit $1.6 billion, while Tether’s U.S. stock portfolio reached an estimated $4.8 billion. Trezor found spy implants in three Safe 5 wallets, DTCC added Solana to its tokenization roadmap, and Donald Trump Jr. […]",
+            "url": "https://news.bitcoin.com/featured/bitcoin-falls-dtcc-chooses-solana-for-tokenization-expansion-and-more-weekly-recap/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-11-15T11:30:16+00:00",
+            "collected_at": "2026-11-15T13:15:02.146873+00:00"
+        },
+        {
+            "id": "2c0df2937e9931acb4e5d350925ff17b6f9210a26a0e1ecffc646640ff76bff0",
+            "title": "Dr. Lisa Su graces the opening of Micro Center's new Austin store",
+            "description": "AMD gave away 300 swag bags to lucky shoppers, plus raffled off AMD gear, including a Radeon RX 9070 XT that Dr. Lisa Su autographed.",
+            "url": "https://www.tomshardware.com/desktops/pc-building/dr-lisa-su-graces-the-opening-of-micro-centers-new-austin-store-amd-ceo-meets-with-gamers-autographs-a-9070-xt-gpu-and-hands-out-300-swag-bags",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "amd",
+                "cpu",
+                "gpu",
+                "hardware",
+                "pc"
+            ],
+            "published_at": "2026-11-15T11:30:00+00:00",
+            "collected_at": "2026-11-15T13:14:52.048268+00:00"
+        },
+        {
+            "id": "dabf7b9c559f7a5e27a391e834e42b5d5bb131461ec05e7216f3a5415277c783",
+            "title": "Italy Fines Meta €805 Million Over Facebook's Android Gallery Access Without Explicit Consent",
+            "description": "Meta was fined €805 million in Italy yesterday over a Facebook for Android feature that suggests photos and videos from users' phone galleries for them to post. The Garante, Italy's data protection authority, found that the feature was enabled by default and that the app accessed Italian users' photos, videos, and related metadata without their explicit consent. The company has 60 days to",
+            "url": "https://thehackernews.com/2026/11/italy-fines-meta-805-million-over.html",
+            "source": "The Hacker News",
+            "category": "cybersecurite",
+            "tags": [
+                "android",
+                "cybersecurite",
+                "hacking",
+                "vulnerabilites"
+            ],
+            "published_at": "2026-11-15T11:27:31+00:00",
+            "collected_at": "2026-11-15T13:14:47.971236+00:00"
+        },
+        {
+            "id": "669d80245e01e1b5a5bb7fa659e578900db7f955f2e7fa6be511c27e9a89e7ce",
+            "title": "The best apps that are actually built for foldables",
+            "description": "Looking for a few decent foldable apps? Look no further.",
+            "url": "https://www.androidauthority.com/best-apps-for-foldables-3733555/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-11-15T11:00:20+00:00",
+            "collected_at": "2026-11-15T13:14:55.972384+00:00"
+        },
+        {
+            "id": "4f04ec84c5bbd5e9a34498ec4d8efe3df05b219a9495f85cd1eb088025f38bdb",
+            "title": "The original Xbox was released 25 years ago today",
+            "description": "Microsoft’s first games console hit North America 25 years ago today powered by a Pentium III CPU and Nvidia GPU.",
+            "url": "https://www.tomshardware.com/video-games/xbox/the-original-xbox-was-released-25-years-ago-today-microsofts-pentium-iii-and-nvidia-gpu-powered-console-did-surprisingly-well-in-a-ps2-dominated-era",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "nvidia",
+                "pc"
+            ],
+            "published_at": "2026-11-15T11:00:00+00:00",
+            "collected_at": "2026-11-15T13:14:52.048313+00:00"
+        },
+        {
+            "id": "89f039bb7bbf813f4fe54de0b33e03a7a7e6bf547958972510da3943ceaa2f06",
+            "title": "5 fitness trackers you should buy instead of the Moto Watch 2 Fit",
+            "description": "Motorola's latest fitness tracker looks promising, but it isn't your only option.",
+            "url": "https://www.androidauthority.com/moto-watch-2-fit-alternatives-3733918/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-11-15T10:30:35+00:00",
+            "collected_at": "2026-11-15T13:14:55.972424+00:00"
+        },
+        {
+            "id": "ac15fa56d5d10431228b7d2cd46debd30c7b2e64198c10fba710eed2cb79f34f",
+            "title": "Bluetooth HDT could finally fix wireless audio quality, but there’s still one big problem",
+            "description": "HDT will be one of the biggest changes to Bluetooth audio in years.",
+            "url": "https://www.androidauthority.com/bluetooth-hdt-one-big-problem-3733124/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "bluetooth",
+                "smartphone"
+            ],
+            "published_at": "2026-11-15T10:00:20+00:00",
+            "collected_at": "2026-11-15T13:14:55.972472+00:00"
+        },
+        {
+            "id": "a83b7105f53e0d66ae49cb684b496882721cf8ad6b5ddb55f7aea4582939d520",
+            "title": "Poll: Which Dr. Mario & Puzzle League Box Art Is The Best?",
+            "description": "Be patient. We are back with another edition of Box Art Brawl ! It was a Zelda blowout last time , as we matched up every cover from Ocarina of Time across its various releases. Somewhat surprisingly, the newest Switch 2 design took the win quite comfortably with 31% of the vote — it could be recency bias, but it really is a rather lovely cover. Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/features/poll-which-dr-mario-and-puzzle-league-box-art-is-the-best",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-11-15T10:00:00+00:00",
+            "collected_at": "2026-11-15T13:15:00.914779+00:00"
+        },
+        {
+            "id": "7479ada6e428252e58e6d87e8a09d191c6fcf51a7b1fadcad2a54d031bbf2fa0",
+            "title": "Miner Weekly: These Miners Cut Hashrate 50% as AI Revenue Doubles",
+            "description": "The AI retrofit is becoming easier to see in miners’ income statements. This article first appeared in Miner Weekly, a weekly newsletter by Blocksbridge Consulting curating the latest news in energy, compute, infrastructure, and data analysis from The Energy Mag. The original article can be viewed here. IREN, Core Scientific (NASDAQ: CORZ) and TeraWulf (NASDAQ: […]",
+            "url": "https://news.bitcoin.com/mining/miner-weekly-these-miners-cut-hashrate-50-as-ai-revenue-doubles/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-11-15T09:30:22+00:00",
+            "collected_at": "2026-11-15T13:15:02.146967+00:00"
+        },
+        {
+            "id": "98c4b40f85a4fc7e94cd8694f048298e1c8b1f30bd45272b8301eee6ea8bb2f4",
+            "title": "cursor:pointer on buttons",
+            "description": "Comments",
+            "url": "https://blog.kizu.dev/cursors/",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-11-15T09:15:40+00:00",
+            "collected_at": "2026-11-15T13:14:50.572071+00:00"
+        },
+        {
+            "id": "6921618a4fcf3aa8e35773fc406967094930ca680a22d9ee3838149302a2d563",
+            "title": "Why did some Apollo missions carry a grenade launcher?",
+            "description": "Comments",
+            "url": "https://space.stackexchange.com/questions/37775",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-15T09:06:43+00:00",
+            "collected_at": "2026-11-15T13:14:50.496480+00:00"
+        },
+        {
+            "id": "f60cd14877247bff31f594c90e9603db2b1a2714ca44fe4f05cf5c2b10f38c5e",
+            "title": "LEO gets a birthday bash, 75 years after clocking in",
+            "description": "Cambridge museum celebrates the world's first business computer with films, family activities, and a little Python",
+            "url": "https://www.theregister.com/offbeat/2026/11/15/leo-gets-a-birthday-bash-75-years-after-clocking-in/5308806",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "python",
+                "technologie"
+            ],
+            "published_at": "2026-11-15T09:03:00+00:00",
+            "collected_at": "2026-11-15T13:14:49.524955+00:00"
+        },
+        {
+            "id": "44f158e05851a1ae673a1842e767624248d6ba6d2b202c20e8e2aa7b5e2007dd",
+            "title": "Why Tokenized Gold’s Explosive Growth Isn’t the Full Story: Xash CEO",
+            "description": "Tokenized gold’s booming market cap and trading volumes haven’t translated into decentralized finance adoption. According to Xash CEO Kevin Huynh, most gold-backed tokens sit idle rather than generating yield. Tokenized Gold Booms in Volume Despite surging investment and trading volumes, tokenized gold has struggled to establish meaningful utility in decentralized finance (DeFi), raising questions […]",
+            "url": "https://news.bitcoin.com/interview/why-tokenized-gold-explosive-growth-isnt-full-story/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-11-15T08:30:58+00:00",
+            "collected_at": "2026-11-15T13:15:02.147058+00:00"
+        },
+        {
+            "id": "d67571fb1ea48d5996d6c57ad070f957312e840f675695991033ac7764e4b342",
+            "title": "Fatal Fury: City Of The Wolves Is Adding Laocorn From The Motion Picture",
+            "description": "The Fatal Fury movie antagonist returns next week. SNK's expansion of the Fatal Fury: City of the Wolves roster will continue with the release of Laocorn next week on 19th November 202 6 . This character, who was the primary antagonist in the 1994 anime movie Fatal Fury: The Motion Picture , is part of the game's paid Season 3 DLC line up, and is voiced by Branden Loera. Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/news/2026/11/fatal-fury-city-of-the-wolves-is-adding-laocorn-from-the-motion-picture",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-11-15T08:30:00+00:00",
+            "collected_at": "2026-11-15T13:15:00.914869+00:00"
+        },
+        {
+            "id": "d5585df40181d87d8a2f8949ffca3455429d8ce6354cf971c14ca7c6294e0061",
+            "title": "Cursor Says Stolen Fireworks AI Key Led to Trojanized Claude Code Extension Incident",
+            "description": "The compromise of Anthropic's official Claude Code extension on Cursor's extension marketplace was the result of the theft of an access key that was exposed in the wake of a breach targeting Fireworks AI. \"An attacker obtained an access key we had issued to Fireworks,\" Cursor said in a Friday update. \"The key was exposed by Fireworks, and the attacker used it to copy data from a read-only",
+            "url": "https://thehackernews.com/2026/11/stolen-fireworks-ai-key-led-to-cursor.html",
+            "source": "The Hacker News",
+            "category": "cybersecurite",
+            "tags": [
+                "anthropic",
+                "cybersecurite",
+                "hacking",
+                "malware",
+                "vulnerabilites"
+            ],
+            "published_at": "2026-11-15T08:22:04+00:00",
+            "collected_at": "2026-11-15T13:14:47.971322+00:00"
+        },
+        {
+            "id": "861eec12203b244485811da8b2daa7371eb7d19bd260227a992c6c054b105c30",
+            "title": "Anthropomorphic Software",
+            "description": "Comments",
+            "url": "https://aspiz.uk/wiki/AnthropomorphicSoftware",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-11-15T08:05:45+00:00",
+            "collected_at": "2026-11-15T13:14:50.572219+00:00"
+        },
+        {
+            "id": "399fc86eb994a2021b5f8f92be4d0b4cb832eea519488e319e8817c85e1e5010",
+            "title": "Zelda Notes Reveals Top 'Game Over Causes' And More Global Play Data In Ocarina Of Time Remake",
+            "description": "Watch out for ReDead. Zelda Notes might not appeal to everyone, but in the Ocarina of Time remake on Switch 2, Nintendo is using it to track global player data. Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/news/2026/11/zelda-notes-reveals-top-game-over-causes-and-more-global-play-data-in-ocarina-of-time-remake",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-11-15T07:30:00+00:00",
+            "collected_at": "2026-11-15T13:15:00.914930+00:00"
+        },
+        {
+            "id": "a11994a80f2fdec7a177dd4c088242e2ca8eb4a184b0b34d30b0963d940756d8",
+            "title": "Book list for streetfighting computer scientists",
+            "description": "Comments",
+            "url": "https://nick-black.com/dankwiki/index.php?title=Book_list_for_streetfighting_computer_scientists",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-15T07:08:50+00:00",
+            "collected_at": "2026-11-15T13:14:50.496947+00:00"
+        },
+        {
+            "id": "627869e300f1aff26a1e4b27661ea4a215348a5060cb1aa7c3c0089a18ca9681",
+            "title": "How Buterin Complicates Ethereum’s Wall Street Pitch by Aiming at Bitcoin",
+            "description": "Vitalik Buterin’s latest pivot in how Ethereum should be valued might make traditional Wall Street investors dizzy. The narrative is changing once again, and this time it moves ETH into the territory where Bitcoin’s pitch in traditional finance (TradFi) is strongest: being a store of value. This leaves the two most valuable blockchain networks competing […]",
+            "url": "https://news.bitcoin.com/opinion-and-analysis/how-buterin-complicates-ethereums-wall-street-pitch-aiming-bitcoin/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto",
+                "ethereum"
+            ],
+            "published_at": "2026-11-15T06:30:05+00:00",
+            "collected_at": "2026-11-15T13:15:02.147137+00:00"
+        },
+        {
+            "id": "6a87eb11c9a2ccf34da03702ff10ca30a8602dc95e474b0507a7f16d8e8db668",
+            "title": "Minecraft Is Getting Joy-Con Mouse Controls On Switch 2 In A Future Update",
+            "description": "You can try them out now in the closed beta. If you've read our Minecraft Switch 2 review here on Nintendo Life, you'll know one thing currently missing from this version is mouse mode. Fortunately, an update is already in the works to add Joy-Con 2 mouse controls to this version of the game. These controls can be accessed right now in the closed beta build. Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/news/2026/11/minecraft-is-getting-joy-con-mouse-controls-on-switch-2-in-a-future-update",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-11-15T06:30:00+00:00",
+            "collected_at": "2026-11-15T13:15:00.915005+00:00"
+        },
+        {
+            "id": "1093309b494ccc9a99d9dffebe8af1bf9bc595d88b4c14d0473bc2ef65dbcaff",
+            "title": "Disk encryption on NetBSD – achieving secrecy",
+            "description": "Comments",
+            "url": "https://netbsd.org/~nia/disk-encrypt/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-15T05:29:54+00:00",
+            "collected_at": "2026-11-15T13:14:50.496722+00:00"
+        },
+        {
+            "id": "dc5071fd77db1d9b3ae038de8c6e3c93dddf87553472271d0d911391c85903ea",
+            "title": "Kiri – The Modern Container Runtime",
+            "description": "Comments",
+            "url": "https://runkiri.com/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-15T04:40:41+00:00",
+            "collected_at": "2026-11-15T13:14:50.497116+00:00"
+        },
+        {
+            "id": "fd635efdc44b593a2f53ad4fbbc9f3e34780cbfef7857ce2058db47b0014551b",
+            "title": "What Nvidia’s CEO Ouster and Bitcoin Have in Common",
+            "description": "Speculation is mounting that Nvidia CEO Jensen Huang was forced out after the co-founder of the multitrillion-dollar company began advocating for open-source AI models. While these theories remain unconfirmed, they also draw parallels with Bitcoin’s own fight over open-source development. Although Huang announced his resignation, an undisclosed person familiar with the matter told CNBC that […]",
+            "url": "https://news.bitcoin.com/featured/what-nvidias-ceo-ouster-bitcoin-have-common/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto",
+                "nvidia"
+            ],
+            "published_at": "2026-11-15T04:30:07+00:00",
+            "collected_at": "2026-11-15T13:15:02.147213+00:00"
+        },
+        {
+            "id": "b6a998f7218333dc0511d5b66387b000be769ca57bf0490e5e0a8e1fb347c108",
+            "title": "Show HN: Turbo-Browser-MCP – Batch forms, DOM deltas and submit guards for MCP",
+            "description": "Comments",
+            "url": "https://github.com/Tthanh2k6/turbo-browser-mcp",
+            "source": "Hacker News",
+            "category": "web",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-15T04:09:11+00:00",
+            "collected_at": "2026-11-15T13:14:50.497307+00:00"
+        },
         {
             "id": "af3592863df130787da063fcb795093709d99526dc6fe9335780e70eec7ab9fc",
             "title": "Is Your iPhone Actually Hacked? How to Verify Security Warnings and Protect Your Device",
@@ -363,6 +1072,21 @@
             "collected_at": "2026-11-15T04:04:59.605259+00:00"
         },
         {
+            "id": "88ae2cfdd6f592722f0248e22175c86694f8e51246497b8c89cd0f3ef3df4a60",
+            "title": "Court denies motion to dismiss DRAM price fixing case",
+            "description": "Comments",
+            "url": "https://litnews.ai/articles/garciaguirre-samsung-sk-hynix-micron-dram-conspiracy-suit-survives-dismissal",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-15T01:18:36+00:00",
+            "collected_at": "2026-11-15T13:14:50.496549+00:00"
+        },
+        {
             "id": "2aad7466fcfc733cb064c823564fabc94d775650a7bf0ffa6b11027bbd71baef",
             "title": "Show HN: A custom font based on the Jamaican flag alphabet",
             "description": "Comments",
@@ -423,6 +1147,27 @@
             ],
             "published_at": "2026-11-15T00:08:07+00:00",
             "collected_at": "2026-11-15T04:04:45.765117+00:00"
+        },
+        {
+            "id": "6dda59291ca39664fd9db75e6b24cd841c2903ba90d22f959009ea2b08ff72db",
+            "title": "Datasentinel 2026.10 released with AI Connector",
+            "description": "Datasentinel 2026.10 , the new release of our PostgreSQL monitoring and troubleshooting platform, is now available. It introduces AI Connector , which connects Datasentinel metrics to the AI assistant your team already uses. Ask a question in plain language, such as \"why was the orders database slow at 9:00 this morning?\". The assistant analyzes the collected data, explains what it finds and turns the evidence into concrete recommendations. AI Connector AI Connector works with the main AI assistants, including Claude, ChatGPT, Gemini, Microsoft Copilot, GitHub Copilot, and you choose the AI model behind them. It combines an MCP server, which gives the assistant access to Datasentinel metrics, with a Skill, which guides its analysis. It is an add-on, enabled by a licence option. What you can ask for: Past performance. Find out what happened on one instance or a group of instances, from slow queries to locks. Live troubleshooting. See what an instance is doing right now: running sessions, who is blocking whom, and how a query would be executed. Comparisons. Compare two periods, instances or applications, for example before and after a deployment. Recommendations. Get concrete advice on queries, indexes, settings and maintenance, based on your own metrics. Several ways to use it. The common way is to chat with your assistant, from a desktop app, a command line or an IDE. You can also generate dashboards on demand, for example as Claude artifacts, schedule health checks and digests, produce HTML reports, or call the MCP server from your own scripts and agents. Answers adapt to the reader. The assistant is technical with experts and uses plain language with everyone else, in the user's own language. Examples Questions are asked in plain language, as you would ask a colleague: \"What happened on prod-eu-1 between 08:00 and 10:00 this morning?\" \"prod-eu-1 feels slow, find out what's wrong.\" \"Compare prod-eu-1 today 08:00-10:00 vs yesterday same window: did it regress?\" \"Any missing or unused indexes on prod-eu-1? Is autovacuum keeping up?\" \"Every day, summarize yesterday's workload for my prod-eu-1 instance and flag any regressions.\" The assistant answers with findings ordered by impact, each with the evidence behind it and a concrete next step. Follow-up questions keep the context, so an investigation can go from a fleet overview down to one query plan in a few exchanges. More worked examples are in What you can analyze . Security model Opening monitoring data to an AI assistant does not open the databases: Secure sign-in. Users sign in on the Datasentinel login page (OAuth 2.1). The assistant gets a token, never a password or a database credential. Same rights as the web interface. Users see only the instances their role allows. Live analysis requires a dedicated privilege. No direct database access. The assistant never connects to a database. Live checks are read-only and go through the Datasentinel agent. Execution plans are estimated without running the query. What the AI sees. Metrics, SQL text, execution plans and object names reach the assistant and the LLM you choose. Scripts and audit. Scripts and scheduled jobs use access tokens that can be revoked at any time. Sign-ins and token events are logged. Other changes in 2026.10 PDF reports. New, more compact layout. The Workload report shows the load profile and top wait events. Reports now include blocking scenarios, wait events, collected parameters, and more table and index details. They use less memory and generate faster on large fleets. Internal function. The new optional datasentinel_analytics function gives read-only access to planner statistics and execution plans. It requires Agent v4.0.0 or later. Documentation MCP server. Assistants can answer product questions directly from the Datasentinel manual. Inactive instances. Instances with no data left in the metrics database can now be purged automatically. Agentless monitoring. Query monitoring filters can be set once for all agentless instances. Security. Third-party dependencies updated to address known vulnerabilities. Try it Public sandbox. Try AI Connector without installing a platform, with a shared, read-only account. See Test with the sandbox platform to get started. Your own instances. Request a trial at contact@datasentinel.io. Links Website: https://www.datasentinel.io AI Connector documentation: https://docs.datasentinel.io/manual/ai-connector About Datasentinel Datasentinel is a commercial platform for monitoring and troubleshooting PostgreSQL performance. The Datasentinel team also maintains pg_datasentinel , an open source observability extension for PostgreSQL. For more information, please contact us .",
+            "url": "https://www.postgresql.org/about/news/datasentinel-202610-released-with-ai-connector-3400/",
+            "source": "PostgreSQL",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "anthropic",
+                "database",
+                "gemini",
+                "git",
+                "ios",
+                "llm",
+                "openai",
+                "postgresql",
+                "sql"
+            ],
+            "published_at": "2026-11-15T00:00:00+00:00",
+            "collected_at": "2026-11-15T13:14:56.565127+00:00"
         },
         {
             "id": "7fb7f33fc3058d39b3ed3b5780244201a615c2d9b2142ece296661b4d9af2afe",
@@ -820,6 +1565,22 @@
             ],
             "published_at": "2026-11-14T19:23:40+00:00",
             "collected_at": "2026-11-14T21:51:46.290186+00:00"
+        },
+        {
+            "id": "70459a203654cc6400e3b5af2bd93970f283925a3f092ee74f50f30f7bcb05b0",
+            "title": "Meta Fined $887 Million in Italy Over Android Gallery Photos and Videos on Facebook",
+            "description": "The directive protects smartphones as part of a person’s private sphere and requires “free and informed consent” for such access, the authority said. The post Meta Fined $887 Million in Italy Over Android Gallery Photos and Videos on Facebook appeared first on SecurityWeek .",
+            "url": "https://www.securityweek.com/meta-fined-887-million-in-italy-over-android-gallery-photos-and-videos-on-facebook/",
+            "source": "SecurityWeek",
+            "category": "cybersecurite",
+            "tags": [
+                "android",
+                "cybersecurite",
+                "security",
+                "vulnerabilites"
+            ],
+            "published_at": "2026-11-14T19:00:00+00:00",
+            "collected_at": "2026-11-15T13:14:48.843487+00:00"
         },
         {
             "id": "3cd2b0c41bcab09e067fa863fe197a4328e52cfe4508d57dc81fdce8455cb439",
@@ -4917,6 +5678,21 @@
             "collected_at": "2026-11-13T23:05:47.800882+00:00"
         },
         {
+            "id": "87caaae267df6703c0a2b2f74c76a7d2fe26517f1f2b497150570914b42cb036",
+            "title": "Semicircle Packing",
+            "description": "Comments",
+            "url": "https://rorz.io/writing/semicircle-packing",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-13T14:42:57+00:00",
+            "collected_at": "2026-11-15T13:14:50.496853+00:00"
+        },
+        {
             "id": "6fbcc14eaf05414c04ea5fb9da96376dbea3967af1d375cad78fdd419352f134",
             "title": "Amazon drops Nothing Phone (4a) Pro by $101 to record low",
             "description": "Nothing Phone (4a) Pro falls to a record-low $398 on Amazon, with 3.5x optical zoom and a standout transparent design.",
@@ -5771,6 +6547,21 @@
             "collected_at": "2026-11-13T13:42:57.361444+00:00"
         },
         {
+            "id": "bea60a3c996cc2bc708552e5a552c326f04e0cfac69fc9e8b82e4233b087158e",
+            "title": "Show HN: Carton Clock – A working pendulum clock made from empty drink cartons",
+            "description": "Comments",
+            "url": "https://www.niklasroy.com/carton-clock/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-13T12:00:18+00:00",
+            "collected_at": "2026-11-15T13:14:50.497053+00:00"
+        },
+        {
             "id": "8af7a01a0b185e3db2c863bb60e9194ac84233f1c03051328cfc4b1e329b6a70",
             "title": "The Evolving Story of How Chemistry Became Biology",
             "description": "Comments",
@@ -6167,6 +6958,21 @@
             "collected_at": "2026-11-13T13:43:02.065550+00:00"
         },
         {
+            "id": "dd8b0d57dc17fd7fec2defc35a12b46b7a32900bc7235e603556be4976b207e2",
+            "title": "What thousands of conversations look like inside a language model",
+            "description": "Comments",
+            "url": "https://operator0x.com/field-notes/qwen-conversation-state-space/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-13T10:26:01+00:00",
+            "collected_at": "2026-11-15T13:14:50.496616+00:00"
+        },
+        {
             "id": "db52aa1a460cfbf7c6f9490e5e4f2475b9ade87f80cadf4878e69987bba7fdbe",
             "title": "What are you doing this weekend?",
             "description": "Feel free to tell what you plan on doing this weekend and even ask for help or feedback. Please keep in mind it’s more than OK to do nothing at all too!",
@@ -6241,6 +7047,22 @@
             ],
             "published_at": "2026-11-13T10:15:00+00:00",
             "collected_at": "2026-11-13T13:42:58.133793+00:00"
+        },
+        {
+            "id": "ddd34cc7886c3c3654c885f30d82a53177927116260e7b91f9bffecbf44f784f",
+            "title": "Strictly monotonic timestamps and gapless sequences in Rust",
+            "description": "Comments",
+            "url": "https://tsoracle.rs/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "rust",
+                "startup"
+            ],
+            "published_at": "2026-11-13T10:04:37+00:00",
+            "collected_at": "2026-11-15T13:14:50.496583+00:00"
         },
         {
             "id": "db109707d31da234d80af6c1c07ee81ee8f55e2f40cd48b88a30681f4c6bd623",
@@ -8548,6 +9370,21 @@
             ],
             "published_at": "2026-11-12T21:27:10+00:00",
             "collected_at": "2026-11-12T23:02:37.924726+00:00"
+        },
+        {
+            "id": "b47b6276d86ea4c161440c6b52862776c226e817200235a558518847572ee2fa",
+            "title": "Handwritten 200-year-old dismissal notice found on roof tile",
+            "description": "Comments",
+            "url": "https://www.bbc.co.uk/news/articles/c6jdmdzv25r9o",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-12T21:27:01+00:00",
+            "collected_at": "2026-11-15T13:14:50.496682+00:00"
         },
         {
             "id": "0ff2d74e22b4a431bfb42b5d07eccedc8109eff7887b747f62c85667d75a1dfe",
@@ -17632,6 +18469,21 @@
             ],
             "published_at": "2026-11-11T11:11:45+00:00",
             "collected_at": "2026-11-11T13:19:31.366763+00:00"
+        },
+        {
+            "id": "5a1167f840c9843bd0017a140c78fc5fe43a2c61437fffdb6ef720378e1cb3ff",
+            "title": "Open-Source HF Communications for Remote Communities and Experimenters",
+            "description": "Comments",
+            "url": "https://www.ardc.net/rhizomaticas-hermes-and-mercury-expand-open-source-hf-communications-for-remote-communities-while-appealing-to-experimenters/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-11T11:11:22+00:00",
+            "collected_at": "2026-11-15T13:14:50.496917+00:00"
         },
         {
             "id": "ee886d128eb93743a2e866f4ac0f3293501b7cfbab7768d4c0582f6b88a19047",
@@ -448427,6 +449279,22 @@
             ],
             "published_at": null,
             "collected_at": "2026-11-14T21:51:44.889043+00:00"
+        },
+        {
+            "id": "13482003797f2776b71cf0481a0c881a4907f7ff96c452929c2305225b94d008",
+            "title": "An overview of Jensen Huang’s messy days",
+            "description": "This is The Stepback, a weekly newsletter breaking down one essential story from the tech world. For more on Jensen Huang's resignation and the fallout from Nvidia's leadership crisis, follow Terrence O'Brien. The Stepback arrives in our subscribers' inboxes on Sunday at 8AM ET. Opt in for The Stepback here. How it started On October […]",
+            "url": "https://www.theverge.com/column/1033943/jensen-huang-nvidia-china-spying-scandal-resignation",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "nvidia",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-11-15T13:14:49.185406+00:00"
         }
     ]
 }
