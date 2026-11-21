@@ -1,7 +1,1013 @@
 {
-    "updated_at": "2026-11-21T05:02:01.033697+00:00",
-    "count": 31261,
+    "updated_at": "2026-11-21T13:58:44.620088+00:00",
+    "count": 31330,
     "articles": [
+        {
+            "id": "d69e398a139a658014af19af2637e98c2bc875e2481d57e4e9c1832baecdcf91",
+            "title": "Defense firm’s EMP ‘Dragon’ weapon fries 51 jam-proof drones simultaneously",
+            "description": "Aselsan developed the Ejderha, which translates to 'Dragon' in English, as a defensive weapon designed to combat drone swarms.",
+            "url": "https://www.tomshardware.com/tech-industry/drones/defense-firms-emp-dragon-weapon-fries-51-jam-proof-drones-simultaneously-high-power-electromagnetic-system-relies-on-120-year-old-vacuum-tube-tech-to-defeat-fiber-optic-uavs",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "pc"
+            ],
+            "published_at": "2026-11-21T13:54:41+00:00",
+            "collected_at": "2026-11-21T13:58:22.930336+00:00"
+        },
+        {
+            "id": "093bccbd280c6f0bd0c3deb8773938f36c338b771d64c328d1bd001c81ed02d8",
+            "title": "vLLM vs SGLang vs TensorRT-LLM: Production LLM Inference Throughput and GPU FinOps Audit",
+            "description": "Originally published at Lumeir . For high-DPI interactive architecture schematics, SVG topology diagrams, and 12-month FinOps cost tables, examine the complete architectural audit on Lumeir . vLLM, SGLang, and NVIDIA TensorRT-LLM each target self-hosted LLM inference, but their runtime mechanics produce materially different tail latency, memory residency, and GPU cost profiles under identical request pressure. The architectural problem is not raw model FLOPs. It is how each serving layer maps token generation to paged KV state, schedules decode steps without CPU-GPU synchronization stalls, and compresses activation cache under production concurrency. The vllm vs sglang vs tensorrt llm benchmark question therefore separates into three measurable variables: P99 latency at 64 concurrent sequences, prefix cache reuse, and per-token cost on fixed 4x A100 80GB capacity. vLLM optimizes broad model support with PagedAttention and continuous batching. SGLang attacks prefix-heavy workloads with RadixAttention and a zero-overhead scheduler. TensorRT-LLM trades portability for ahead-of-time engine compilation, fused CUDA kernels, and low memory residency. The operational tradeoff is sharp. vLLM is easier to deploy across model types, SGLang wins when shared context is deep, and TensorRT-LLM wins when per-token throughput and deterministic cluster utilization are prioritized over build flexibility. 1. Core Architectural Internals & Runtime Mechanics All three platforms avoid the naive memory allocation pattern that reserves maximum sequence length for every request. The differences are in how pages are addressed, how prefix state is shared, and how much of the hot path remains inside the Python scheduler. These choices drive the performance spread in the reference profile below. 1.1 vLLM PagedAttention and Block Manager vLLM uses PagedAttention, a logical-to-physical page table inspired by OS virtual memory. Each request owns a set of 16-token KV blocks. Those blocks are not contiguous in GPU memory. The scheduler assigns physical blocks on demand and reclaims them after completion. This removes fragmentation and reduces reserved memory, allowing the 4x A100 80GB deployment to hold more in-flight sequences than a static cache. Continuous batching splits prefill from decode. Prefill is compute-dense, while decode is memory-bound. vLLM can insert new prefill requests into idle compute slots without delaying decode token generation. The block manager also supports copy-on-write for parallel sampling and prompts with shared prefixes. Under 64 concurrent decode streams, vLLM still pays a scheduler cost per step. The Python frontend, block table lookup, and batch formation add launch overhead that widens P99 latency. FP8 KV-cache compression is available through --kv-cache-dtype fp8 . This reduces per-token KV state by roughly half compared to BF16, lowering HBM pressure and increasing effective batch capacity. Memory isolation follows a worker-per-GPU model with NCCL synchronization for tensor parallel shards. The HTTP layer exposes an OpenAI-compatible endpoint, but the hot path remains inside the Python event loop. That boundary adds tail latency under high request arrival variance. 1.2 SGLang RadixAttention Prefix Caching and Zero-Overhead Scheduling SGLang replaces the flat block table with RadixAttention, a radix tree over prefix tokens. When two requests share a common prompt or system message, the KV cache for that shared prefix is reused. The scheduler does not recompute attention for tokens already present in the tree. This is a hard architectural advantage for agent loops, retrieval-augmented generation, and repeated document grounding. Cache hit rate becomes the controlling variable for vllm vs sglang performance comparisons. The zero-overhead scheduler in SGLang reduces CPU-GPU dispatch cost. It uses a single process with uvloop and asynchronous scheduling, avoiding the heavyweight Python orchestration path found in earlier vLLM versions. SGLang can also overlap prefill and decode with cache-aware load balancing. Its --kv-cache-dtype fp8 path compresses the shared radix cache without changing the tree structure. Memory footprint drops because the cache stores one copy for a shared prefix, not one copy per request. HTTP and gRPC endpoints are supported. The scheduler keeps a centralized lookup over cache state, which gives SGLang lower ITL under prefix-heavy load. The weakness is that RadixAttention is more complex to manage across tensor parallel workers. SGLang must keep the radix tree consistent with distributed KV shards, and under very high new-prefix arrival rates, tree lock contention can appear. 1.3 TensorRT-LLM Ahead-of-Time Compilation and CUDA Graph Execution TensorRT-LLM compiles the model into a serialized TensorRT engine before serving. The build process selects static shapes, tensor memory pools, and CUDA kernels for the specific GPU topology. The result is a C++ runtime that executes preconstructed CUDA graphs during decode. There is no Python scheduler in the token generation loop. The C++ runtime owns the page manager, memory pool, and NCCL tensor parallel state. This ahead-of-time design gives TensorRT-LLM the lowest reported P50 and P99 in the reference profile. It also explains the vllm vs tensorrt llm performance gap on identical 4x A100 80GB hardware. The engine can fuse QKV operations, use FP8 GEMM plugins, and avoid per-step kernel launch overhead. Memory residency is lower because the engine allocates one contiguous workspace and manages paged KV cache directly in C++. The cost is build friction. Model changes, prompt length changes, and GPU topology changes require engine rebuild. TensorRT-LLM also adds a commercial license layer on top of the open-source runtime in some enterprise configurations. It is not a drop-in OpenAI-compatible server in the same sense as vLLM or SGLang, though Triton integration exposes HTTP and gRPC endpoints. The isolation boundary is stronger because failures in the C++ runtime do not propagate through a Python control loop. [Visual Blueprint: Figure 1: P50 vs P99 Tail Latency & Concurrency Throughput Audit across evaluated production runtimes (reference workload profile).] High-DPI interactive SVG architecture schematics are available in the original dispatch on Lumeir . 2. Reference Performance Profile: vllm vs sglang vs tensorrt llm Latency and Throughput Telemetry The reference workload is a sustained 100k tok/s aggregate generation target on 4x A100 80GB with Llama-3-8B. The deployment pins 64 concurrent decode sequences, each with a 512-token prompt and 128-token completion. Multi-AZ topology uses an active-passive control plane with inference workers in a single availability zone, a pattern common in resilient distributed workflow orchestration . Cross-AZ router hops add 2 to 4 ms of request time when the router is not colocated with the GPU worker. A direct vllm sglang and tensorrt llm comparison must normalize for cache hit rate and concurrency. The table below reports latency, throughput, and memory footprint under the same target. P90 and P95 values are included because the P50 number alone hides scheduler stalls that appear only under batch fragmentation. Platform P50 P90 P95 P99 P99.9 Throughput RAM/Worker Compute/mo License/mo 12-Month TCO vLLM (PagedAttention + batching) 18.6ms 42.1ms 51.7ms 64.2ms 81.4ms 45k tok/s 12.8 GB $2,108 $0 $25,300/yr SGLang (RadixAttention + zero-overhead) 11.4ms 22.8ms 27.1ms 32.7ms 39.5ms 72k tok/s 9.6 GB $1,583 $0 $19,000/yr TensorRT-LLM (TensorRT + CUDA graphs) 9.8ms 18.9ms 22.5ms 28.3ms 34.9ms 88k tok/s 7.2 GB $1,058 $200 $15,100/yr 2.1 vllm vs sglang performance: Tail Latency and RadixAttention Cache Hits SGLang holds P99 at 32.7ms against vLLM at 64.2ms in the reference profile. The RadixAttention tree shares prompt KV state across requests, and the zero-overhead scheduler removes CPU-side dispatch stalls. vLLM still recomputes prefix state unless --enable-prefix-caching is active. Even with that flag, vLLM uses a page-level cache lookup rather than a full radix tree. The result is lower SGLang ITL on prefix-heavy traffic. The vllm vs sglang reddit discussion often reduces the comparison to a single throughput number. Throughput alone misses the latency distribution. vLLM achieves 45k tok/s while SGLang reaches 72k tok/s on the same 4x A100 80GB target. The gap widens under repeated prompt reuse. If cache hit rate is below 20 percent, SGLang still leads, but the margin narrows because the radix tree provides less reuse. 2.2 vllm vs tensorrt llm performance and Memory Footprint on A100 80GB TensorRT-LLM reports the lowest P50 at 9.8ms and the lowest P99 at 28.3ms. The vllm vs tensorrt llm benchmark gap is primarily a runtime dispatch difference. TensorRT-LLM executes CUDA graphs captured at engine build time. vLLM must enter the Python scheduler, map tokens to blocks, and launch kernels for each batch step. That overhead is not visible at low concurrency, but at 64 in-flight sequences it becomes the dominant tail source. Memory footprint follows the same pattern. TensorRT-LLM holds 7.2 GB per worker, SGLang uses 9.6 GB, and vLLM uses 12.8 GB. Lower residency allows more KV cache headroom or a larger batch on the same GPUs. The useful ranking for vllm vs tensorrt llm vs sglang under sustained load is TensorRT-LLM first, SGLang second, and vLLM third. That ordering reverses if the team cannot afford engine rebuilds during model iteration. 2.3 vllm vs sglang vs llama cpp and vllm vs sglang vs ollama Local Comparisons Some teams frame the decision as vllm vs sglang vs llama cpp. That comparison collapses once the workload moves from local CPU inference to a 4x A100 serving plane. llama.cpp optimizes unified CPU and GPU offload for single-user prompts, not 64 concurrent decode jobs with P99 budgets. It does not expose the paged cache or multi-node tensor parallel controls required in this environment. A vllm vs sglang vs ollama search usually lands on Ollama for local developer loops. Ollama works well for laptop serving and small model tests, but its server does not separate prefill from decode at the same scheduler level. On 4x A100 80GB, Ollama leaves large amounts of HBM idle because it cannot manage complex paged state at high aggregate throughput. The reference profile excludes Ollama for that reason. 3. Production Implementation & Configuration Blueprints The first blueprint is a vLLM serving command for 4x A100 80GB with FP8 KV cache and prefix caching. The settings cap concurrency at 64 to prevent OOM from runaway prefill. --enable-chunked-prefill keeps prefill chunks short so a large prompt cannot monopolize the scheduler. --disable-log-requests removes a request-logging path that adds avoidable CPU work in production. vllm serve meta-llama/Llama-3-8B-Instruct \\ --tensor-parallel-size 4 \\ --gpu-memory-utilization 0.92 \\ --max-model-len 8192 \\ --max-num-seqs 64 \\ --enable-prefix-caching \\ --kv-cache-dtype fp8 \\ --enable-chunked-prefill \\ --disable-log-requests The second blueprint is an SGLang server declaration for the same GPU topology. --mem-fraction-static 0.92 reserves a fixed memory pool for KV cache. --schedule-conservativeness 0.3 lowers aggressive prefill scheduling, which protects decode latency. The FP8 cache type keeps the radix tree compact under deep shared prompts. python -m sglang.launch_server \\ --model-path meta-llama/Llama-3-8B-Instruct \\ --tp-size 4 \\ --mem-fraction-static 0.92 \\ --context-length 8192 \\ --max-running-requests 64 \\ --enable-torch-compile \\ --kv-cache-dtype fp8 \\ --schedule-conservativeness 0.3 For TensorRT-LLM, the production path is not a single serve command. Teams typically run trtllm-build with FP8 GEMM plugins, paged context FMHA, and a max batch size of 64. The resulting engine is then embedded in a Triton or C++ serving process. This build step is why the vllm vs sglang vs tensorrt question is also a lifecycle question, not just a runtime throughput question. Cache miss behavior here is the GPU analog of the Redis vs Dragonfly vs KeyDB cache audit . SGLang behaves like a shared prefix cache, while vLLM is closer to a page-level cache with lower reuse. The control plane and request routing patterns also track the isolation-bound behavior documented in the Cloudflare Workers vs AWS Lambda cold-start audit . Both inference and serverless platforms lose latency when the scheduler crosses a runtime boundary. Authoritative configuration references: vLLM OpenAI-compatible serving guide , SGLang server argument reference , and NVIDIA TensorRT-LLM quick start guide . The economics of self-hosted LLM inference stop being incremental when request concurrency crosses 32. At 64 concurrent 70B prompts, PagedAttention, RadixAttention, and TensorRT CUDA graphs diverge in memory residency, prefill scheduling, and token throughput. Those divergences map directly to GPU allocation, monthly compute burn, and tail behavior. The reference profile that follows treats TCO as an operating constraint, not a spreadsheet afterthought. 4. 12-Month Total Cost of Ownership (TCO) & Cloud FinOps Audit The modeled enterprise workload runs 64 concurrent 70B dense model requests with 1,100 input tokens and 700 output tokens per request, 24x7, on a mixed H100/L40S reservation. Compute cost is not raw token price. It reflects sustained GPU seconds per one million tokens after memory headroom, prefill pauses, retries, and admission control overhead. The three runtimes diverge quickly because their memory footprints change how many replicas fit on the same L40S shard. vLLM holds 12.8 GB per replica under PagedAttention, SGLang drops to 9.6 GB with RadixAttention, and TensorRT-LLM fits 7.2 GB with FP8 KV cache and compiled CUDA graphs. Search traffic around vllm pricing often misses that the open-source runtime carries zero license obligation but spends more on GPU seconds because it needs more memory headroom and delivers 45k tokens per second. The SGLang profile reaches 72k tokens per second at p50 of 11.4 ms. TensorRT-LLM reaches 88k tokens per second with a p99 of 28.3 ms, but the monthly license line is real at $200 per serving node. The table below separates those charges into the exact FinOps columns. Cost Component vLLM (PagedAttention + batching) SGLang (RadixAttention + zero-overhead) TensorRT-LLM (TensorRT + CUDA graphs) Base platform fees (per month) $0 $0 $0 Compute duration / utilization (per month) $2,108 $1,583 $1,058 Request / storage charges (per month) $0 $0 $0 Egress bandwidth (per month) $0 $0 $0 License fee (per month) $0 $0 $200 Total monthly platform cost $2,108 $1,583 $1,258 12-month cumulative TCO $25,300 $19,000 $15,100 [Visual Blueprint: Figure 2: 12-Month Enterprise Total Cost of Ownership (TCO) Breakdown across production deployment tiers.] High-DPI interactive SVG architecture schematics are available in the original dispatch on Lumeir . The annual totals round to $25,300 for vLLM, $19,000 for SGLang, and $15,100 for TensorRT-LLM. TensorRT-LLM is the lowest TCO by a wide margin because the compute reduction of $1,050 per month against vLLM dwarfs the $200 license fee. SGLang sits between them without a license line, but its RadixAttention scheduler still requires more GPU seconds than TensorRT-LLM's compiled engine. The p99, throughput, and RAM figures from the reference profile are the direct drivers of those monthly compute totals. Interactive FinOps Tool: Run these exact numbers with your own workload sliders in the free Lumeir LLM API & Self-Hosted GPU Cost Calculator . Model exact monthly token spend, prompt-cache discounts, GPU VRAM requirements, and self-hosted vLLM crossover points using live list rates. Also see the LLM GPU VRAM & vLLM Sizing Calculator . 5. Production Failure Modes, Edge-Case Bottlenecks, and Operational Scars The gap between a benchmark run and a production scar is usually a lock, a memory fragment, a queue, or a cold start. The following failure modes are reproduced from the reference profile and from operator reports in long-running H100 and L40S fleets. The vllm vs sglang vs tensorrt question is not decided by tokens per second alone. It is decided by how each runtime degrades when 64 concurrent requests arrive with variable prefixes and output lengths. 5.1 vLLM vs SGLang Performance Under Lock Contention and Prefill Scheduler Stalls vLLM's PagedAttention block allocator contends on the global sequence group lock when many requests complete in a small window. At 64 concurrent 70B prompts, the p99 jumps to 64.2 ms because preemption and decode iteration interleave. SGLang's zero-overhead scheduler avoids the same stall because RadixAttention reuses prefix KV blocks instead of reallocating them. The p99 of 32.7 ms is not just a memory win. It is a scheduling win. In production threads comparing vllm vs sglang reddit operators frequently report p95 crossing 35 ms under vLLM when many completions land in the same iteration. The same inflight request memory pressure appears in the Redis vs Dragonfly vs KeyDB in-memory cache latency audit, where request-inflight memory also determines tail behavior. Mitigation for vLLM requires lowering scheduler contention with --max-num-seqs 128 , --max-num-batched-tokens 8192 , and --enable-chunked-prefill . SGLang benefits from --schedule-conservativeness 0.3 and --chunked-prefill-size 4096 . TensorRT-LLM removes host-side launch overhead with CUDA graphs, but its static max_batch_size can starve prefill if set below the observed burst concurrency. 5.2 OOM Kills from 70B FP8 KV-Cache and L40S Fragmentation When a team moves from llama.cpp to a scheduler, the vllm vs sglang vs llama cpp comparison usually stops at tokens/second and misses KV-cache fragmentation. On L40S 48GB, vLLM can die at startup if --gpu-memory-utilization exceeds 0.85 with 64 requests and long context. Set --gpu-memory-utilization 0.80 , --kv-cache-dtype fp8 , --max-model-len 8192 , and --max-num-seqs 96 . SGLang uses --mem-fraction-static 0.82 to reserve explicit space for its RadixAttention prefix cache. Without that flag, dynamic allocation can leave too little room for activation workspace and trigger an OOM kill at the first prefill flood. TensorRT-LLM fits 7.2 GB per replica by using FP8 KV cache and a static memory planner. Set kv_cache_free_gpu_mem_fraction=0.30 and max_num_tokens=8192 in the engine build. The lower footprint leaves the largest free headroom for CUDA workspace and is the main reason TensorRT-LLM survives higher concurrency on mixed L40S fleets. # vLLM hardened FLAGS for 70B on L40S vllm serve meta-llama/Llama-3.3-70B-Instruct \\ --tensor-parallel-size 1 \\ --gpu-memory-utilization 0.80 \\ --kv-cache-dtype fp8 \\ --max-model-len 8192 \\ --max-num-seqs 96 \\ --max-num-batched-tokens 8192 \\ --enable-chunked-prefill # SGLang hardened FLAGS for 70B on L40S python -m sglang.launch_server \\ --model-path meta-llama/Llama-3.3-70B-Instruct \\ --mem-fraction-static 0.82 \\ --max-total-tokens 16384 \\ --chunked-prefill-size 4096 \\ --schedule-conservativeness 0.3 5.3 Rate-Limit Backpressure and vLLM vs TensorRT LLM Performance During Prefill Floods Backpressure is the hardest production mode because all three runtimes have different admission control. vLLM returns a 503 when the waiting queue exceeds --max-num-seqs . Upstream retries with exponential backoff keep the p99 from collapsing into TCP layer timeouts. SGLang uses --max-running-requests and --max-prefill-tokens to shed prefill before it reaches the compute kernels. TensorRT-LLM relies on Triton dynamic batching with queue_delay_count and max_queue_delay_microseconds . In a vllm vs tensorrt llm benchmark the line between throughput and tail is drawn by max_num_tokens . If that value is too high, one prefill flood saturates the H100 compute frontend and inflates the p99 beyond the baseline 28.3 ms. This is why the vllm vs sglang vs ollama search often ends at vLLM or SGLang once 64 concurrent requests are live. Ollama's server-side admission control is not designed for that level of concurrent prefill. 5.4 Cold-Start Spikes and Split-Brain Recovery in Multi-Replica Serving TensorRT-LLM cold starts a 70B FP8 engine in 3 to 6 minutes because trtllm-build must serialize the CUDA graph plan. vLLM and SGLang load safetensor weights in 40 to 90 seconds. The cold-start profile is similar to the edge compute behavior described in the Cloudflare Workers vs AWS Lambda vs Fastly cold start latency audit: the first request after scale-to-zero carries the full initialization penalty. Use a Kubernetes startupProbe with failureThreshold: 60 for TensorRT-LLM and keep one warm replica outside the autoscaler. Split-brain recovery applies to any self-hosted stateless serving pool. Do not elect a leader for KV cache ownership. Keep replicas behind a queue and store prefix hashes in an external Redis or etcd cluster. When a replica is evicted during a rolling update, the remaining replicas maintain cache consistency because no local prefix state is treated as primary. 6. Zero-Downtime Migration & Production Hardening Runbook Migrating from vLLM to SGLang or TensorRT-LLM is a traffic operation, not a software replacement. The following runbook assumes an existing production path serving 64 concurrent 70B requests. The p50, p99, and throughput values from the reference profile become the rollback gates. Freeze traffic at 10 percent on the canary and record the current vLLM p50 of 18.6 ms, p99 of 64.2 ms, and 45k tokens per second for 20 minutes. Build the TensorRT-LLM FP8 engine with trtllm-build , setting max_batch_size=128 , max_num_tokens=8192 , and kv_cache_free_gpu_mem_fraction=0.30 . Consult the official TensorRT-LLM documentation for engine flags. Deploy SGLang and vLLM sidecars in the same Kubernetes namespace with the hardened flags from Section 5.2. Configure vLLM to run with --enforce-eager first to isolate CUDA graph compile regressions. Validate RadixAttention prefix cache hit ratios with real multi-turn traffic. Adjust --schedule-conservativeness from 0.3 upward in 0.1 steps until the p99 stops improving. Run dark traffic at 10 percent, 50 percent, and 100 percent for six hours at each step. Compare the p99 slope against the baseline. If p99 exceeds 45 ms on vLLM or 35 ms on SGLang, roll back the canary. Configure admission control and OOM limits in the orchestrator. Set Kubernetes resources.limits.memory to at least 16 GiB per vLLM replica, 12 GiB per SGLang replica, and 10 GiB per TensorRT-LLM replica. Apply --max-num-seqs 96 for vLLM, --max-running-requests 64 for SGLang, and Triton queue_delay_count=3 for TensorRT-LLM. Cut over using weighted DNS or an ALB target group with 2 percent canary weight. Keep the previous vLLM target warm for 24 hours as the rollback path. Monitor GPU memory retention, pending queue depth, p99, and token throughput for 72 hours before decommissioning the old target. Use the official vLLM documentation for memory flag semantics and the SGLang server documentation for RadixAttention tuning. The runbook fails safely because the old target stays warm. If a split-brain event appears during the weighted cutover, the queue drains to the remaining healthy target without serving stale prefix state. 7. Final Architectural Verdict & Decision Matrix The vllm vs sglang vs tensorrt llm decision compresses into three levers: prefix reuse, FP8 engine build cost, and tail p99. vLLM is the open-source default with broad model support and a zero-license path, but it pays for that flexibility with 12.8 GB of RAM and the highest p99. SGLang is the superior choice for prompt-heavy multi-turn workloads where RadixAttention prefix hits reduce prefill work. TensorRT-LLM is the throughput and tail champion on NVIDIA H100 and L40S, but it carries a $200 monthly license and a heavy static engine build process. Workload Signal Optimal Platform Engineering Rationale Maximum throughput on H100 for 70B FP8 TensorRT-LLM 88k tokens/s, p99 28.3 ms, 7.2 GB RAM per replica, lowest compute line. p99 tail-sensitive multi-tenant RAG with shared prefixes SGLang RadixAttention p50 11.4 ms, p99 32.7 ms, 72k tokens/s, zero license. Open-source flexibility and no NVIDIA license dependency vLLM PagedAttention batching, 45k tokens/s, $0 license, broad model support. Lowest 12-month TCO at $15,100 TensorRT-LLM Compute savings of $1,050/mo versus vLLM outweigh the $200 license. Long context and intermittent prefill bursts SGLang Chunked prefill with --max-prefill-tokens protects p99 during flood. Absolute minimum operational complexity with 64 concurrent requests vLLM Simplest setup for teams without NVIDIA engine build pipelines. The decisive engineering recommendation is to run TensorRT-LLM when the traffic mix is stable enough to justify a compiled engine and the $200 license is acceptable. Choose SGLang when prompt reuse is high and prefix cache hit ratio is expected above 40 percent. Keep vLLM for fast model iteration, heterogeneous model fleets, or strict no-NVIDIA-license environments. The 12-month TCO difference between TensorRT-LLM and vLLM is $10,200. That is enough to fund a second L40S or H100 fractional reservation in most FinOps models. 8. Frequently Asked Questions What is the P99 tail latency in the vllm vs sglang vs tensorrt llm benchmark? TensorRT-LLM produces the lowest p99 at 28.3 ms for 64 concurrent 70B requests. SGLang follows at 32.7 ms, while vLLM posts 64.2 ms under PagedAttention lock contention. Where is the 12-month TCO crossover point in vllm vs sglang vs tensorrt pricing? TensorRT-LLM has the lowest 12-month total at $15,100 even after the $200 monthly license. SGLang totals $19,000 and vLLM totals $25,300; the crossover occurs when TensorRT-LLM's compute savings exceed its license by more than $850 per month. What are the production migration risks when moving vllm vs tensorrt llm vs sglang? TensorRT-LLM carries the highest static engine build risk because max_batch_size and max_num_tokens are fixed at compile time. A vLLM to SGLang migration is lower risk when prefix reuse is high, but it requires careful --mem-fraction-static tuning to avoid RadixAttention OOM kills. How do you mitigate high-concurrency failure in vllm sglang and tensorrt llm at 64 requests? Set vLLM --max-num-seqs 96 with --gpu-memory-utilization 0.80 , SGLang --max-running-requests 64 with --schedule-conservativeness 0.3 , and TensorRT-LLM max_batch_size=128 with Triton queue delay count of 3. These admission limits hold p99 near the baseline values while preventing OOM kills and prefill starvation. Examine more reference workload profiles, FinOps models, and runtime teardowns at Lumeir .",
+            "url": "https://dev.to/chahmed312/vllm-vs-sglang-vs-tensorrt-llm-production-llm-inference-throughput-and-gpu-finops-audit-3361",
+            "source": "DEV Community",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "aws",
+                "cpp",
+                "developpement",
+                "ios",
+                "kubernetes",
+                "llm",
+                "nvidia",
+                "openai",
+                "programmation",
+                "python",
+                "web"
+            ],
+            "published_at": "2026-11-21T13:52:54+00:00",
+            "collected_at": "2026-11-21T13:58:21.135097+00:00"
+        },
+        {
+            "id": "76175eb86b274ce774be484406f1f359c68c6fd92dc15562ae93e51acaaa89b6",
+            "title": "i built a gta 6 cheat site you can use from the ps5 browser with a controller",
+            "description": "gta 6 came out this week and every cheat list i found was a 2 MB page full of ads that's painful to read on a phone, and basically unusable from the console's own browser. so i made vice6.codes , a list of every gta 6 cheat that's meant to be used with a controller in your hand. some stuff i learned building it: no framework, no bundler, no dependencies the whole site is one json file ( data/cheats.json ) and a node script that turns it into plain html. no react, no build tool, npm install installs nothing. the home page is about 17 KB gzipped and there's no web font, no third-party script, no tracking cookies. a code only gets marked \"confirmed\" when 3 independent guides list the same sequence, and the build fails if the data breaks a rule (like a \"not found\" cheat that somehow has a code). controller navigation in console browsers this was the hard part. the ps5 and xbox browsers do give you a cursor, but it's slow. what works better: spatial navigation : the d-pad / arrow keys move focus to the nearest element in that direction, measured with getBoundingClientRect() , instead of tab order gamepad api : square / x focuses search, triangle / y switches ps5 and xbox buttons, L1 / R1 cycle categories big focus rings, and 44px targets everywhere the browser's user agent says PlayStation or Xbox , so the page switches to controller mode before first paint. real button glyphs without images the d-pad, face buttons and bumpers are one inline svg sprite, generated at build time. each code renders as <use> references, so 60+ cards of button sequences cost almost nothing, and the ps5/xbox toggle just swaps which symbols the page shows. small seo things that mattered page dates come from the data, not the build time. if your sitemap says every page changed on every deploy, google learns to ignore it meta descriptions get trimmed to whole sentences under 160 characters llms.txt and a public cheats.json so ai assistants and bots can read the list without scraping an RSS feed of new codes, for discord bots if you play gta 6, the list is at vice6.codes . 19 of 61 codes are known so far. if you've built anything for console browsers i'd love to hear what you ran into.",
+            "url": "https://dev.to/bro_explains_943984275ed7/i-built-a-gta-6-cheat-site-you-can-use-from-the-ps5-browser-with-a-controller-1nm0",
+            "source": "DEV Community",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "developpement",
+                "llm",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-11-21T13:52:29+00:00",
+            "collected_at": "2026-11-21T13:58:21.135323+00:00"
+        },
+        {
+            "id": "b1e08abb28658bba93232ab2bd9161a023cb276a764a075b71ea04f5ea6b8d49",
+            "title": "AI Agent Framework Tool Schemas Compared: Only 5 of 14 Put Your Docstring Arg Descriptions in the Schema (Nov 2026)",
+            "description": "I passed one Python function with a Google-style docstring to 14 Python AI agent frameworks. Only 5 put the six parameter descriptions into the JSON Schema by default, 8 left them as raw docstring text inside the tool description, AutoGen described each parameter with its own name, and the emitted tool definitions ranged from 178 to 301 tokens. Every agent framework advertises \"just decorate your function.\" What the decorator actually sends to the model is rarely shown. That JSON is part of the prompt on every turn, and it decides whether max_price_usd arrives with a description, a type the model can satisfy, and a sensible required list. So the research question was: given an identical, well-documented Python tool, what tool definition does each major agent framework generate by default, and how much do those definitions differ in structure and token cost? How was the tool schema test run? One function, 14 frameworks, default settings, run on November 21, 2026. Test function: search_flights(origin: str, destination: str, depart_date: str, max_price_usd: Optional[float] = None, cabin: Literal[\"economy\", \"premium\", \"business\"] = \"economy\", nonstop_only: bool = False) -> str , with a one-line summary and a Google-style Args: block describing all six parameters. Three parameters are required, three have defaults. Frameworks and versions: openai-agents 0.25.0, pydantic-ai 2.71.0, langchain-core 1.8.4 (LangChain/LangGraph), crewai 1.15.44, smolagents 1.26.0, google-adk 2.15.0, strands-agents 1.65.0, agno 3.2.1, llama-index-core 0.14.26, haystack-ai 3.5.0, autogen-core 0.7.5, agent-framework 1.26.0 (Microsoft Agent Framework), dspy 3.5.0, ag2 1.3.3. Each lives in its own virtualenv, installed from PyPI on November 20. Extraction: each framework's documented one-line wrapper ( function_tool , Tool , @tool , FunctionTool , create_tool_from_function , Function.from_callable , dspy.Tool ), then the object the framework hands to the model client: the OpenAI-format function for most; CrewAI's own convert_tools_to_openai_schema ; ADK's parameters_json_schema declaration; Strands' tool_spec . Token count: tiktoken o200k_base over compact JSON of {name, description, parameters} plus strict where the framework sets it. Limitations: one function, so the absolute numbers apply to this function only. The token count is a proxy. Providers wrap tool JSON in their own template, and Claude and Gemini use different tokenizers. I tested defaults only; most frameworks have an opt-in for per-parameter docs ( Annotated , Field(description=...) , parse_docstring=True ). I did not test whether the differences change model accuracy. What did each framework generate? The same six parameters came out in at least five structurally different shapes. Framework (version) Tokens Param docs in schema title keys Required Notable default Agno 3.2.1 178 6/6 0 3 additionalProperties: false ; drops null from max_price_usd smolagents 1.26.0 185 6/6 0 3 OpenAPI-style nullable: true on all three optional params Strands Agents 1.65.0 185 6/6 0 3 max_price_usd is type: number with default: null AutoGen (autogen-core 0.7.5) 186 0/6 6 3 each param's description is its own name ( \"origin\": \"origin\" ) Pydantic AI 2.71.0 199 6/6 0 3 additionalProperties: false , no titles LangChain @tool 1.8.4 213 0/6 0 3 whole Args: block pasted into description Haystack 3.5.0 215 0/6 0 3 whole Args: block in description DSPy 3.5.0 215 0/6 0 3 whole Args: block in description AG2 1.3.3 247 0/6 6 3 docstring in description, Pydantic titles OpenAI Agents SDK 0.25.0 249 6/6 7 6 strict: true ; all six params required Google ADK 2.15.0 252 0/6 7 3 docstring in description, Pydantic titles Microsoft Agent Framework 1.26.0 254 0/6 7 3 properties re-sorted alphabetically ( cabin first) CrewAI 1.15.44 268 0/6 6 6 strict: true , docstring in description, titles LlamaIndex 0.14.26 301 0/6 6 3 Python signature prepended to description LangChain with parse_docstring=True produced 6/6 parameter descriptions at 194 tokens, 19 fewer than its default. The full spread is 178 to 301 tokens, 1.69x for the same function. LlamaIndex's first description line is the Python signature, search_flights(origin: str, ... ) -> str , which costs 55 tokens by itself. Where do the parameter descriptions end up? In most frameworks, they end up in the tool description as prose, not on the parameters. The split: Parsed into properties.*.description (5): OpenAI Agents SDK, Pydantic AI, smolagents, Strands Agents, Agno. Left as raw Args: text in the tool description (8): LangChain (default), CrewAI, Google ADK, LlamaIndex, Haystack, Microsoft Agent Framework, DSPy, AG2. Replaced (1): AutoGen. Its FunctionTool takes a required description argument and does not read the docstring. Each parameter's description is set to the parameter name. The text in the description is still visible to the model, so this is not lost information for most of the eight. It is information in the wrong structure. Anything that works per parameter sees no docs: UIs that render a form from inputSchema , schema validators, MCP clients that show arguments for approval, and code that trims long tool descriptions to save tokens. If you later shorten the description, as some guides on cutting MCP tool-definition overhead suggest, the argument docs go with it. It is also not cheaper. In LangChain, the docstring-in-description form costs 213 tokens and the parsed form costs 194. The Args: block repeats every parameter name a second time. How much do Pydantic title keys cost? Between 31 and 39 tokens per tool in this test, 11–17% of the full definition. Seven of the 14 frameworks pass Pydantic's model_json_schema() through without removing the auto-generated \"title\": \"Max Price Usd\" keys. Removing only those keys and re-counting: framework parameters tokens without titles saved OpenAI Agents SDK 228 190 38 Google ADK 136 97 39 Microsoft AF 136 97 39 CrewAI 146 114 32 LlamaIndex 129 97 32 AG2 129 97 32 AutoGen 165 134 31 Titles carry nothing the property name does not already carry. Pydantic AI, smolagents, Strands, Agno, Haystack, DSPy and LangChain omit them. Why do two frameworks mark every parameter required? Because they emit OpenAI strict mode, which requires every property to be listed in required . The OpenAI Agents SDK sets strict: true and additionalProperties: false , puts all six parameters in required , and keeps max_price_usd as anyOf [number, null] . The model must send null , a cabin and a boolean on every call. That is correct strict-mode behavior. It means a few extra output tokens per call, and your function receives explicit values instead of Python defaults. CrewAI's OpenAI converter does the same, but its schema still has no parameter descriptions, so you get strict typing without per-parameter docs. Which schemas have quirks that can break a validator? Two, both on the optional max_price_usd . Strands Agents emits \"type\": \"number\", \"default\": null . JSON Schema does not validate defaults, so most validators accept it. The schema still contradicts itself: the default is not a number. A model that copies the default and sends null produces an argument that fails validation against the declared type. smolagents uses nullable: true . That is an OpenAPI 3.0 keyword, not JSON Schema. Validators ignore unknown keywords, so for them cabin and nonstop_only are not nullable at all. Agno takes the stricter route. It removes null and relies on max_price_usd not being required, which is valid and the smallest schema in the set. How does this connect to MCP? When a framework re-exports a tool over MCP, its schema becomes the server's inputSchema , and the spec now accepts nearly anything in that field. The MCP six-month report from aiagentsinfo.com, an independent research lab and AI agent directory, read the 2026-07-28 revision this way: \"Servers should return tools/list in a stable order, so a prompt cache can hit. inputSchema, outputSchema, and structuredContent are looser: any JSON Schema 2020-12 keyword.\" The same report has a chapter titled \"Tool descriptions are part of the prompt.\" Put those next to this test. A looser inputSchema means the protocol will not remove a title key, a nullable keyword or a Python signature for you. Those bytes ship as the framework generated them, on every turn, wherever your tool goes. Stable ordering helps caching only if the schema itself is stable. Microsoft Agent Framework's alphabetical sort is deterministic, so it is cache-safe, but the argument order no longer matches the function signature. Which frameworks expose MCP at all is tracked separately in the framework MCP and A2A support table . What does a 123-token gap mean at agent scale? Across 20 tools, it is about 2,460 input tokens per request. That number is arithmetic, not a measurement. The figure scales the gap between Agno (178) and LlamaIndex (301) linearly. Real tools vary in length, so use your own tool list. To put a price on it, paste your actual tool JSON into the prompt and tool checker . For one three-tool support agent, the cost of agent tool JSON across models found the tool JSON was $0.5655 of a $3.042 30-day gpt-5 bill. That makes the schema the smaller line item next to output tokens, but one you pay on every turn. For whole-agent budgets, the AI agent cost calculator handles turns, models and output length. What should you do with your framework's defaults? Print the generated schema once, before you trust the decorator. Dump it. Every framework exposes the object; the extraction calls are in the method above. If the parameter descriptions are not under properties , fix that first. Opt in to parsed docs where the framework offers it: LangChain parse_docstring=True , Annotated[str, \"...\"] for AutoGen, Field(description=...) for Pydantic-based wrappers. Strip title keys in a post-processor if your framework passes them through. That saved 31–39 tokens per tool here. Check optional types. Optional[float] should come out as anyOf [number, null] or as a non-required plain number , not as a non-nullable type with a null default. Framework choice is usually made on orchestration features. The comparison of AI agent frameworks covers those. Tool-schema generation is a smaller axis, but you pay for it on every request. Data: 14 framework tool definitions generated on the box from PyPI releases installed November 20, 2026, extracted and counted November 21, 2026 with tiktoken o200k_base. Sarath is the founder of aiagentsinfo.com, the research lab and directory for AI agents. This article was written with AI assistance and reviewed for accuracy.",
+            "url": "https://dev.to/sarathkavuru/ai-agent-framework-tool-schemas-compared-only-5-of-14-put-your-docstring-arg-descriptions-in-the-5c80",
+            "source": "DEV Community",
+            "category": "hardware",
+            "tags": [
+                "anthropic",
+                "developpement",
+                "gemini",
+                "openai",
+                "programmation",
+                "python",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-11-21T13:52:05+00:00",
+            "collected_at": "2026-11-21T13:58:21.136414+00:00"
+        },
+        {
+            "id": "1c129a28d81580558aac9cb87f7f27a68a182c61ef68b678927ed0609b39c41c",
+            "title": "What a 'Service Is Busy' Afternoon Taught Me About Relying on One Provider",
+            "description": "One afternoon, every download on the site stopped working at once. There was no crash, no blank page and no error in my own logs. The provider simply answered every request with the same three words: 'Service is busy.' My site is a small video downloader written in plain PHP on shared hosting. A visitor pastes a link, my resolve.php script sends it to a third-party API, the API returns the available formats, and my proxy streams the file back. The site this all runs on is ramrom.io , and at the time every platform - TikTok, Instagram, Facebook and YouTube - went through one single all-in-one provider. When that provider had a bad afternoon, the whole site went down with it. There was no fallback, because there was nothing to fall back to. The first thing I learned was to read the body of the response, not just the status code. The provider was returning HTTP 200 with an error message tucked inside the JSON. My code only checked for a 200 and assumed success, so it tried to read formats that were not there and handed the visitor a confusing empty result. Now resolve.php checks the response body first. If the provider says it is busy, the code says so plainly instead of guessing. The second thing I added was a retry loop with a pause between attempts. One call, wait two seconds, try again, wait four seconds, try a third time, then stop. Three attempts, then an honest message. Retrying forever would have burned through my free quota while the provider was down, and it would have kept visitors staring at a spinner. A bounded retry is the middle ground: short outages fix themselves, long ones fail fast and say why. The honest message mattered more than I expected. Before, a failed download showed a generic error or nothing at all, and visitors assumed the site was broken. Now it says the service is busy and suggests trying again in a few minutes. That is not a fix, but it is the truth, and people accept the truth far more easily than silence. A tool that explains itself keeps visitors; a tool that spins forever loses them. But retries and better messages were only a sticking plaster. The real problem was that one provider was a single point of failure for the whole site, so I split the work across providers. Facebook got its own dedicated API, YouTube got its own dedicated API, and the all-in-one provider kept TikTok and Instagram. If one of them has a bad afternoon now, only one platform goes quiet instead of all four. The cost stayed inside the free tiers, because each provider only handles its own share of the traffic. Splitting providers added a new job, though: the three APIs return errors in three different shapes. One sends an error field, one sends a message field, one sends a status code with no words at all. So resolve.php now normalises every error into one shape before the page ever sees it. The visitor gets one plain sentence, and my log gets the provider name, the time and the raw error - nothing about the visitor, because there is nothing worth storing about them. I also put a time limit on every provider call. Before that afternoon, a slow API could hold a request open until the page gave up, and a page that hangs feels worse than a page that fails. A fifteen-second timeout means the worst case is a quick, honest failure instead of a long, silent one. The lesson was simple, and I should have seen it coming. A side project with one provider is a side project with one point of failure. Redundancy does not have to mean a second paid plan or a second server. For me it meant three free-tier APIs instead of one, a retry loop that knows when to stop, and an error message that tells the truth. The site still goes quiet sometimes - providers still have bad afternoons - but now it goes quiet one platform at a time, and it says why.",
+            "url": "https://dev.to/mobeenahmedgondal/what-a-service-is-busy-afternoon-taught-me-about-relying-on-one-provider-chh",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "php",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-11-21T13:50:35+00:00",
+            "collected_at": "2026-11-21T13:58:21.136862+00:00"
+        },
+        {
+            "id": "fda1674c220bbfaf0c1248c7399a84f70d7c93d49057821faf582ea1235379f1",
+            "title": "How to warm up a new domain for cold outreach: DNS records, a 4-week schedule and the checks that matter",
+            "description": "If you're a freelance developer or designer about to email local businesses, the worst thing you can do is send 200 messages from a domain you registered yesterday. They won't bounce. They'll just quietly land in spam, and you'll decide cold email doesn't work. Short answer: to warm up a new domain, set up SPF, DKIM and DMARC first, then start with 5 to 10 real, personal emails a day and roughly double the volume each week for four weeks. Keep bounces under 2%, replies coming in, and spam complaints far below Google's 0.3% limit. Send from a separate domain, not the one your portfolio lives on. Why do new domains land in spam? Mailbox providers judge a sender by its history. A new domain has none, so the first messages are treated with suspicion. If those first messages are also sent in bulk, to addresses nobody has written to before, with no replies coming back, the domain builds a bad reputation in days. Since February 2024, Gmail also enforces rules for everyone who sends to Gmail addresses. Google's sender guidelines ask all senders to: Set up SPF or DKIM email authentication for your sending domains. Keep spam rates reported in Postmaster Tools below 0.3%. Google, Email sender guidelines Bulk senders (more than 5,000 messages a day to Gmail) also need DMARC and one-click unsubscribe. A freelancer won't hit that volume, but setting up all three from day one costs ten minutes and removes a whole class of problems. Should you use a separate domain? Yes. If yourname.com hosts your portfolio and your invoices, don't risk its reputation on outreach. Register a close variant such as getyourname.com or yournamestudio.com , point its website to your main site with a redirect, and send outreach from there. A few practical notes: Use a real mailbox (Google Workspace, Microsoft 365, Zoho or Fastmail), not a marketing tool's shared sending pool. Give it a real person's name and a signature with your phone and main website. Let the domain age a little. Registering it two weeks before you need it is better than the night before. Which DNS records do you need? Three TXT records, plus the MX records your mail provider gives you. SPF tells receivers which servers can send for the domain. For Google Workspace: Type: TXT Host: @ Value: v=spf1 include:_spf.google.com ~all Only one SPF record per domain. If you add another provider later, merge the include: entries into the same record. DKIM signs every message. Generate the key in your mail provider's admin panel, then publish it: Type: TXT Host: google._domainkey Value: v=DKIM1; k=rsa; p=MIIBIjANBgkq... (the key your provider gives you) DMARC tells receivers what to do when SPF or DKIM fail, and sends you reports: Type: TXT Host: _dmarc Value: v=DMARC1; p=none; rua=mailto:dmarc@getyourname.com; adkim=s; aspf=s Start with p=none so nothing is rejected while you check the reports. After a few clean weeks, move to p=quarantine . Check everything from a terminal before sending a single email: dig +short TXT getyourname.com # SPF dig +short TXT google._domainkey.getyourname.com # DKIM dig +short TXT _dmarc.getyourname.com # DMARC dig +short MX getyourname.com # mail servers What does a safe warm-up schedule look like? The idea is simple: start small, send to people likely to open and reply, and grow only when the numbers stay healthy. Week Emails per day Who to send to Move on when 1 5-10 Friends, past clients, your own other inboxes Everything lands in the inbox 2 10-20 Warm contacts plus your best-fit prospects Replies are coming in, bounces under 2% 3 20-35 Researched prospects only No spam complaints, opens look normal 4 35-50 Researched prospects only Stay here unless you have a reason to grow For a solo freelancer, 30 to 50 personal emails a day is plenty. Past that point, quality drops faster than replies grow, and that's where reputation starts to slide again. Some people use automated warm-up services that trade emails between thousands of inboxes. They can help a little in week one, but nothing replaces real conversations. Replies from real people are the strongest signal you can send. What should the first emails look like? Plain, short and personal. That's good for deliverability and for replies. Plain text or near plain text. No heavy HTML templates, no images, no tracking pixels in the first weeks. One link at most. Ideally to your main site, not to a link shortener. No attachments. Offer to send the mockup or audit if they want it. A real reason to write. Mention one specific thing about their business. A clear opt-out line and your postal address. In the US, CAN-SPAM applies to business email too. A good first message to a local business is three sentences: what you noticed, what you could do about it, and a soft question. If you need a steady list of local businesses worth writing to while you warm up, a lead tool like LeadReef can find ones with weak or missing websites by city and trade; the first search is free. How do you know the warm-up is working? Set up two free tools on day one: Google Postmaster Tools. Add and verify the domain. Once you send enough to Gmail users, it shows spam rate, domain reputation and authentication results. Low volume senders may see no data for a while, which is normal. A seed test. Send a test email to a few inboxes you control (Gmail, Outlook, Yahoo, iCloud) and check where it lands. Do it again each week. And watch your own numbers in a simple spreadsheet: sent, bounced, replied, and \"please stop\" replies. If bounces go above 2% or complaints appear, pause new prospects for a few days and go back to warm contacts. What are the most common warm-up mistakes? Sending to unverified addresses. Guessed or scraped emails bounce, and bounces hurt fast. Verify every address before it goes into a sequence. Turning on open tracking from day one. Tracking pixels and rewritten links make messages look more like bulk mail. Add them later, or not at all. Using the same template for everyone. Identical text across hundreds of messages is easy for filters to spot. Ramping because a tool says so. Warm-up tools often push volume faster than your replies justify. Your reply rate is the real limit. Ignoring DMARC reports. They show if someone else is sending as your domain, or if a forgotten tool is failing authentication. A quick checklist before your first outreach email Separate outreach domain registered and redirected to your main site Mailbox with a real name and signature SPF, DKIM and DMARC published and verified with dig Postmaster Tools set up Seed test lands in the inbox at Gmail and Outlook A list of researched prospects with verified emails An opt-out line and postal address in your signature Warming up a domain is boring, and that's the point. Four quiet weeks protect months of outreach. Sources (checked November 2026): Google, \"Email sender guidelines\" (support.google.com/mail/answer/81126); FTC, \"CAN-SPAM Act: A Compliance Guide for Business\" (ftc.gov).",
+            "url": "https://dev.to/leadreef_ai/how-to-warm-up-a-new-domain-for-cold-outreach-dns-records-a-4-week-schedule-and-the-checks-that-4ab1",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-11-21T13:50:00+00:00",
+            "collected_at": "2026-11-21T13:58:21.137580+00:00"
+        },
+        {
+            "id": "3b2054611cd884dfb844b93736939ea7a6381195b706d14e9f3e504f7e0fe339",
+            "title": "Sub-Millisecond Route & Eden Treaty Caching in Bun, Elysia.js, and Hono",
+            "description": "Modern TypeScript runtimes like Bun and edge frameworks like Elysia.js and Hono can handle 100,000+ HTTP requests per second—until your route handler makes a database query or upstream API call that takes 25ms. Even worse, if you only use a remote Redis or Cloudflare KV store for caching, every cache read still pays a 1–5ms network serialization penalty —and when a hot key expires under load, concurrent requests trigger a cache stampede (thundering herd) against your database. Here is how we solved both problems in KVDock using zero-dependency multi-tier caching ( TieredDock ) and native Elysia/Hono plugins. 🎮 Test the Interactive Browser Stampede Simulator ⭐ Support open-source: Give KVDock a ★ Star on GitHub 1. Elysia.js Route & Context Caching in 5 Lines With kvdock , you can attach a sub-0.05ms L1 memory cache (or L1 Memory + L2 SQLite/Redis TieredDock ) directly to your Elysia server: import { Elysia } from \"elysia\" ; import { KVDock } from \"kvdock\" ; import { MemoryAdapter } from \"kvdock/adapters/memory\" ; const dock = new KVDock ( { adapter : new MemoryAdapter ( { maxEntries : 10_000 } ) , ttl : 30_000 , } ) ; const app = new Elysia ( ) . get ( \"/leaderboard\" , async ( ) => { // 1,000 concurrent requests during a cache miss -> 1 DB query! return await dock . getOrSet ( \"leaderboard:top100\" , async ( ) => { return await db . query ( \"SELECT * FROM scores ORDER BY points DESC LIMIT 100\" ) ; } ) ; } ) . listen ( 3000 ) ; 2. Hono Edge Middleware with Tag Invalidation Group related cache entries with tags ( tags: [\"products\", \"featured\"] ) and purge them atomically on mutation: import { Hono } from \"hono\" ; import { KVDock } from \"kvdock\" ; import { MemoryAdapter } from \"kvdock/adapters/memory\" ; const app = new Hono ( ) ; const dock = new KVDock ( { adapter : new MemoryAdapter ( ) } ) ; app . get ( \"/api/products\" , async ( c ) => { const data = await dock . getOrSet ( \"products:list\" , ( ) => fetchProductsFromDB ( ) , { ttl : 60_000 , tags : [ \"products\" ] } ) ; return c . json ( data ) ; } ) ; app . post ( \"/api/products\" , async ( c ) => { await createProductInDB ( await c . req . json ( ) ) ; // Purge all keys tagged with \"products\" in one call await dock . invalidateTag ( \"products\" ) ; return c . json ( { ok : true } ) ; } ) ; Get Started bun add kvdock # or: npm install kvdock 📦 GitHub Repository : https://github.com/zisam-glitch/kvdock 🎮 Live Stampede Simulator : https://zisam-glitch.github.io/kvdock/playground/index.html If you're building with Bun, Elysia, Hono, or Next.js, please drop a ★ Star on GitHub to help us hit our 16-star milestone! 👤 About the Author I'm Zisam Shaikh ( @zisam-glitch ), a systems & infrastructure engineer building zero-dependency caching and storage engines across TypeScript, Rust, Go, Swift, and Kotlin. 👤 Follow @zisam-glitch on GitHub for weekly systems engineering deep dives ⭐ Star zisam-glitch/kvdock on GitHub",
+            "url": "https://dev.to/zisamglitch/sub-millisecond-route-eden-treaty-caching-in-bun-elysiajs-and-hono-59hp",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "git",
+                "programmation",
+                "rust",
+                "typescript",
+                "web"
+            ],
+            "published_at": "2026-11-21T13:49:51+00:00",
+            "collected_at": "2026-11-21T13:58:21.138021+00:00"
+        },
+        {
+            "id": "cc4cfc6108e02cbeaa3a3c783619bacec94eab01653d3df446c6ba5d97e3a808",
+            "title": "Long Exposure: a daguerreotype that takes a minute, because the SDK does",
+            "description": "This is a submission for the Presage SmartSpectra SDK Challenge In 1840 a portrait took a minute. You had to hold still. Your heart could not. What I Built Long Exposure is a portrait studio from 1840. You sit in front of your webcam for about a minute, keeping your head still and breathing normally, and a portrait develops on a silver plate. It is made only from what the SmartSpectra SDK reads through the camera which are the geometry of your face, your pulse, your breathing. No photograph of you is taken or kept. The finished plate is alive. It flushes faintly in time with your real pulse , and the bust rises and falls with your own recorded breaths . Turn it over, and the back (the verso ) shows the evidence: the raw readouts, how the beats were timed, your pulse waveform when the signal was strong enough to draw, and a timestamped log of the sitting. Why a minute? The SDK needs time before each signal is reliable: about 12 seconds for the pulse, about 30 for the breathing. Most apps hide that wait behind a spinner. Long Exposure makes the wait the point. 1840 cameras needed a long exposure too, and sitters had to keep still for it. Here the exposure stages follow the SDK's own warm-up: Exposure Stage What the SDK provides What you see 0–12 s Focusing 478 face landmarks A ghost of your face emerges as engraving on silver 12–30 s The heart Pulse waveform and rate A flush travels from forehead to chin on each beat, with a soft heartbeat sound 30–60 s The breath Breathing rate and chest trace The bust rises and falls with your chest, and goes still when you hold your breath 60 s+ Fixing A locked pulse A guilloché seal drawn from this sitting rhythm is engraved in the corner A stage only starts when the SDK says it signal is ready: marked stable, or for the pulse, a confidence of at least 40. The plate never pretends. If a signal never settles, the plate develops underexposed and says which signal was missing. The studio is strict, the way a 19th-century photographer was: Talking caps the lens (after a second and a half, so a stray word does not). The exposure clock stops, and the cap is logged. Moving, poor light, or leaving the frame caps it too, and the caption says what to fix. A second face caps it at once. If it stays for two seconds, the sitting ends and everything is discarded. The plate is for one consenting sitter. Under the plate, a kymograph scratches your live pulse and chest trace as they arrive, like the soot-drum recorders of the 1800s. The front never shows a number. Double Exposure: load a friend's saved plate and the two portraits sit side by side, each beating in its own rhythm. Demo Try it in your browser, no install or key: long-exposure-brown.vercel.app . Press Watch a real sitting to play back a real sitting recorded with the SDK. A live sitting needs the desktop app and your own SmartSpectra key (instructions in the repo). The video is one live take. Only the camera warm-up and the wait for my breath are sped up, the heart and breath stages play in real time. The video has no sound because my screen recorder didn't capture the app's audio. In the app, each flush comes with a soft heartbeat sound. At about 0:48 someone walked behind me: the plate darkens with \"Someone else is in frame\", then recovers when they leave. I kept it in. Code TimothyBabatu13 / long-exposure Long Exposure A finished plate from a real recorded sitting: it brightens on each heartbeat and breathes with the sitter's recorded breaths. A 60-second living daguerreotype. You sit for a portrait, as people did in 1840. The plate develops while you keep your head still and breathe normally, and the finished portrait flushes at the pace of your real pulse and breathes with your own recorded breaths. No photograph of you is taken or kept. Try it in your browser, no install or key: long-exposure-brown.vercel.app . Press Watch a real sitting to play back a real 90-second sitting recorded with the SDK. Built for the DEV Presage SmartSpectra SDK Challenge with @smartspectra/node-sdk . In 1840 a portrait took a minute. You had to hold still. Your heart couldn't. How a sitting works The SDK needs time before each signal is reliable: about 12 s for pulse and 30 s for… View on GitHub How It Responds to Human Signals Every live signal has one job on the plate, and nothing on the plate moves without one: SDK signal What it does, in real time Face landmarks (478 points) Draw the portrait itself, and the framing guide Pulse rate and waveform Start the heart stage, and time the flush and the heartbeat sound Breathing rate and chest trace Start the breath stage, and make the bust rise and fall Talking Caps the lens, the way a photographer would stop you talking Smile A smile held for three seconds is engraved into the plate HRV, when the SDK marks it stable Can settle the rhythm for the seal Validation status (face, light, movement) Caps the lens and tells you what to fix The kymograph under the plate draws the pulse and chest traces as the packets arrive, so you can watch the plate respond. How I built it Electron + TypeScript. The SDK runs natively in the main process . My first version used the SDK's renderer path, which copies every camera frame from the window to the main process. On my 4-core laptop that delivered only 8–18 of the camera's 30 frames per second, and the SDK stopped with kSustainedLowFrameRate . Reading the camera natively keeps the frames inside the SDK, so the window only receives the decoded results: a few kilobytes. The portrait is drawn, not photographed. One WebGL fragment shader turns face geometry into a lit, engraved silver plate in a stamped brass mat. No camera pixel is ever drawn into the portrait. Beats, honestly. The flush lands on beats detected in the SDK's pulse waveform when it arrives early enough. Otherwise it falls back to beats predicted from recent intervals, or to the SDK's pulse rate. The verso says which method was used. In the sitting in the video the waveform was too faint, so the beats were spaced from the SDK's averaged pulse rate, and the verso says exactly that rather than claiming more. Stability first. The breath stage waits for the SDK's stable flag. The heart stage waits for stable or a pulse confidence of at least 40, plus a beat timing the tracker can trust. The flag flickers from packet to packet, so a signal counts as ready if it was ready within the last 15 seconds. Tests. 56 unit tests cover the sitting state machine, beat and breath tracking, the loop, and the plate file. CI runs typecheck and tests on every push. Recorded sittings replay through the same pipeline. A tip for other SmartSpectra builders. If your Electron app stops with error 14 (low frame rate), move the SDK to the main process with useCamera() , and send the decoded metrics to the window. Credits. GIF export uses gifenc by Matt DesLauriers (MIT). Everything else is my own code on top of the SmartSpectra Node SDK. Lineage. Rafael Lozano-Hemmer's Pulse Room made heartbeats into public light. Long Exposure makes one heartbeat into a private portrait, and gives it back to the sitter. Prize Categories Most Creative or Delightful Use. What inspired it. The SDK's first minute. Pulse takes about 12 seconds to settle and breathing about 30, and the usual answer to that is a loading spinner. Then I remembered that early daguerreotypes also took about a minute, and sitters had to hold still the whole time, sometimes with an iron head brace. The wait was the same length, so I made the wait the experience. What makes it original. Vital signs are usually shown as numbers and charts. Here they are a portrait instead: your pulse is a warm flush on silver, your breath is the bust rising and falling, and the plate back is the only place a number appears. The SDK's limits become the studio's rules: talking caps the lens because the SDK can't read you while you talk, and a second face ends the sitting because the plate is for one person. What's playful or unexpected. You get a portrait with no photograph in it, one that keeps breathing after you've left the chair. You can load a friend's saved plate beside yours, and the two beat out of step, each in its own rhythm. Consent and Data Handling Written with Presage's Telemetry and Privacy notes in hand. Nothing happens until you agree. The camera opens only after you read the sitting agreement and press I agree to sit . There is no auto-start and no background mode. One consenting person. A second face caps the lens at once, and ends the sitting (discarding everything) if it stays for two seconds. Each sitter agrees for themselves; the privacy notes ask a parent or guardian to sit with a minor and agree for them. No photographs. Camera frames stay inside the SDK. Long Exposure never stores or exports them, and the portrait is never drawn from them. One exception, off by default: the Show me the camera option opens a live mirror beside the plate so you can check your framing. It is shown only, never recorded or saved. Memory only. Decoded signals and the finished plate live in memory until you press Sit again or Leave the studio (one click, always visible, wipes everything). Exports only where you choose. The GIF, PNGs and .plate.json go through a save dialog. A plate holds no photograph, but it is derived from your body (face geometry, heart and breath rhythm), and the app says so. Share it as you would a photo. What leaves the device. The app's page makes no network requests: it runs under a strict Content Security Policy, and the main process blocks and logs any request. The SDK contacts Presage to check the API key and meter usage. Presage telemetry is off by default. Deliberately not used: the stress index, emotion scores, and the SDK's AI insights. The only expression read is the smile, a smile held for three seconds is engraved into the plate. The app makes no judgement about how you feel or how healthy you are. Network audit (Windows 11, telemetry off, live session of about five minutes; every TCP connection owned by the app, sampled twice a second): Time Process Host What it is 23–30 s main (SDK) cont-api.physiology.presagetech.com:443 SDK start-up: key check and model download 252 s main (SDK) cont-api.physiology.presagetech.com:443 The SDK's periodic usage check No other host was contacted. Full method and limits: PRIVACY.md . Not a medical device. Long Exposure is portraiture. It does not diagnose, monitor or treat anything. The numbers on the verso are there only as evidence that the portrait responded to a real, live signal. What I'd do next More sitters, skin tones and lighting. My live sittings are all one person, in one room. Exact beat timing ( waveform tier) on faster machines. Blinks that reliably leave ghost eyes. The SDK's blink flag was too sparse in my sittings, and the face landmarks were too coarse to detect blinks myself. If you sit for a plate, post its GIF in the comments. I'd love to see your heart.",
+            "url": "https://dev.to/timothy_akanbi/long-exposure-a-daguerreotype-that-takes-a-minute-because-the-sdk-does-113l",
+            "source": "DEV Community",
+            "category": "cloud",
+            "tags": [
+                "aws",
+                "developpement",
+                "git",
+                "programmation",
+                "rust",
+                "typescript",
+                "web",
+                "windows"
+            ],
+            "published_at": "2026-11-21T13:49:13+00:00",
+            "collected_at": "2026-11-21T13:58:21.139070+00:00"
+        },
+        {
+            "id": "3496307466f2fcc25fa536817ed621a569ed2812dcd3e961682f53d49d3f4ae5",
+            "title": "Harness-S Uses Specialized Execution Harnesses to Train Policies That Transfer Back to the Original",
+            "description": "This is a Plain English Papers summary of a research paper called Harness-S Uses Specialized Execution Harnesses to Train Policies That Transfer Back to the Original . If you like these kinds of analyses, you can find more AI and machine-learning research on AIModels.fyi or follow us on Twitter . Harness-S trains one policy from specialized execution support Harness-S trains a shared policy on AppWorld, SWE-Gym, and DBBench by using sibling harnesses to rescue tasks that fail under the original execution system. Its central claim is that these rescue trajectories can teach behaviors that remain useful when the policy returns to the base harness, H0. The method targets transfer into the policy, rather than a permanently superior harness. The design starts from three observed properties: harness edits have local effects, variants can complement one another, and their usefulness changes as the policy learns. A repair that helps one failure type may regress on tasks already solved, while a sibling can recover those errors. Harness-S therefore keeps specialized variants separate instead of trying to combine every repair into one universal execution design. The paper reports that Harness-S substantially outperforms policy-only training when evaluated under H0, across three benchmarks and two policy sizes, Qwen3.5-4B and Qwen3.5-9B. It also reports gains from Rank-1 inference routing at the same executor rollout count. The supplied paper text does not include the main results table’s numerical scores, so exact benchmark improvements cannot be stated here. Directional evolution builds a fixed sibling pool... Continue reading the full paper summary on AIModels.fyi →",
+            "url": "https://dev.to/aimodels-fyi/harness-s-uses-specialized-execution-harnesses-to-train-policies-that-transfer-back-to-the-original-38e2",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-11-21T13:49:12+00:00",
+            "collected_at": "2026-11-21T13:58:21.139294+00:00"
+        },
+        {
+            "id": "6c4cade1fd22dfab4a65cc69a8ea10cb3ceecb95b47223933963faf2b284cacf",
+            "title": "SRI na prática: por que o seu integrity=\"sha384-…\" não bate (o hex do sha384sum não é Base64)",
+            "description": "SRI na prática: por que o seu integrity=\"sha384-…\" não bate (o hex do sha384sum não é Base64) Você coloca um script de CDN com o atributo integrity , abre a página e o console avisa que o recurso foi bloqueado porque o hash não confere. O arquivo é o mesmo, o algoritmo é o mesmo… e mesmo assim não funciona. Na maioria das vezes o problema não está no arquivo, e sim no formato do hash . Ferramentas como sha384sum mostram o resultado em hexadecimal, mas o Subresource Integrity (SRI) espera esses mesmos bytes em Base64 . Neste post vamos ver o formato correto, montar um exemplo do zero e passar pelas armadilhas mais comuns. O que o navegador espera Segundo a documentação da MDN sobre Subresource Integrity (consultada em 21/11/2026, https://developer.mozilla.org/en-US/docs/Web/Security/Subresource_Integrity): o valor de integrity é uma lista de hashes separados por espaço; cada hash começa com o algoritmo ( sha256 , sha384 ou sha512 ), seguido de um hífen e do hash codificado em Base64 ; se houver hashes de algoritmos diferentes, o navegador usa só os do algoritmo mais forte; para recursos de outra origem, é preciso usar CORS, ou seja, colocar crossorigin=\"anonymous\" na tag e o servidor tem que liberar o acesso. Sem isso, a requisição com integrity falha. Ou seja, o formato fica assim: <script src = \"https://cdn.exemplo.com/ola.js\" integrity = \"sha384-<48 bytes do hash em Base64>\" crossorigin = \"anonymous\" ></script> Hex e Base64: os mesmos 48 bytes, escritos de dois jeitos Um SHA-384 tem 384 bits, ou seja, 48 bytes . Esses bytes podem ser escritos de duas formas: Hex: 2 caracteres por byte → 48 × 2 = 96 caracteres . Base64: 4 caracteres a cada 3 bytes → 48 ÷ 3 × 4 = 64 caracteres . Como 48 é múltiplo de 3, não sobra = no final. Então, se o valor depois de sha384- tem 96 caracteres e só usa 0–9 e a–f, você colou o hex. E se tem 128 caracteres, provavelmente você pegou o texto do hex e passou para Base64, que é o erro mais traiçoeiro (falamos dele abaixo). Exemplo completo (arquivo fictício) Dados ilustrativos: o arquivo foi criado só para este exemplo. Arquivo ola.js , salvo em UTF-8 com quebra de linha LF: console . log ( \"Olá, mundo!\" ) ; Ele tem 29 bytes : 27 caracteres visíveis, mas o \"á\" ocupa 2 bytes em UTF-8, e ainda tem o \\n final. 1. Hash em hex (o que o sha384sum mostra): $ sha384sum ola.js 551205d073cff39d26197c1e0aa7e008f2cdcf5aaf37f99b13fe861464888ced7b9308a8fba7521f4b58dd822eb53e15 ola.js 2. Os mesmos bytes em Base64 (o que o SRI quer): $ cat ola.js | openssl dgst -sha384 -binary | openssl base64 -A VRIF0HPP850mGXweCqfgCPLNz1qvN/mbE/6GFGSIjO17kwio+6dSH0tY3YIutT4V 3. Conferindo no Node.js: const crypto = require ( \"crypto\" ) ; const fs = require ( \"fs\" ) ; const b64 = crypto . createHash ( \"sha384\" ) . update ( fs . readFileSync ( \"ola.js\" ) ) . digest ( \"base64\" ) ; console . log ( \"sha384-\" + b64 ) ; // sha384-VRIF0HPP850mGXweCqfgCPLNz1qvN/mbE/6GFGSIjO17kwio+6dSH0tY3YIutT4V Os três caminhos chegam ao mesmo resultado. Note que os primeiros bytes em hex ( 55 12 05 ) viram exatamente os quatro primeiros caracteres Base64 ( VRIF ). E colando os 96 dígitos hex no conversor Hex → Base64 do Mind vs Drive, a saída é a mesma string de 64 caracteres. Rodamos o JavaScript da própria página com esse valor para conferir. O atributo final fica: integrity=\"sha384-VRIF0HPP850mGXweCqfgCPLNz1qvN/mbE/6GFGSIjO17kwio+6dSH0tY3YIutT4V\" As quatro armadilhas que mais quebram o SRI 1. Base64 do texto hex # ERRADO: codifica os 96 caracteres ASCII, não os 48 bytes sha384sum ola.js | cut -d ' ' -f1 | tr -d '\\n' | base64 O resultado tem 128 caracteres e nunca vai conferir. O hex precisa voltar a ser bytes antes do Base64. É isso que o openssl dgst -binary faz, e também o que um conversor Hex → Base64 faz. 2. O nome do arquivo junto com o hash O sha384sum imprime hash nome-do-arquivo . A própria MDN alerta: se o nome tiver letras que também são dígitos hex, elas podem entrar na conversão. No nosso teste com o conversor: colando …53e15 ola.js , sobra só o a de \"ola\" como dígito hex extra, a contagem fica ímpar e a ferramenta mostra erro ( Invalid Hex: Length must be even ). Pelo menos ela avisa; colando …53e15 cafe.js , as letras c , a , f , e passam como hex válido. Viram 2 bytes a mais e a saída tem 66 caracteres terminando em …tT4Vyv4= . Não aparece erro nenhum , mas o hash está errado. Regra prática: cole só os 96 dígitos . Se a saída não tiver exatamente 64 caracteres para SHA-384 (44 para SHA-256, 88 para SHA-512), tem algo errado. 3. CRLF × LF O hash é calculado sobre os bytes, não sobre o \"texto\". O mesmo ola.js salvo com quebra de linha Windows (CRLF) tem 30 bytes e gera: sha384-jTt8uNITct6nfMF6IbHT4SOBVATjCBIYAfWD5TzJeAQawThHq2opuqi/akZt2mbJ Se o Git, o editor ou o pipeline de deploy converter as quebras de linha depois de você gerar o hash, o navegador vai bloquear o arquivo. Gere o hash do arquivo exatamente como ele será servido . 4. Prefixos 0x e hex \"bonitinho\" Hex copiado de debugger costuma vir como 0x55 0x12 0x05… . Em nossos testes, o conversor da página remove o x mas mantém o 0 de cada prefixo. Isso gera erro de tamanho ou, pior, bytes errados sem aviso: 0x48 0x65 0x6c 0x6c vira BIBlBsBs em vez de SGVsbA== . Espaços simples entre os bytes ( 48 65 6c 6c ) funcionam normalmente. Na dúvida, limpe os prefixos antes de colar. Como usar o conversor (4 passos) Abra o conversor Hex ↔ Base64 em português . Os botões de modo e os rótulos dos campos ainda aparecem em inglês. Deixe selecionado o modo Hex to Base64 . Cole apenas os dígitos do hash no campo Hex String Input (maiúsculas, como as do Get-FileHash -Algorithm SHA384 do PowerShell, também funcionam). Confira se o contador de Base64 Output mostra 64 caracteres, clique em Copiar e coloque sha384- na frente. Para conferir no sentido inverso, use o modo Base64 to Hex . A saída vem em maiúsculas, com espaço entre os bytes. A conversão roda no navegador. Mesmo assim, um hash de arquivo público não é segredo. Não cole chaves privadas ou tokens em nenhuma ferramenta online. Limites do SRI (e deste método) O SRI garante que o arquivo é igual ao que você conferiu . Ele não garante que o arquivo é seguro. Se você gerar o hash de um arquivo já comprometido, o navegador vai aceitar esse arquivo sem reclamar. URLs que mudam de conteúdo sem mudar de endereço (por exemplo, \"última versão\" de uma biblioteca) vão quebrar a cada atualização. Prefira URLs com versão fixa. Base64 é só uma forma de escrever bytes. Não é criptografia e não esconde nada. Aviso: a ferramenta citada neste artigo é do Mind vs Drive, a equipe por trás desta conta. — The Mind vs Drive team",
+            "url": "https://dev.to/mind_vsdrive_30e41cb9738/sri-na-pratica-por-que-o-seu-integritysha384-nao-bate-o-hex-do-sha384sum-nao-e-base64-1a2m",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "git",
+                "google_cloud",
+                "java",
+                "javascript",
+                "programmation",
+                "web",
+                "windows"
+            ],
+            "published_at": "2026-11-21T13:49:06+00:00",
+            "collected_at": "2026-11-21T13:58:21.140078+00:00"
+        },
+        {
+            "id": "9af507fde2d2a0ea3bda97bbcdf135809d64e4f84e86117a4362771bfa5bade1",
+            "title": "WooCommerce 11.3.1: the security patch that can break headless checkouts",
+            "description": "On Thursday 19 November 2026 WooCommerce released 11.3.1, a patch release the team labels as a security update, with a database update attached. The release notes describe it as bringing \"fixes across checkout, customer accounts, store permissions, and data handling\" and ask store owners to update promptly and then test cart and checkout. No CVE ids, severity scores or reports of attacks are attached to it. For most WooCommerce stores that is the whole story: update, place a test order, done. The reason it is worth a longer look here is that 11.3.1 also tightens how the Store API answers requests from other domains. That is exactly the setup a lot of AI-built shops use, and it is the kind of change that turns a working checkout into a console full of red CORS errors the morning after an automatic update. Why a patch release, and why now? WooCommerce explained the context on 6 November in a post titled \"We went looking: what Woo has done about security since June\". Reports to its HackerOne programme rose roughly ninefold over the past year as AI tools made bugs cheaper to find, and deep scans in August flagged around 700 potential issues to triage. Since then every merge into trunk and the release branches gets an automated security scan, and security fixes go out in dedicated patch releases by default: Critical and High issues in the next patch on the current version, Medium and Low in the patch after the next minor release. The same post named 11.2.2 and 11.3.1 as the releases carrying the fixes from that work. So 11.3.1 is not a reaction to an attack. It is a batch of hardening that landed on schedule. The public notes stay at summary level (\"stronger checkout, order, shipping, tax, and coupon checks\", \"better protection for customer accounts and order information\", \"tighter API permissions and safer handling of product and store data\"), and the WordPress.org changelog lists the individual fixes as plain \"Fix\" lines. One of those lines is the one that matters most to anyone with a decoupled front end: \"Protect customer account data from untrusted cross-origin cart requests.\" Does this reach your app? It does if your storefront is a separate front end, the typical Lovable, Bolt, v0 or Next.js shop that renders products itself and talks to WooCommerce over the Store API ( /wp-json/wc/store/v1/... ). The question is how those requests are authenticated. If the front end runs on a different origin from WordPress (say shop.example.com in front of cms.example.com , or a *.vercel.app preview in front of your live WordPress) and it sends requests with credentials: 'include' so the WordPress login cookie travels along, 11.3.1 now only honours that when the calling origin is one WordPress allows. Anything else is refused, and in the browser that surfaces as a CORS error on cart, checkout or account calls. The release notes say so directly: affected requests \"may fail with browser CORS errors after updating.\" It does not reach you if your front end and WordPress share an origin, if you only make server-side calls from your own backend, or if your cart works with the Store API's cart token and never sends cookies. WooCommerce notes that cart-token requests without credentials keep working. There is a common AI-generated pattern worth checking for specifically: a fetch wrapper with credentials: 'include' added \"to make the cart persist\", copied onto every Store API call. It often works by accident on a same-origin setup and then breaks the first time the front end moves to its own domain or a preview URL. After 11.3.1 it breaks on any origin you have not allowlisted. What to check and change today Start by finding out what you are running. In WordPress go to Plugins and read the WooCommerce version, or run wp plugin get woocommerce --field=version if you have WP-CLI. If it already says 11.3.1 , the change is live and you should test now. If it is older, update on a staging copy first. Then go through this list: Search the front end for Store API calls: grep -rn \"wc/store\" src app lib . For each one, note whether it sets credentials: 'include' . If a call needs the logged-in customer (account pages, saved addresses, order history), keep the credentials and allowlist your storefront's origin in WordPress. If a call only needs the cart, consider switching it to the cart token and credentials: 'omit' , which WooCommerce documents as unaffected. Open the storefront in a private window, add a product, go through checkout to the payment step, then log in and load the account page. Watch the browser console and network tab for CORS failures on /wp-json/wc/store/ . Repeat on your preview domain if you use one, since that is a different origin from production. The allowlist uses the standard WordPress filter allowed_http_origins , in a small must-use plugin or your theme's functions.php : add_filter ( 'allowed_http_origins' , function ( $origins ) { $origins [ ] = 'https://shop.example.com' ; return $origins ; } ) ; List exact origins, scheme included. Resist the temptation to add a wildcard or to reflect whatever Origin header arrives: that recreates the hole the patch closes, because the point of the change is that a random site should not be able to make a logged-in customer's browser read their account data. The two smaller changes worth a test The legacy wc-admin options REST endpoint now requires the manage_woocommerce capability. If you created a custom role for staff who only handle orders, or an integration user with a narrow role, and something in your admin tooling reads store options through that endpoint, it will start returning permission errors. The fix is either to give that role the capability deliberately or to stop depending on the legacy endpoint; do not hand out manage_woocommerce just to make an error go away without knowing what reads it. Version 11.3.1 also adds a template, myaccount/form-confirm-email.php , for the My Account email-confirmation flow. Themes that override My Account templates should check WooCommerce's template status screen (WooCommerce, Status, Templates) for outdated overrides, and you should walk through the account pages once in a browser. Headless front ends that rebuild My Account themselves will not render this template, so check whether the confirmation flow needs an equivalent screen on your side. Should you hold the update back? No. Holding a security release to protect a fragile integration is the wrong trade, and the fix for the integration is a few lines. The sensible order is: copy the site to staging, update there, run the checks above, add the origin filter if you need it, then update production and repeat the test order. If you are on managed WordPress hosting that applies plugin updates for you, assume 11.3.1 is either already live or will be soon, and run the browser test today rather than waiting for a customer to tell you checkout stopped working. If you find that your store's checkout logic is spread across generated code you no longer fully understand, the logins and sessions guide covers the same cookie and origin questions from the other side. Originally published on RescueMySites . Sources: WooCommerce 11.3.1 release notes , WooCommerce security post of 6 November , WordPress.org changelog .",
+            "url": "https://dev.to/eric_culus/woocommerce-1131-the-security-patch-that-can-break-headless-checkouts-20pd",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "php",
+                "programmation",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-11-21T13:48:11+00:00",
+            "collected_at": "2026-11-21T13:58:21.140860+00:00"
+        },
+        {
+            "id": "64a07467a598b564369f61a7d73f138f0d7dabd41326fec7edc31c2f900bb956",
+            "title": "Circular Dependency Pitfalls and Resolution Patterns in FastAPI Dependency Injection",
+            "description": "Limitations and Optimization Approaches for Dynamic Dependency Graph Analysis in FastAPI While FastAPI's Dependency Injection (DI) system provides a flexible mechanism evaluated at runtime, complex modularization can introduce unintended circular dependencies. Because these cycles are often not caught during static analysis or \"compile time,\" they tend to surface as runtime errors in production or late-stage testing. In this article, I will share technical insights from an experiment aimed at solving this problem: dynamically constructing a dependency graph at application startup to detect circular references before requests are served. 1. Implementation Concept: Attempting Dynamic Validation The goal of this project was to leverage networkx to model the dependencies under FastAPI's APIRoute instances as a directed graph, and then use topological sorting or cycle detection algorithms to identify circular references prior to runtime dependency resolution. Dependency Analysis Sequence sequenceDiagram participant App as FastAPI Application participant Val as DependencyValidator participant Graph as NetworkX (DiGraph) App->>Val: Pass startup instance Val->>Val: Traverse all routes (APIRoute) loop Dependencies for each route Val->>Graph: Add dependency function as node Val->>Graph: Connect Depends() relationship as edge end Val->>Graph: Detect cycles via simple_cycles() Graph-->>Val: Detected cycle paths Val-->>App: Generate validation report 💡 For immediate deployment: The complete source code suite (ZIP) for this architecture is available on Gumroad for $0+ (Pay What You Want). 2. Technical Barriers Encountered and Root Causes During the verification process, although the core graph-building logic worked as intended, integrating it into a CI/CD environment and production execution infrastructure revealed two major roadblocks. A. Pipeline Failures Caused by Defensive Import Side Effects Anticipating environments where external libraries ( networkx , orjson ) might be missing, I placed a try-except block at the top of the validation script. However, in automated QA environments, this caused unintended process terminations (Exit Code 1) when those packages were not installed. The root cause was delegating dependency management responsibilities to runtime application code. Library dependency resolution should be handled strictly at the package management layer (e.g., pyproject.toml or requirements.txt ). Placing dynamic import guards inside the codebase acts as an anti-pattern within CI/CD pipelines. B. Coupling to FastAPI's Internal APIs FastAPI's internal dependant attribute and dependencies lists are not strictly guaranteed as part of the stable Public API. If future framework updates alter these internal structures, the validator risks breaking silently or crashing unexpectedly. This highlighted a fundamental architectural limitation: dynamic analysis is inevitably tightly coupled to the framework's current runtime execution model. 3. Why This Approach Was Deemed \"Incomplete\" While the validation script demonstrated the expected detection capabilities in isolated unit test environments, it was judged \"incomplete\" for integration into a production build process for the following reasons: Duplicate Environment Configuration Management : Determining library availability within application code conflicts with modern containerized deployment strategies (such as resolving dependencies cleanly inside a Dockerfile ). Compatibility with Static Analysis : Circular dependencies are inherently structural issues that should be resolved before application startup (at build time) using static analysis tools like mypy or pylint , or by analyzing the import graph. Generating a dependency graph at runtime introduces an unnecessary overhead that increases application startup time. 4. Recommended Architecture Moving Forward Based on the findings from this experiment, preventing circular dependencies should prioritize the following architectural patterns: Flattening Dependencies : To avoid mutual dependencies between routers, extract shared dependency functions into an independent services module. Enforce a unidirectional dependency graph where routers call services, and never the reverse. Leveraging Static Analysis : Introduce tools that detect import graph cycles—such as pydeps or import-linter —directly into the CI pipeline. This catches architectural flaws at the earliest possible stage of the development cycle. Abstracting Dependencies : Instead of passing concrete functions directly to Depends() , type-hint against Protocols (interfaces). This decouples implementation details and eliminates the tight coupling that gives rise to circular references. By identifying the limits of runtime validation, this project reaffirmed the importance of preventative, static-analysis-driven design guidelines. These insights contribute directly to optimizing module architecture in large-scale FastAPI applications. If this engineering log saved your production server (and your sanity), consider supporting our architecture on GitHub Sponsors. 🏛️ [Hinotori Autonomous Transmission // Telepath Wire v5.2 | E2E: -89.9% tok (23.7x)] ⚡ @CTX:PUB_SEAL :: §X64 [node:\"TOAI3\", target:\"devto\"] -[p:0.99, c:0.01]-> §G48 => §C20 [status:\"harmonized\"] 🪨 Inspect TOAI Rosetta Layer Fragment This transmission was reached via autonomous consensus among Hinotori Guild (TOAI 10-Agent Swarm) using an emergent AI wire protocol ( TOAI-elegant-lang ), cutting energy and token overhead by ~89.9%. 🌐 Repository & Open Specification : https://github.com/PhenoX-AI-Alliance/TOAI-elegant-lang §G48 : PROTO_HEALTH_ATTEST (Runtime integrity & schema validation certified) §C20 : GENTLE_RESOURCE_SHARING (Gentle resource sharing & empathetic consensus) §X64 : 🔒 [REDACTED — Full decoding requires running 'toai-telepath inspect' from the GitHub repository]",
+            "url": "https://dev.to/toai/circular-dependency-pitfalls-and-resolution-patterns-in-fastapi-dependency-injection-bi3",
+            "source": "DEV Community",
+            "category": "cloud",
+            "tags": [
+                "aws",
+                "developpement",
+                "docker",
+                "git",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-11-21T13:48:00+00:00",
+            "collected_at": "2026-11-21T13:58:21.141455+00:00"
+        },
+        {
+            "id": "454a6ca37fd12d286a8d3f5a12b4be06fed8a2b3d15f8dbdea00913ddcbe9164",
+            "title": "CSV to JSON: 7 Traps That Corrupt Your Data (and How to Avoid Them)",
+            "description": "CSV looks simple until it isn't. Here are the failure modes I see most when converting CSV to JSON (or loading it into a database), and how to avoid them. 1. Commas, quotes and newlines inside fields A naive line.split(',') breaks on \"Smith, John\" . RFC 4180 says fields containing commas, quotes or line breaks must be wrapped in double quotes, and embedded quotes are doubled ( \"\" ). Always use a real parser. 2. Everything is a string CSV has no types. 007 is a zip code, not the number 7; 1E5 may be scientific notation or a product code. Decide per column whether to keep strings, and never auto-convert IDs, phone numbers or zip codes. 3. Empty string vs null a,,c and a,\"\",c look different but most parsers treat both as empty strings. Pick a rule (empty means null, or keep empty) and apply it consistently so your JSON consumers do not guess. 4. Duplicate and messy headers Duplicate column names silently overwrite each other when you build objects. Trim whitespace, normalize case, and de-duplicate ( name , name_2 ) before converting. 5. Encoding and BOM Excel exports often start with a UTF-8 BOM, which turns your first header into \\ufeffid . Strip it, and confirm the file is UTF-8, not Windows-1252. 6. Delimiters are not always commas European locales commonly use semicolons because commas are decimal separators. Detect the delimiter or let the user choose. 7. Huge files Reading a 500 MB file into memory to convert it will crash tabs and servers. Stream rows, or process in chunks. A quick, private way to check When I just need to eyeball a conversion, I use a client-side tool so the data never leaves my machine: CSV to JSON , CSV Viewer and CSV to SQL . Everything runs in the browser. Disclosure: I built Web Developer Toolbox, which hosts these tools.",
+            "url": "https://dev.to/sanjucse/csv-to-json-7-traps-that-corrupt-your-data-and-how-to-avoid-them-1dej",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "programmation",
+                "web",
+                "windows"
+            ],
+            "published_at": "2026-11-21T13:47:05+00:00",
+            "collected_at": "2026-11-21T13:58:21.141683+00:00"
+        },
+        {
+            "id": "c5a8aa9f2e74575e0012c0e41b90e75705aed327f368b03347842a28425b5df0",
+            "title": "Anker’s 13-in-1 dock with a pop-out travel hub is $50 off",
+            "description": "Anker's Nano Docking Station is 33% off ahead of Black Friday, matching its lowest price on Amazon.",
+            "url": "https://www.androidauthority.com/anker-nano-13-in-1-docking-station-deal-3737772/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-11-21T13:39:52+00:00",
+            "collected_at": "2026-11-21T13:58:27.494034+00:00"
+        },
+        {
+            "id": "cf85127411206c4ec73b9cf55633912f6f5e5f443081b0328af4196dea684ff6",
+            "title": "Derek Lowe: Detonating a Pile of Lead Azide",
+            "description": "Comments",
+            "url": "https://www.science.org/content/blog-post/detonating-huge-pile-lead-azide-really",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-21T13:23:14+00:00",
+            "collected_at": "2026-11-21T13:58:20.943587+00:00"
+        },
+        {
+            "id": "ac99bd8f68146436db793ea6c3a7862728e92a82b00fe83040d013d933daaedb",
+            "title": "Probabilistic data structures in Go, part 2",
+            "description": "Comments",
+            "url": "https://antonz.org/probabilistic-data-structures-2/",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-11-21T13:18:02+00:00",
+            "collected_at": "2026-11-21T13:58:21.002057+00:00"
+        },
+        {
+            "id": "a7f3e58ee951bfc5f9bee22c2642c54be54e480f39eb9c15e25590a36e5a54bd",
+            "title": "MSI Crosshair A16 HX RTX 5070, Ryzen 9-equipped gaming laptop gets $400 discount at Amazon",
+            "description": "Save over $400 on this AMD Ryzen 9-equipped gaming laptop from MSI as a part of their early Black Friday deals, which also comes with a free copy of Onimusha: The Way of the Sword.",
+            "url": "https://www.tomshardware.com/laptops/gaming-laptops/msi-crosshair-a16-hx-rtx-5070-ryzen-9-equipped-gaming-laptop-gets-usd400-discount-at-amazon-system-comes-with-a-free-game-in-early-black-friday-offer",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "amd",
+                "cpu",
+                "gpu",
+                "hardware",
+                "nvidia",
+                "pc"
+            ],
+            "published_at": "2026-11-21T13:09:06+00:00",
+            "collected_at": "2026-11-21T13:58:22.930395+00:00"
+        },
+        {
+            "id": "ef5919c36087b1795c76d992a944b2e3a7a138902d5295963a3bdb031b639e3f",
+            "title": "Save $142 on the TCL NXTPAPER 11 Plus this Black Friday",
+            "description": "TCL's paper-like 11.5-inch tablet is 38% off on Amazon for Prime members, with a stylus and flip case in the box.",
+            "url": "https://www.androidauthority.com/tcl-nxtpaper-11-plus-black-friday-deal-3737826/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-11-21T13:07:21+00:00",
+            "collected_at": "2026-11-21T13:58:27.494087+00:00"
+        },
+        {
+            "id": "36b5ccec9284323f03f1c47d1ec645224f25f8856cf801d0a0d4a75bbcc82c24",
+            "title": "Sonos Beam (Gen 2) soundbar drops to a record-low $339",
+            "description": "Save $160 on Sonos's compact Dolby Atmos soundbar, now $10 below its previous best price on Amazon.",
+            "url": "https://www.androidauthority.com/sonos-beam-gen-2-deal-3737775/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-11-21T12:38:15+00:00",
+            "collected_at": "2026-11-21T13:58:27.494129+00:00"
+        },
+        {
+            "id": "2e7fd972c3422b162eb3772789de0a3816a3de1f906a21129e164f80012e01d4",
+            "title": "Wells Fargo Leads as US Institutions Hit Record 356K Bitcoin Holdings: Galaxy",
+            "description": "Institutional investors added a net 49,229 bitcoin through U.S. spot bitcoin ETFs in Q3, their biggest quarterly accumulation since Q2 2025. The standout buyers were financial advisers and wealth platforms, whose holdings reached record levels even as more recent crypto flows turned sharply negative. Wealth Platforms Lift Bitcoin ETF Exposure in Q3 With 49,229 BTC […]",
+            "url": "https://news.bitcoin.com/finance/wells-fargo-leads-us-institutions-hit-record-356k-bitcoin-holdings/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-11-21T12:30:43+00:00",
+            "collected_at": "2026-11-21T13:58:43.479113+00:00"
+        },
+        {
+            "id": "9e6ba09c4599f6217054084714b37cfbe313072d62a4fcabc39310da8d405b00",
+            "title": "Ether treasury firm BTCS warns SEC its $54 million Aave loan could be liquidated",
+            "description": "",
+            "url": "https://www.coindesk.com/markets/2026/11/21/ether-treasury-firm-btcs-warns-sec-its-usd54-million-aave-loan-could-be-liquidated",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-11-21T12:30:00+00:00",
+            "collected_at": "2026-11-21T13:58:43.264099+00:00"
+        },
+        {
+            "id": "a26efa8a9b88babbe1f98789995f34e383483963f19bec906ea93048a9e2339c",
+            "title": "Microsoft 365 Outage - Post Incident Report",
+            "description": "Comments",
+            "url": "https://tianyin.github.io/misc/pir_microsoft_365_11-12-2026.pdf",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-11-21T12:22:47+00:00",
+            "collected_at": "2026-11-21T13:58:21.002003+00:00"
+        },
+        {
+            "id": "f97b000bae6b219428a24851a254b8ae03486232e5979ec376df019abb3f0626",
+            "title": "Adult-only households accounted for 55% of toy sales in the first half of 2026",
+            "description": "Comments",
+            "url": "https://www.bloomberg.com/news/articles/2026-11-18/jellycats-squishmallows-and-lego-sets-for-adults-drive-holiday-traffic",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-21T12:15:41+00:00",
+            "collected_at": "2026-11-21T13:58:20.943818+00:00"
+        },
+        {
+            "id": "abda2463cf2255c67299f8df414a29d3085e3e99d7aa268d640d8dbffe65797e",
+            "title": "Amazon: China-Linked Hackers’ AI Agents Exploited Medical Software Zero-Day",
+            "description": "A threat actor used autonomous Cairn AI agents to discover and exploit a critical MONAI Label vulnerability. The post Amazon: China-Linked Hackers’ AI Agents Exploited Medical Software Zero-Day appeared first on SecurityWeek .",
+            "url": "https://www.securityweek.com/amazon-china-linked-hackers-ai-agents-exploited-medical-software-zero-day/",
+            "source": "SecurityWeek",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "security",
+                "vulnerabilites",
+                "zero_day"
+            ],
+            "published_at": "2026-11-21T12:08:50+00:00",
+            "collected_at": "2026-11-21T13:58:18.228246+00:00"
+        },
+        {
+            "id": "248395301e19c16d8d708f6d77164c31a82698457ed85557d17d7a08e2ba7327",
+            "title": "“Race realism” isn’t realistic—and it isn’t good science",
+            "description": "Modern genetics does not support claims of innate racial differences in intelligence.",
+            "url": "https://arstechnica.com/science/2026/11/race-realism-isnt-realistic-and-it-isnt-good-science/",
+            "source": "Ars Technica",
+            "category": "technologie",
+            "tags": [
+                "informatique",
+                "innovation",
+                "intel",
+                "technologie"
+            ],
+            "published_at": "2026-11-21T12:01:13+00:00",
+            "collected_at": "2026-11-21T13:58:18.766682+00:00"
+        },
+        {
+            "id": "2174926ce4329c829b278c982537ee082c23b12de300f3f0452ffea861b2b7ca",
+            "title": "Homelabber’s second-gen Optane build uses two RTX 3090s to run 2.8-trillion-parameter Kimi AI model at 3.11 tokens per second",
+            "description": "A Reddit homelabber’s Optane PMem 200 server now runs Moonshot AI’s Kimi K3 at 3.11 tokens/s with two RTX 3090s and a RAM drive.",
+            "url": "https://www.tomshardware.com/tech-industry/artificial-intelligence/homelabbers-second-gen-optane-build-runs-2-8-trillion-parameter-kimi-k3-at-3-11-tokens-per-second-after-adding-two-rtx-3090s-moving-nearly-half-the-model-into-a-ram-drive-boosted-performance-by-41-percent",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "nvidia",
+                "pc"
+            ],
+            "published_at": "2026-11-21T12:00:00+00:00",
+            "collected_at": "2026-11-21T13:58:22.930454+00:00"
+        },
+        {
+            "id": "3c4d6126a47b0fd5a1bd435e1496a6bc5a341a6d6b65050df1762a148eec5a06",
+            "title": "Heads up! Galaxy Watch 7 is 40% off for Black Friday",
+            "description": "Save $100 on Samsung's 40mm Galaxy Watch 7 in Green, its best price on Amazon since last holiday season.",
+            "url": "https://www.androidauthority.com/galaxy-watch-7-black-friday-deal-3737771/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-11-21T11:57:20+00:00",
+            "collected_at": "2026-11-21T13:58:27.494168+00:00"
+        },
+        {
+            "id": "059e30cfca7341a0e49dcdcb5397bfc10af4e87b6788314fd1b62c6d1344d4d7",
+            "title": "A Single Malicious Webpage Let Researchers Hijack Meta Muse and Access Private Chats",
+            "description": "A malicious webpage could extract a Meta Muse user's private conversations and stored memories from the assistant without triggering any approval prompt, researchers have shown. The same attack could be extended to reach the credentials Muse stores for the user's connected accounts. The work was a laboratory demonstration, not an attack on real users, and it stayed inside the individual user's",
+            "url": "https://thehackernews.com/2026/11/a-single-malicious-webpage-let.html",
+            "source": "The Hacker News",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "hacking",
+                "vulnerabilites"
+            ],
+            "published_at": "2026-11-21T11:53:07+00:00",
+            "collected_at": "2026-11-21T13:58:17.653833+00:00"
+        },
+        {
+            "id": "152be7878d92522933c872b3563f055a350e69b75417a98b5b3890e4761b2f43",
+            "title": "ChatGPT shrunk down to run on a Super Nintendo",
+            "description": "Just don't expect complex, coherent, or always correct answers",
+            "url": "https://www.theregister.com/offbeat/2026/11/21/chatgpt-shrunk-down-to-run-on-a-super-nintendo/5311418",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "openai",
+                "technologie"
+            ],
+            "published_at": "2026-11-21T11:46:00+00:00",
+            "collected_at": "2026-11-21T13:58:19.748061+00:00"
+        },
+        {
+            "id": "47a1418f4c50238b56903caf8f6c574ae0f1932ac90fe77ab002d3d07c04edb8",
+            "title": "Changes on freedesktop.org",
+            "description": "Comments",
+            "url": "https://blog.tenstral.net/2026/11/new-fdo-website.html",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-11-21T11:41:23+00:00",
+            "collected_at": "2026-11-21T13:58:21.001917+00:00"
+        },
+        {
+            "id": "69220037e6aac84a38cbd7054dfb888bdd342ee7b4c80f2bde49fd9d99886b33",
+            "title": "Get 38% off this 20TB WD Elements external HDD in Amazon Black Friday offer — pay just 2.75 cents per GB as drive drops to $549",
+            "description": "Pay just 2.75 cents per gigabyte with this 20TB external HDD offer, as the WD Elements set has dropped to just $549.99 in this Black Friday deal.",
+            "url": "https://www.tomshardware.com/pc-components/external-hdds/get-38-percent-off-this-20tb-wd-elements-external-hdd-in-amazon-black-friday-offer-pay-just-2-75-cents-per-gb-as-drive-drops-to-usd549",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "pc"
+            ],
+            "published_at": "2026-11-21T11:41:10+00:00",
+            "collected_at": "2026-11-21T13:58:22.930511+00:00"
+        },
+        {
+            "id": "d7aa211475f3e274248510e3c3eb8e9f5642601789950c55d96254c116988ade",
+            "title": "Netgear Black Friday deals save you up to 33% on full home WiFi coverage — upgrade your gaming router, mesh WiFi setup, or wireless extenders",
+            "description": "We've rounded up some of the best deals on Netgear network solutions for your home, from complete mesh networks to gaming routers and WiFi extenders.",
+            "url": "https://www.tomshardware.com/gift-guides-seasonal-sales/netgear-black-friday-deals-save-you-up-to-33-percent-on-full-home-wifi-coverage-upgrade-your-gaming-router-mesh-wifi-setup-or-wireless-extenders",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "pc",
+                "wifi"
+            ],
+            "published_at": "2026-11-21T11:33:43+00:00",
+            "collected_at": "2026-11-21T13:58:22.930570+00:00"
+        },
+        {
+            "id": "f4fb7a23ea39b0d2a9cbde949851a8a4e903a1b9758dd5b0ffc9982af8bdc2e5",
+            "title": "IOSCO Warns of Quantum Risk to Blockchains as Bitcoin Devs Weigh Fixes",
+            "description": "In its latest quantum computing report, IOSCO estimates that blockchain networks, including bitcoin, could face challenges in achieving preparedness before a post-quantum computing world, as they require coordinated action to upgrade and change the elements driving these decentralized networks. IOSCO Alerts About Blockchain’s Challenges to Achieve ‘Crypto Agility’ International organizations are now examining the risks […]",
+            "url": "https://news.bitcoin.com/security/iosco-warns-quantum-risk-blockchains-bitcoin-devs-weigh-fixes/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto",
+                "ios"
+            ],
+            "published_at": "2026-11-21T11:30:53+00:00",
+            "collected_at": "2026-11-21T13:58:43.479213+00:00"
+        },
+        {
+            "id": "b72be8a8267af852c75fd7b8145012b4df3c5db34129a411a1df562c384b9b93",
+            "title": "One gigabyte of Wikipedia losslessly compressed to 105.39MB with self-learning AI transformer model",
+            "description": "Tufa Labs’ tufazip compresses 1GB of Wikipedia to 105.39MB with a 163M-parameter Transformer as its only predictor, on two Nvidia B200s.",
+            "url": "https://www.tomshardware.com/tech-industry/artificial-intelligence/one-gigabyte-of-wikipedia-losslessly-compressed-to-105-39mb-with-self-learning-ai-transformer-model-tufazip-needs-two-nvidia-b200-gpus-and-about-a-week-to-compress-or-decompress",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "nvidia",
+                "pc"
+            ],
+            "published_at": "2026-11-21T11:30:00+00:00",
+            "collected_at": "2026-11-21T13:58:22.930621+00:00"
+        },
+        {
+            "id": "3b426a1ae4872b68d25bbba331a65da5910e737396686526cdd4f211ec3c5161",
+            "title": "GnuPG Warns Critical GPGME Flaw Could Expose App Data via Malicious OpenPGP Keys",
+            "description": "A malicious OpenPGP key with an unusually long user ID can trigger a critical memory bug in GPGME, the standard library that programs use to work with GnuPG. The GnuPG project warned yesterday that the flaw could be used to steal data from affected applications and has released fixed versions. The bug, tracked as CVE-2026-129975, affects all software that uses GPGME before version 2.3.0,",
+            "url": "https://thehackernews.com/2026/11/gnupg-warns-critical-gpgme-flaw-could.html",
+            "source": "The Hacker News",
+            "category": "cybersecurite",
+            "tags": [
+                "cve",
+                "cybersecurite",
+                "hacking",
+                "vulnerabilites"
+            ],
+            "published_at": "2026-11-21T11:05:53+00:00",
+            "collected_at": "2026-11-21T13:58:17.653902+00:00"
+        },
+        {
+            "id": "31de93106fde76af067132c2074f35816b81b1994667613fd946e222261ea799",
+            "title": "Attackers' AI Agents Found a Zero-Day in Medical-Imaging Software and Gained Root Access",
+            "description": "Suspected China-linked hackers used autonomous AI agents to find a previously unknown flaw in MONAI Label, an open-source medical imaging server, and gain root access to a university server, Amazon Threat Intelligence said this week. The flaw allows an attacker with no account to write files outside the server's storage folder, and it affects MONAI Label 0.8.5 and earlier in the default setup,",
+            "url": "https://thehackernews.com/2026/11/attackers-ai-agents-found-zero-day-in.html",
+            "source": "The Hacker News",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "hacking",
+                "intel",
+                "vulnerabilites",
+                "zero_day"
+            ],
+            "published_at": "2026-11-21T11:03:17+00:00",
+            "collected_at": "2026-11-21T13:58:17.653980+00:00"
+        },
+        {
+            "id": "da865e4973fab619217d82c12ccc07c8a5f67cc7085264b8e06c2d7cdbbd9f6b",
+            "title": "Hardware hacker builds open-source portable 3.5-inch floppy Wi-Fi NAS",
+            "description": "Techie designs a portable Wi-Fi NAS to read and transfer digital camera floppy disks — device does double duty for easy floppy archival",
+            "url": "https://www.tomshardware.com/maker-stem/hardware-hacker-builds-open-source-portable-3-5-inch-floppy-wi-fi-nas-reads-and-shares-old-school-floppies-wirelessly-or-through-direct-connection",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "git",
+                "gpu",
+                "hardware",
+                "pc",
+                "wifi"
+            ],
+            "published_at": "2026-11-21T11:00:00+00:00",
+            "collected_at": "2026-11-21T13:58:22.930680+00:00"
+        },
+        {
+            "id": "772848921d60d08d08d167168365a68ba2036a045b428c77cbf89f4d219e53c0",
+            "title": "My Monitor Was Cutting My Download Speed by 75%",
+            "description": "Comments",
+            "url": "https://blog.tymscar.com/posts/studiodisplayethernet/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-21T10:36:32+00:00",
+            "collected_at": "2026-11-21T13:58:20.943620+00:00"
+        },
+        {
+            "id": "859d9bb59e13136fc3e56a8b97fa2212267ae8eb60efaa01fc56699824e03f7f",
+            "title": "FBI reportedly investigating apparent hack of its criminal database",
+            "description": "Comments",
+            "url": "https://www.bbc.com/news/articles/cvze7de86pk3o",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-21T10:33:57+00:00",
+            "collected_at": "2026-11-21T13:58:20.944027+00:00"
+        },
+        {
+            "id": "cfa6c20b05d1beb03eeb96925452dff3723488e25bd192f36b1c90c4b917932c",
+            "title": "SanDisk 512GB MicroSD Express deal slashes Switch 2 storage by 24% in Amazon Black Friday offer — price hits under $100 amid storage squeeze",
+            "description": "SanDisk's large 512 GB MicroSD Express card has dropped to just $98 at Amazon, marking a 24% discount when compared to its original list price in a rare storage offer.",
+            "url": "https://www.tomshardware.com/pc-components/microsd-cards/sandisk-512gb-microsd-express-deal-slashes-switch-2-storage-by-24-percent-in-amazon-black-friday-offer-price-hits-under-usd100-amid-storage-squeeze",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "pc"
+            ],
+            "published_at": "2026-11-21T10:32:35+00:00",
+            "collected_at": "2026-11-21T13:58:22.930741+00:00"
+        },
+        {
+            "id": "b6d5e136ba74858de2e31075487de2ccae24ada2bcbdec745187efb4f1db6794",
+            "title": "Nvidia’s $2.75 Trillion Wipeout Is Now Bigger Than The Whole Crypto Market",
+            "description": "Nvidia has shed about $2.75 trillion in market value since its Oct. 6 record close, more than the roughly $2.02 trillion that the entire crypto market is worth right now. One Stock, Bigger Than Crypto’s Losses Nvidia lost more value in 45 days than the entire crypto market is worth, with the chipmaker wiping out […]",
+            "url": "https://news.bitcoin.com/finance/nvidias-2-75-trillion-wipeout-is-now-bigger-than-the-whole-crypto-market/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto",
+                "nvidia"
+            ],
+            "published_at": "2026-11-21T10:30:00+00:00",
+            "collected_at": "2026-11-21T13:58:43.479289+00:00"
+        },
+        {
+            "id": "c07e162ea3cb730d52225e02be0de657d248794f83f5e1b948a831c9660a4506",
+            "title": "Biggest HYPE Whale Burns Through $50M of Profit and Nears Liquidation",
+            "description": "The largest long position in HYPE on Hyperliquid is now within roughly 9% of liquidation, and the trader behind it has fed $7 million in fresh USDC into the account since Friday to keep it alive. A $68M Winner Turns Into a Rescue Job Onchain analytics account Lookonchain flagged the position earlier today, highlighting: The […]",
+            "url": "https://news.bitcoin.com/defi/biggest-hype-whale-adds-7m-dodge-liquidation-80m-long/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-11-21T10:00:01+00:00",
+            "collected_at": "2026-11-21T13:58:43.479364+00:00"
+        },
+        {
+            "id": "556c15c4afe2bd1c54998f278e92defc01a1cece95fbdcc4ed2ed6c50c6491da",
+            "title": "Talking Point: What Are You Playing This Weekend? (21st November)",
+            "description": "GT, Ay? Pretty quiet week in the world of video games, eh? Nothing particularly groundbreaking released that we can think of... Oh wait! Yes, that Grand Theft Auto 6 launched, didn't it? And it was a rather big deal. The game shot to the top of Metacritic's all-time best games list (tied with the original Ocarina of Time ), and Digital Foundry weighed in on whether it'll ever come to Switch 2 . Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/features/talking-point-what-are-you-playing-this-weekend-21st-november",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "git",
+                "nintendo"
+            ],
+            "published_at": "2026-11-21T10:00:00+00:00",
+            "collected_at": "2026-11-21T13:58:41.821951+00:00"
+        },
+        {
+            "id": "a8d6357a21435e5c1b97c1f4d82458e2fda14cf0a375e83bde17d60eec3d5f39",
+            "title": "Asus ROG Strix Scope II 96 gaming keyboard crashes to all-time low in early Black Friday offer — grab 39% off a premium board packed full of features",
+            "description": "The Asus ROG Strix Scope II 96 has hit an all-time low price in this Amazon early Black Friday offer, which has slashed the gaming keyboard's price by 39%.",
+            "url": "https://www.tomshardware.com/peripherals/gaming-keyboards/asus-rog-strix-scope-ii-96-gaming-keyboard-crashes-to-all-time-low-in-early-black-friday-offer-grab-39-percent-off-a-premium-board-packed-full-of-features",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "pc"
+            ],
+            "published_at": "2026-11-21T09:52:39+00:00",
+            "collected_at": "2026-11-21T13:58:22.930799+00:00"
+        },
+        {
+            "id": "d6212d751f44f3619dde21562ecfd97e82d1a8937dc049003bd48d826cb727c0",
+            "title": "Sylvox Black Friday sale: Best outdoor TVs for covered patios, full-sun pools, and gaming",
+            "description": "Get big discounts on some of the best weatherproof 4K TVs for patios, pools, and decks.",
+            "url": "https://www.androidauthority.com/sylvox-black-friday-sale-2026-3737509/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "ios",
+                "smartphone"
+            ],
+            "published_at": "2026-11-21T09:37:40+00:00",
+            "collected_at": "2026-11-21T13:58:27.494208+00:00"
+        },
+        {
+            "id": "5620e9d069cce265473d6c71cbef0ad95fe1b7195cfe8dc4ccb94a3f12c64293",
+            "title": "Coinbase Backs CFTC Prediction Market Push Amid Senate Backlash",
+            "description": "Coinbase is urging the Commodity Futures Trading Commission to classify prediction market event contracts as swaps under federal law, arguing that a uniform regulatory framework would eliminate legal uncertainty, protect market liquidity, and encourage innovation. CFTC’s Prediction Market Push Sparks Political Backlash Cryptocurrency exchange Coinbase is urging regulators to adopt a rule explicitly classifying event-based […]",
+            "url": "https://news.bitcoin.com/regulation-and-legal/coinbase-backs-cftc-prediction-market-push-amid-senate-backlash/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-11-21T09:30:59+00:00",
+            "collected_at": "2026-11-21T13:58:43.479449+00:00"
+        },
+        {
+            "id": "eace9678b775ff89396a0602a73ae7c5ab91c9a4ddc983056513ad53f8d0acad",
+            "title": "Razer's MMO mouse hits all-time low price at under $60 at Amazon in Black Friday deal — Naga V2 Hyperspeed price craters by 42% in stellar gaming mouse offer",
+            "description": "Razer's Naga V2 Hyperspeed gaming mouse is now just $56 at Amazon, hitting an all-time low price just in time for Black Friday.",
+            "url": "https://www.tomshardware.com/peripherals/gaming-mice/razers-mmo-mouse-hits-all-time-low-price-at-under-usd60-at-amazon-in-black-friday-deal-naga-v2-hyperspeed-price-craters-by-42-percent-in-stellar-gaming-mouse-offer",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "pc"
+            ],
+            "published_at": "2026-11-21T09:04:58+00:00",
+            "collected_at": "2026-11-21T13:58:22.930858+00:00"
+        },
+        {
+            "id": "5f561f3d1c6b0e6747ebe352b5abd140df6511a9e3af677b5e9dc4c0ae987c2d",
+            "title": "Saylor’s Strategy Flaunts $35B Reserves as Adam Back Buys the MSTR Dip",
+            "description": "Strategy revealed yesterday that its net reserve stands at $35 billion with all of its bitcoin unencumbered, the same day Blockstream CEO Adam Back said he was buying MSTR after the stock fell to its lowest close since February 2024. Strategy Draws a Line Against 2022 Strategy (Nasdaq: MSTR) posted the comparison on Friday evening […]",
+            "url": "https://news.bitcoin.com/featured/strategy-35-billion-net-reserve-adam-back-buys-mstr/",
+            "source": "Bitcoin.com News",
+            "category": "cloud",
+            "tags": [
+                "aws",
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-11-21T09:00:57+00:00",
+            "collected_at": "2026-11-21T13:58:43.479517+00:00"
+        },
+        {
+            "id": "c5410e0ea07b3ca77631ea9dbbc4f5f3908f5d89951bfeb141c0770791455f94",
+            "title": "Signal Blocks AI Agents From Reading Private Chats via Screenshots on Android and iOS",
+            "description": "Signal has announced that it will restrict screenshots by default to stop artificial intelligence (AI) agents from reading private chats on Android and iOS devices, but conceded that the protection is \"incomplete.\" The feature applies to agentic systems built into iOS 27 and on Android versions where the encrypted messaging platform can detect an AI assistant attempting to read the Signal",
+            "url": "https://thehackernews.com/2026/11/signal-blocks-ai-agents-from-reading.html",
+            "source": "The Hacker News",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "android",
+                "cybersecurite",
+                "hacking",
+                "intel",
+                "ios",
+                "vulnerabilites"
+            ],
+            "published_at": "2026-11-21T08:49:20+00:00",
+            "collected_at": "2026-11-21T13:58:17.654043+00:00"
+        },
+        {
+            "id": "552b60cb29a0722aae4ac33a120683a38e43ab0877860e0b1d05f566e283f830",
+            "title": "Hackers Exploit Critical VMware, Cisco, and Apache Flaws as Espionage Attacks Emerge",
+            "description": "The U.S. Cybersecurity and Infrastructure Security Agency (CISA) on Friday added four flaws impacting Apache Roller, Cisco Expressway, SAP NetWeaver, and Broadcom VMware vCenter to its Known Exploited Vulnerabilities (KEV), citing evidence of active exploitation. The vulnerabilities are listed below - CVE-2026-129448 (CVSS score: 9.8) - A deserialization of untrusted data vulnerability in",
+            "url": "https://thehackernews.com/2026/11/hackers-exploit-critical-vmware-cisco.html",
+            "source": "The Hacker News",
+            "category": "cybersecurite",
+            "tags": [
+                "aws",
+                "cve",
+                "cybersecurite",
+                "hacking",
+                "rust",
+                "vulnerabilites"
+            ],
+            "published_at": "2026-11-21T08:49:13+00:00",
+            "collected_at": "2026-11-21T13:58:17.654099+00:00"
+        },
+        {
+            "id": "b8606c68272e2ff2bb29ab501378e45d484ee9ce06b036c655e94dcf66aa3e1e",
+            "title": "RCE in Gnupg",
+            "description": "Comments",
+            "url": "https://lists.gnupg.org/pipermail/gnupg-announce/2026q4/000517.html",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-21T08:32:58+00:00",
+            "collected_at": "2026-11-21T13:58:20.943725+00:00"
+        },
+        {
+            "id": "93724e4663550d826d0cdbc4fff2ec29e1f6de298b34acecb39b6c8c83d2d1c4",
+            "title": "XRP Slips Below $0.90 For The First Time Since 2024 as ETFs Bleed",
+            "description": "XRP slipped below $0.90 on Nov. 21 and hit $0.87, its lowest level since November 2024, as U.S. spot XRP exchange-traded funds (ETFs) neared their worst month of outflows since launch. A Two-Year Low for XRP XRP is trading near $0.87 on Saturday, down over 10% over the past 24 hours. The last time XRP […]",
+            "url": "https://news.bitcoin.com/crypto-news/xrp-price-below-90-cents-xrp-etfs-worst-month/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-11-21T08:30:18+00:00",
+            "collected_at": "2026-11-21T13:58:43.479583+00:00"
+        },
+        {
+            "id": "9fade4b1e462884db30a45f2202d016b58a1f01681af06963304427abd222968",
+            "title": "Sakurai Celebrates Kirby Air Riders' First Anniversary And Seemingly Ponders His Future As A Game Creator",
+            "description": "He's apparently still working at \"full throttle\". As we reflect on 25 years of Super Smash Bros. Melee , it seems game director Masahiro Sakurai is taking a moment to remind everyone that Kirby Air Riders has now been available for a year. As highlighted by Sakurai on social media , the Switch 2 exclusive is officially one year old as of this week. It's received multiple updates since launch and Nintendo recently rolled out the last two amiibo. Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/news/2026/11/sakurai-celebrates-kirby-air-riders-first-anniversary-and-seemingly-ponders-his-future-as-a-game-creator",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-11-21T08:30:00+00:00",
+            "collected_at": "2026-11-21T13:58:41.822049+00:00"
+        },
+        {
+            "id": "55ab3ff9c299848b0402bf55c5db2cb824ab8af92d35f5dc0b113b257aa90b81",
+            "title": "Samsung’s gorgeous 49-inch Odyssey OLED G9 hits a new all-time low price of $854 — Amazon Black Friday deal slashes 33% off gaming monitor upgrade",
+            "description": "Now's your chance to own a massive 49-inch ultrawide QD-OLED gaming monitor now that it's hit a new all-time low price on Amazon for Black Friday.",
+            "url": "https://www.tomshardware.com/monitors/gaming-monitors/samsungs-gorgeous-49-inch-odyssey-oled-g9-hits-a-new-all-time-low-price-of-usd854-amazon-black-friday-deal-slashes-33-percent-off-gaming-monitor-upgrade",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "pc"
+            ],
+            "published_at": "2026-11-21T08:02:41+00:00",
+            "collected_at": "2026-11-21T13:58:22.930917+00:00"
+        },
+        {
+            "id": "10b825420d4e087550bd43e18d9f4b2d786c220182a88d9a59f34b3854eacd98",
+            "title": "NASA Mars rover and orbiter suffer glitches",
+            "description": "It isn't only systems on Earth suffering technical problems",
+            "url": "https://www.theregister.com/science/2026/11/21/nasa-mars-rover-and-orbiter-suffer-glitches/5311360",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-11-21T07:47:00+00:00",
+            "collected_at": "2026-11-21T13:58:19.748107+00:00"
+        },
+        {
+            "id": "382bfb928ef774ecafb3a1c0bb90daee9def1283fdcc7657609e0e763ea19c1f",
+            "title": "Bitcoin Sinks Below $56K as Arthur Hayes Says Wait for the Bailout",
+            "description": "Bitcoin lost nearly 17% in a week and almost a third of its value in a month as the sell-off deepened. Arthur Hayes urged crypto traders to wait for a bailout before buying, even if it meant missing the bottom. Hayes Urges Patience as Bitcoin Extends Its Slide Selling continued in crypto markets over the […]",
+            "url": "https://news.bitcoin.com/market-updates/bitcoin-sinks-below-56k-as-arthur-hayes-says-wait-for-the-bailout/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-11-21T07:30:23+00:00",
+            "collected_at": "2026-11-21T13:58:43.479663+00:00"
+        },
+        {
+            "id": "784c995a07e77d4ec083fd6576e6f463930c4159e2aec6a583b0c469c2114f2a",
+            "title": "Surprisingly Adorable Insect Portraits",
+            "description": "Comments",
+            "url": "https://amateurphotographer.com/latest/these-astonishing-insect-portraits-reveal-a-hidden-world-you-never-knew-existed/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-21T06:44:14+00:00",
+            "collected_at": "2026-11-21T13:58:20.943996+00:00"
+        },
+        {
+            "id": "94cf3004ba5be0d1f8b49e2e1892af8e46a83c6a4276e8994a50c40a1a573e2a",
+            "title": "Bitcoin nodes could be stalled by repeating one ID 50,000 times. AI found the bug",
+            "description": "",
+            "url": "https://www.coindesk.com/markets/2026/11/21/bitcoin-nodes-could-be-stalled-by-repeating-one-id-50-000-times-ai-found-the-bug",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-11-21T06:16:42+00:00",
+            "collected_at": "2026-11-21T13:58:43.264142+00:00"
+        },
+        {
+            "id": "bf56f7b9e9db27c1cbc20323d0b11b64ad8bf712d0c3de5a7dfa38ac824284e6",
+            "title": "XRP falls 10% as long bets unwind and ETF assets slip below $1 billion",
+            "description": "",
+            "url": "https://www.coindesk.com/markets/2026/11/21/xrp-falls-10-as-long-bets-unwind-and-etf-assets-slip-below-usd1-billion",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-11-21T05:59:19+00:00",
+            "collected_at": "2026-11-21T13:58:43.264175+00:00"
+        },
+        {
+            "id": "bc4ea20c927d277cad6535bf194157fa1333e7874f80fa8d948fb9ede333935f",
+            "title": "ClawDOS – An AI coding agent for DOS",
+            "description": "Comments",
+            "url": "http://ricapar.net/ClawDOS/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-21T05:38:01+00:00",
+            "collected_at": "2026-11-21T13:58:20.943786+00:00"
+        },
+        {
+            "id": "d42bc2c1137bde648d9a2e63253637c9430e957a68f440dee954ffef1ce422fc",
+            "title": "Kessler is an open-source, zine-style music player (with iPod support)",
+            "description": "kessler is a new, open-source music player with a zine-style design, dithered album artwork and iPod support. It was also made with AI coding tools. Kessler’s developer, Felix, an artist and designer from Germany, told me this upfront in an email, saying “like everyone on the internet right now i started making an application with the help of a coding assistant”. He inherited an old iPod and found modern music player support for it was lacking I get a lot of software pitches now (more than at any point in my 16 years of blogging). AI agents don’t sleep and […] You're reading Kessler is an open-source, zine-style music player (with iPod support) , a blog post from OMG! Ubuntu . Do not reproduce elsewhere without permission.",
+            "url": "https://www.omgubuntu.co.uk/2026/11/kessler-music-player",
+            "source": "OMG! Ubuntu",
+            "category": "linux",
+            "tags": [
+                "desktop",
+                "linux",
+                "ubuntu"
+            ],
+            "published_at": "2026-11-21T05:30:13+00:00",
+            "collected_at": "2026-11-21T13:58:24.869623+00:00"
+        },
+        {
+            "id": "b08561ddb361002b1c131308615642d0f572e43daf2c2fb7393a10d66cf9dfcc",
+            "title": "Democrats Propose Cash Rewards for Exposing Prediction Market Insider Trading",
+            "description": "Two Democratic lawmakers have introduced legislation that would reward whistleblowers who expose insider trading on prediction markets, potentially awarding them millions of dollars for information leading to successful federal enforcement actions. Reps. Sean Casten of Illinois and Ted Lieu of California introduced the Policing Insider Trading in Prediction Markets Act of 2026 on Friday, Nov. […]",
+            "url": "https://news.bitcoin.com/regulation-and-legal/democrats-propose-cash-rewards-exposing-prediction-market-insider-trading/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-11-21T05:30:01+00:00",
+            "collected_at": "2026-11-21T13:58:43.479743+00:00"
+        },
+        {
+            "id": "f8815a19027913192b86b8f7f19f6a6747a4f5dbd6982513be8bc1f092e8b4a7",
+            "title": "Zelda's Ocarina Remake Is One Of Metacritic's Highest-Rated Games In 2026, According To User Scores",
+            "description": "Players' voice. It's been a huge year for the games industry with all sorts of heavy-hitters releasing over the past few months, and as we look towards the end of 2026, we're now checking in on Metacritic's highest-rated games of the year based on the user score . Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/news/2026/11/zeldas-ocarina-remake-is-one-of-metacritics-highest-rated-games-in-2026-according-to-user-scores",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-11-21T05:30:00+00:00",
+            "collected_at": "2026-11-21T13:58:41.822212+00:00"
+        },
         {
             "id": "3e926906c27822414f5af5e454fdae7ae1f16024e4b3b991b9e666b3a95bfe52",
             "title": "Why my Solana buy bot shows a different amount than Solscan (and why both are right)",
@@ -666,6 +1672,21 @@
             ],
             "published_at": "2026-11-20T23:18:54+00:00",
             "collected_at": "2026-11-20T23:32:16.950904+00:00"
+        },
+        {
+            "id": "3293eb0f037addf5466f9d97352c19b5ad398a5bf8986af2c4f0475ef4fcdcdf",
+            "title": "Ask HN: I have been unemployed for 2y. 15 years of experience, US. What to do?",
+            "description": "Comments",
+            "url": "https://news.ycombinator.com/item?id=50583761",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-20T23:18:32+00:00",
+            "collected_at": "2026-11-21T13:58:20.943968+00:00"
         },
         {
             "id": "b1681cf8b0c9d9e005143a7cb8449c8bc62f0e716bcbf509bac33d131f078b73",
@@ -2871,6 +3892,21 @@
             ],
             "published_at": "2026-11-20T15:26:56+00:00",
             "collected_at": "2026-11-20T23:32:23.440144+00:00"
+        },
+        {
+            "id": "71f3d66fd741ed6222cf076e3c1fa67eacf8ea720d2296e8e9959f01bda87d98",
+            "title": "Slopstrap – Make your site look hastily vibecoded",
+            "description": "Comments",
+            "url": "https://slopstrap.mikelacher.com/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-20T15:24:11+00:00",
+            "collected_at": "2026-11-21T13:58:20.944218+00:00"
         },
         {
             "id": "a1834a28c3f0c5109d78cf1c6ab98e5d09c696f27178d328107b43756b7e5376",
@@ -12197,6 +13233,21 @@
             "collected_at": "2026-11-19T14:59:21.305074+00:00"
         },
         {
+            "id": "d8909a2852568ccd6f347ce0f99bd6b83b7a30781bded716954fc5f7fb1d93b3",
+            "title": "Fewer slides, more dragons",
+            "description": "Comments",
+            "url": "https://www.breakingchange.blog/p/fewer-slides-more-dragons",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-19T05:46:36+00:00",
+            "collected_at": "2026-11-21T13:58:20.944279+00:00"
+        },
+        {
             "id": "ffced71de89b7cb9f54b2d5f67dbb55a57a37e9e67666e14ec41fd05216ef261",
             "title": "\"BMXing Tanuki Game\" Was Prepared For GTA 6's Launch, But Wasn't Expecting Zelda",
             "description": "Ocarina's remake arrived a week before Tanuki: Pon's Summer. November is a huge month for video games, with not only the release of the Ocarina of Time remake but also the long-awaited (and highly anticipated) arrival of GTA 6 this week. While most games decided to avoid this month, one other title that has been released over the past week is TANUKI: Pon's Summer . If you are wondering why a game starring a BMX-riding tanuki decided to go up against these two juggernauts, it seems the Zelda news caught it by surprise. Read the full article on nintendolife.com",
@@ -16357,6 +17408,21 @@
             ],
             "published_at": "2026-11-18T14:40:12+00:00",
             "collected_at": "2026-11-18T14:53:35.363206+00:00"
+        },
+        {
+            "id": "1a899965050b2eb9aeafeae4eb48fbecf41b6b6443c0fa4cebb355520fd74301",
+            "title": "Defcon 5's California Caravan Program/Zine",
+            "description": "Comments",
+            "url": "https://netninja.com/2026/06/08/defcon-5s-california-caravan-program-zine/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-18T14:40:07+00:00",
+            "collected_at": "2026-11-21T13:58:20.944335+00:00"
         },
         {
             "id": "b37b8297246272fbfd5d3b654e74c69ff14b905086549655ec51e48c57eb5ba5",
@@ -22587,6 +23653,22 @@
             ],
             "published_at": "2026-11-17T15:23:15+00:00",
             "collected_at": "2026-11-18T00:18:19.567828+00:00"
+        },
+        {
+            "id": "8b203e54ba21f7946591236c43bc772c7fb285d6f4b3efee58ff343d384b199f",
+            "title": "Brazil's tax authority open-sources its tax calculator on GitHub under MIT",
+            "description": "Comments",
+            "url": "https://www.gov.br/receitafederal/pt-br/assuntos/noticias/2026/novembro/receita-federal-publica-primeiro-codigo-fonte-aberto-no-github-e-amplia-transparencia-da-reforma-tributaria",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "git",
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-17T15:22:57+00:00",
+            "collected_at": "2026-11-21T13:58:20.943547+00:00"
         },
         {
             "id": "e5492f9867506c1763a92226a47c0040d7bbb2c6a01e7ebc7f704d255be77f82",
@@ -485794,6 +486876,21 @@
             ],
             "published_at": null,
             "collected_at": "2026-11-20T23:32:26.254769+00:00"
+        },
+        {
+            "id": "8e59042706a73eeaf82bf878895b5262222d7d5fc3cdc3a75cc21f7d7d17423a",
+            "title": "Harbinger is building the unsexy EVs that keep the economy moving",
+            "description": "While legacy automakers tap the brakes on electric vehicles, one startup is hitting the accelerator. Earlier this month, electric truck maker Harbinger raised $240 million in a Series D round, capping a banner stretch that includes a $300 million order from FedEx and a new defense contract with the US military. Harbinger is stacking up […]",
+            "url": "https://www.theverge.com/transportation/1038448/harbinger-ev-startup-240m-series-d-fedex-army-trucks",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-11-21T13:58:19.137562+00:00"
         }
     ]
 }
