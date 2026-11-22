@@ -1,7 +1,1104 @@
 {
-    "updated_at": "2026-11-22T13:51:42.011515+00:00",
-    "count": 31499,
+    "updated_at": "2026-11-22T23:02:30.966637+00:00",
+    "count": 31588,
     "articles": [
+        {
+            "id": "6fd1876c32f5077405d6d01e84a4d80b72227a3d2c651c1a2ca818193be91b5e",
+            "title": "The DevOps Engineer Left. Can We Trust Our Linux Fleet? An AppSec Incident-Response Playbook",
+            "description": "An AppSec-led Linux fleet investigation: legitimate-looking persistence, DFIR evidence, scalable hunts, business impact, and rebuild-or-reuse decisions Expanded field notes · November 2026 · An AppSec-led Linux fleet investigation: from an uncomfortable handover to an evidence-backed business decision. There is a special kind of silence in an engineering meeting when somebody asks a perfectly reasonable question: “The DevOps engineer is gone. He built most of this environment. We didn't exactly part on good terms. OMG! Are we sure the servers are clean?”🤪 And everybody looks at Security. Ahaha.. but seriously.. 🤡 Not at the antivirus dashboard. Not at the person who owns Kubernetes. At Security. Yep, man. More precisely, at the Application Security guy who happens to be in the room. Wow! Congratulations: your job description just got a free expansion. :) I encountered this category of problem while working on the Product Security / Application Security side. I was not brought in as a full-time forensic investigator. My responsibility was to protect the product, its development environment, and its delivery chain. But the engineer who had been operating much of the Linux infrastructure had left under difficult circumstances, the relevant operational knowledge was concentrated in one person, and there was no other specialist ready to take over the security review. So the task landed on my desk. The uncomfortable part was not the Linux commands. It was the question behind them: Can we keep using an environment whose previous privileged operator is no longer trusted — and what evidence would justify that decision? 💀 This is an anonymized account of the problem and the approach. The company, architecture, number of hosts, timelines, and actual investigation outcome are not disclosed under NDA. Any hostnames, observations, and report excerpts below are synthetic teaching examples , not claims about the real engagement. The commands and decision model are intended to be practical, not a reconstruction of private evidence. One more distinction before we start: a difficult departure is not proof of malicious behavior . We investigate access and integrity risks, not a former colleague's personality. 📌Disclaimer All code samples are for authorized defensive investigation. Validate against your distro, architecture, risk tolerance, and incident-handling requirements before production use. 1. A working product is not necessarily a trusted product Picture a fairly ordinary software company. Its Linux machines host development environments, self-hosted runners, build agents, staging services, internal tooling, containers, and sometimes the parts of CI/CD that eventually touch production. The applications are running. The pipelines are green. Nobody is reporting an incident. That does not tell us whether the underlying access paths are legitimate. A former administrator with sufficient access could have left behind a completely ordinary-looking mechanism: a public key in an existing user's authorized_keys ; a second UID 0 account or an unexpected sudo grant; a systemd service, user unit, timer, or cron job; a reverse tunnel or persistent outbound session; modified sshd settings, firewall or NAT rules; an additional CI/CD runner, webhook, deploy key, cloud role, or Kubernetes credential; a changed startup script or binary outside package management. Some of these are legitimate administration patterns. That is precisely why finding a file or a port is not the same as finding an attacker. The goal is not to “find malware.” The goal is to reconstruct the trust boundary and establish whether someone still has a path back into the product. A quick threat model helps: Former privileged operator | +--> Identity: SSH, sudo, PAM, cloud IAM, VPN, SSO | +--> Persistence: systemd, cron, startup scripts, containers | +--> Remote control: inbound ports, outbound tunnels, control planes | +--> Supply chain: Git, CI/CD, runners, registries, signing keys | +--> Data / operations: backups, databases, secrets, deployment rights | v Product integrity + business impact MITRE ATT&CK specifically documents SSH authorized-key manipulation ( T1098.004 ), systemd service persistence ( T1543.002 ), and cron abuse ( T1053.003 ). These are not exotic zero-days. They're familiar operating-system features used in an unfamiliar way. The most convincing backdoor looks like business as usual Here is the misconception I would challenge first: \"We ran antivirus, so there can't be a backdoor.\" Antivirus is useful for known malware. It is not designed to decide whether a valid SSH key, a legitimate systemd unit, a cloud role, or an approved-looking automation runner should exist . A carefully chosen use of an ordinary administration feature may not require malicious code at all. That makes authorization and provenance , not merely signatures, central to the investigation. Legitimate-looking mechanism Why a scanner may miss the risk What I would verify Existing user + extra SSH key A public key is not malware; service accounts often have multiple keys Key fingerprint → owner → change approval → login history → alternate key sources Service/timer named like monitoring systemd is supposed to start services Unit contents, drop-ins, ExecStart , author, package ownership, destination, change history Automation token or deploy key CI/CD credentials are normal business objects Issuer, privileges, last use, expiry, where stored, who can rotate it Self-hosted CI runner Runners legitimately execute arbitrary builds Registration provenance, runner labels, job history, secret scope, egress IAM trust policy / Kubernetes role Nothing suspicious needs to be on the Linux disk Control-plane audit log, role bindings, assumable identities, privilege scope Remote management tunnel Bastions and troubleshooting tools do this all the time Business justification, process ancestry, relay endpoint, persistent configuration This is not a claim that an unhappy former employee must have planted something. It is a threat model for validating what a once-authorized privileged identity could have done. MITRE ATT&CK covers SSH authorized-key manipulation , systemd timers , and additional Kubernetes roles . The common theme is the abuse of normal features. From a shell on a build runner to a business incident The business impact is not limited to someone reading /etc/passwd . Depending on that machine's privileges, an unauthorized operator could potentially : Access available Plausible consequence Business exposure Production database or snapshot credentials Extract customer records or trade secrets Privacy obligations, notification costs, legal/reputational damage CI/CD runner with deployment secrets Replace a build artifact, inject altered code, abuse release credentials Supply-chain compromise, poisoned releases, loss of product integrity Cloud admin or powerful service account Change IAM, disable logging, manipulate resources Broad loss of control, unexpected cloud costs, recovery delays Backups and disaster-recovery permissions Delete, encrypt, or invalidate restore points Longer outage and potentially catastrophic recovery cost DNS, ingress, registry or signing permissions Redirect traffic or ship untrusted binaries Customer impact, credential theft, brand damage Monitoring / alerting control Suppress alerts and conceal later activity Greater dwell time and an unreliable incident timeline These are hypothetical blast-radius paths , not allegations or findings from the NDA case. They explain why the risk owner cares about a tiny configuration change on a very ordinary Linux host. One real-world lesson from GitHub's self-hosted runner guidance : a persistent runner does not provide the isolation guarantees of a clean ephemeral VM. From Product Security's point of view, the runner may be part of the product's trust root, not merely \"some box DevOps manages.\" 2. The first mistake would be to scan first and think later I know the temptation: download five scanners, launch a fleet-wide scan, get a CSV, turn everything green, go home. But we need to answer three questions before touching the first host: What are we actually covering? An incomplete asset inventory makes a clean scan meaningless. Do we have trustworthy access? If the person we are investigating controlled our jump host, SSH keys, or automation account, the inspection channel may be compromised as well. What evidence can we afford to alter? Logging in, installing packages, restarting services, or replacing keys changes the system. Sometimes containment must happen immediately; sometimes forensic preservation comes first. Coordinate that trade-off with incident command, legal, and infrastructure owners. I start with a temporary investigation boundary : a separate operator workstation or clean management host, newly authorized credentials, protected evidence storage, and an agreed change freeze for high-value infrastructure. Use out-of-band cloud or hypervisor snapshots where available and appropriate. Record the time, asset ID, account used, and collection method. Confirm time synchronization; timestamps without a known clock offset are a trap. If there is active unauthorized access, prioritize containment; do not wait for an elegant forensic workflow while the attacker is moving. Otherwise, capture volatile process and network evidence before rebooting or reinstalling anything. This is a risk-based response, consistent with NIST SP 800-61 Rev. 3 . My first 60 minutes: stop the easy re-entry paths With the relevant owners and an emergency-change procedure, I would: disable the departed person's IdP, VPN, bastion, Git, CI/CD, cloud, and remote-support identities; invalidate active sessions, refresh tokens, PATs, deploy keys, and credentials that person could have copied; check shared accounts and service identities rather than assuming disabling a named user is enough; remove or restrict external exposure of administrative interfaces; review inbound and outbound access; protect audit logs and backups with permissions outside the former operator's control; verify a clean break-glass path before touching the existing admin account. Important: blindly rotating a production secret can break the application. Inventory dependencies, plan rotations, and distinguish an emergency revocation from a controlled migration. Credential rotation is part of containment and recovery — not an excuse to skip evidence collection. Preserve the story before the story changes For a real investigation, I maintain a short evidence and decision log from minute one. Not glamorous; absolutely necessary. At minimum: Incident or assessment ID, authorized scope, assigned owner, and whether this is preventive offboarding review or confirmed incident response. UTC acquisition time and source clock/time offset , collector version/hash, operator identity, access path, host/cloud resource ID. Whether evidence was collected live, from a snapshot, from existing EDR, or from independently retained cloud/audit logs; record collection failures as first-class results. Original data location, acquisition digest, restricted storage destination, subsequent handling and access history. A SHA-256 hash detects later changes only if the starting point and collection path are trustworthy . Decisions taken before collecting evidence (revoke a token, quarantine network, stop a workload), with rationale and approval. A host with potential root compromise can lie through ps , ss , find , package tools, or even an installed sensor. Live SSH output is a triage signal, not independent proof of absence. Independent cloud control-plane logs, historical EDR telemetry, trusted snapshots, golden images, and artifact signing are complementary sources. For particularly sensitive cases, bring in experienced DFIR/legal personnel to preserve evidence with suitable procedures; I am describing an AppSec-led first response , not a substitute for a forensic laboratory. Also avoid relying on a magical “last 30 days” cutoff: the suspected change may predate offboarding, and timestamps can be manipulated. Build a timeline around last independently trusted state, last known authorized admin activity, actual departure, credential revocation, and present . This aligns with the risk-management framing of NIST SP 800-61 Rev. 3 (April 2025) : prepare, detect, respond, recover, and explicitly manage remaining uncertainty. 3. Define coverage. Otherwise “all clear” means “all reachable” The fleet is rarely just /etc/hosts on a laptop. I would join several inventories: cloud instances, virtualization inventory, Terraform state and IaC, CMDB, SSH/Ansible inventories, Kubernetes nodes, CI runners, and DNS. Then I would reconcile them. For every asset, I want at least: asset_id , hostname , environment , role , owner , criticality , public_exposure , collection_status , and last_seen . The resulting buckets matter: Bucket Meaning Action In scope, collected We have recent evidence Analyze and assign confidence In scope, unreachable Host exists but did not respond Unknown , escalate and collect by alternate path Discovered, not in inventory Shadow asset Identify owner; prioritize Ephemeral / terminated Host may have disappeared Preserve cloud, orchestration, and historical logs Out of scope by design Explicitly excluded Document why and who approved it I measure coverage , not just detections: collected / in-scope , with an explicit unknown count. If 18 of 100 machines never responded, “82 clean” does not turn into “100 secure” because PowerPoint looks nicer that way. 4. The tools: no silver bullet, just complementary evidence My practical stack is intentionally layered. If the environment already has a capable EDR or osquery deployment, use it. A crisis is a poor moment to install random security agents on every production machine. Tool Model / cost What I use it for Important limitation OpenSSH + supplied read-only collector Built-in / free Fast first-pass collection, parallelized from a clean workstation Depends on reachable hosts and integrity of host tools Velociraptor Open source; server + clients, with additional collection modes Targeted DFIR artifacts and fleet-wide hunts New deployment requires care; collection changes endpoints and consumes resources osquery + Fleet Open-source query engine; Fleet has free and commercial capabilities Cross-host SQL inventory and drift detection Queries see only what the OS and enabled telemetry expose Wazuh Open source, generally agent-based FIM, configuration monitoring, alerting over time A baseline established after a compromise is not a trusted historical baseline YARA Open source Match curated rules against selected files or acquired samples Signature/heuristic matches are leads, not proof; absence is not exoneration Lynis / chkrootkit / rkhunter Free/open source Supplementary hardening and known-artifact checks Not a substitute for DFIR; false positives and blind spots Sandfly Security Commercial, agentless SSH-based Linux investigation Fast Linux-specific triage without persistent agents Licensed product; SSH access and server-side visibility still matter CrowdStrike / SentinelOne / Elastic Security Commercial or mixed licensing Existing EDR telemetry, response, historical hunting Value depends on deployment coverage and retention If I could pick one fast route without a purchase order , it would be: parallel SSH triage → anomaly comparison → targeted Velociraptor collection → package integrity / YARA where indicated → control-plane review → risk disposition . The Velociraptor Hunting documentation explains fleet collections and explicitly warns about data volumes; deployment options include clients, agentless collection, and offline collectors. Fleet/osquery offers live queries, while Wazuh FIM works by comparing observed files against an established baseline. Sandfly describes its agentless IR workflow directly. What I would add to the shortlist — and what I would not expect from it AIDE (with a baseline established before the concern, protected outside the host) can provide useful file-integrity drift. Falco or Tracee can add Linux runtime behavioral telemetry to an already supported and approved monitoring architecture. They observe events after deployment ; they cannot reconstruct yesterday's unlogged process. A brand-new detection baseline created today may simply describe today's compromised state. Tracee uses eBPF and can be powerful, but deploying privileged kernel instrumentation during evidence preservation is a conscious trade-off, not a casual first step. A commercial Linux-focused agentless option such as Sandfly is particularly relevant here. Its current documentation covers automated compromise checks and forensic collection via SSH; its June 2026 product update also describes optional response actions, which I would keep disabled until authorized during evidence-only triage. Agentless does not mean \"no endpoint interaction\" or \"immune to compromised-host deception.\" It means no persistent agent needs to be installed on those targets. Tool selection by question, not brand: Question First choice Escalation Which hosts, accounts and services exist? SSH collector or existing osquery Velociraptor artifacts, alternative collection path What differs from a trusted state? Change approvals, IaC and previous inventories Protected AIDE/FIM history, independent images Is suspicious activity ongoing? Existing EDR, process/network telemetry, cloud logs Controlled runtime sensor / focused IR acquisition Does a specific file match known indicators? YARA against acquired/selected files Forensic analysis and validated threat intelligence Could someone deploy untrusted code tomorrow? Git/CI/CD/IAM/registry audit New runners, credential revocation, signed build path And one careful correction to the usual advice: chkrootkit , rkhunter , or Lynis do not assert that an OS is clean. Even the Debian debsums manual describes its security value as limited. Installation and first-run order (without destroying evidence) For the initial pass , nothing needs to be installed on the suspicious servers: Python 3 and OpenSSH run on a clean operator machine, and the Bash collector is streamed over an approved SSH session. Test it against one non-critical, representative Linux machine before expanding the concurrency. For targeted second-pass checks , prepare a separate, trusted Ubuntu/Debian analysis VM. A minimal optional toolkit can be installed there: # On the clean ANALYSIS VM — not on unpreserved suspect hosts: sudo apt-get update sudo apt-get install --no-install-recommends yara lynis yara --version lynis --version debsums is available as a distribution package for Debian/Ubuntu, but running it against a live suspect system after installation changes evidence; prefer pre-existing tooling or an approved acquisition workflow. To run YARA against a selected acquired file, first review the rules and then use the targeted example below. To assess Linux hardening in a separate lab or after evidence preservation , use sudo lynis audit system ; its audit is broader than a backdoor search and produces logs, so it is not part of our initial read-only collector. For Velociraptor , follow the official deployment quickstart : download the appropriate release to a separate server, verify the release artifacts, generate server configuration, restrict the GUI, and provision authorized Linux client collection. An isolated loopback test lab can use ./velociraptor gui ; this convenient demo mode is not a production deployment. For real use, configure authentication/TLS and privileges appropriately, test Linux artifacts on one endpoint, and only then open a controlled Hunt. For osquery/Fleet , deploy supported signed packages and enrollment according to Fleet documentation ; after enrollment, verify the host appears in the console, check its supported SQL tables, and run a one-host live query before a scheduled fleet query. osqueryi is useful for local, temporary query testing if already installed. For Wazuh , the official Quickstart guides deployment of central components on a separate trusted machine; agents and FIM baseline should be introduced under an approved change, ideally after the acute response. Sandfly requires its licensed management environment and approved SSH access; start with a small scoped Linux group, not every reachable asset simultaneously. If the company already has an EDR, Fleet, Wazuh, or Velociraptor deployment, use that first. Do not build a parallel monitoring platform in the middle of an active compromise just to satisfy a checklist. 5. First pass: collect, don't “clean” For repeatable collection, I include a small companion toolkit in the downloadable article archive : linux_trust_after_devops_v2/ 01_EN_devto.md 02_RU_devto.md tools/ linux_triage_readonly.sh fleet_triage.py review_manifest.py hosts.example.txt examples/ example_findings.csv synthetic_evidence.txt templates/ executive_report_example.md risk_register_template.csv README.md It uses Python on the operator machine to run a Bash collector over SSH on multiple hosts. It does not install a package, persist a script, change firewall rules, remove accounts, or reboot anything. Results stay on the operator machine under restrictive permissions, with a per-host SHA-256 digest and a collection manifest. Prerequisites: Linux/macOS investigator machine with Python 3 and OpenSSH; trusted host keys in known_hosts ; SSH access to targets; sudo -n permission to run read-only commands; explicit approval from the system owner. Never disable host-key verification to “make the scan work.” Create an inventory based on the provided example: # tools/hosts.txt (illustrative, replace with real authorized targets) ir-audit@build-01.example.internal ir-audit@app-stg-02.example.internal ir-audit@runner-03.example.internal Then run from the extracted archive root : python3 tools/fleet_triage.py \\ --hosts tools/hosts.txt \\ --out ./evidence-2026-11-13 \\ --workers 6 \\ --timeout 120 The script writes manifest.csv , manifest.sha256 , and raw/<host>.txt collection files; errors are noted in the manifest. Then use python3 tools/review_manifest.py ./evidence-2026-11-13 to generate a separate offline quality-review queue (outside the evidence folder); this checks collection limitations, not threats. It is a triage collector , not a forensic imaging system or compromise detector. Review the README before using it against production. For a single host, these are the kinds of questions the collector answers: ⚠️Identity and access awk -F: '$3 == 0 {print $1 \":\" $3}' /etc/passwd getent passwd find /etc/sudoers.d -maxdepth 1 -type f -print 2 > /dev/null sshd -T 2 > /dev/null | grep -E '^(permitrootlogin|authorizedkeysfile|passwordauthentication|pubkeyauthentication) ' Review authorized_keys across actual home directories from the account database , not only /home/* . Compare SSH-key fingerprints with a known-good source. Include SSH certificates/authorized principals and AuthorizedKeysCommand when configured. Do not upload raw credentials or private keys into a public ticket. ⚠️Scheduled persistence and startup systemctl list-unit-files --type=service,timer --state=enabled --no-pager systemctl list-timers --all --no-pager find /etc/systemd/system /usr/local/lib/systemd/system \\ -type f -mtime -30 -print 2 > /dev/null find /etc/cron.d /etc/cron.daily /etc/cron.hourly \\ -maxdepth 2 -type f -print 2 > /dev/null Also inspect per-user cron, at jobs, systemd --user units, drop-in overrides, PAM hooks, /etc/profile.d , shell startup files, and container restart policies. A -mtime -30 filter is a prioritization hint, not a complete threat-hunting method: timestamps can be changed, and a malicious artifact may be years old. ⚠️Runtime and network ss -lntup ss -tanp ip route show nft list ruleset 2 > /dev/null iptables-save 2 > /dev/null A listening socket or an unfamiliar outbound IP is a candidate finding . Correlate it with the owning process, executable path, systemd unit, deployment, logs, and expected service architecture. If a reverse tunnel is suspected, collect evidence before killing it where incident safety allows. Also remember: a periodic callback may not be active at the instant you run ss . ⚠️Integrity and package ownership # Debian / Ubuntu: if debsums is already installed debsums -c 2 > /dev/null # RHEL-like distributions rpm -Va # Investigate individual suspicious paths stat /path/to/suspect sha256sum /path/to/suspect A changed package file is not automatically a backdoor. Configuration updates, vendor behavior, and legitimate administration can explain differences. More importantly, package databases on a potentially compromised host are not independent sources of trust. Debian's own debsums manual says it has limited use as a security tool. Use signed reference images, known-good artifacts, package provenance, or trusted external snapshots for stronger comparisons. rpm -Va checks recorded attributes; it cannot verify arbitrary files outside its package database. Do not run a blind find / plus a recursive YARA scan across production databases, object mounts, and virtual filesystems. Target suspected paths and acquired samples, and cap resource use: # Only after reviewing the rules and selecting an approved target: yara --timeout=30 /opt/ir/rules/reviewed_rules.yar /opt/ir/samples/suspect_file The YARA CLI reference documents this syntax. Rules need provenance and testing; an IoC may become stale, and a false positive may look surprisingly convincing. What a useful sanitized finding looks like The hardest part isn't spotting an odd name. It's joining artifacts across independent sources . Here is a fully synthetic sequence that illustrates the logic; the addresses are documentation-only TEST-NET ranges, not real infrastructure. 🚨 Signal A — a normal-looking service, unexpected provenance. $ systemctl list-unit-files --type=service | grep telemetry telemetry-bridge.service enabled enabled $ systemctl show telemetry-bridge.service \\ -p FragmentPath -p DropInPaths -p User -p ExecStart FragmentPath = /etc/systemd/system/telemetry-bridge.service DropInPaths = User = svc-ci ExecStart = { path = /usr/local/bin/telemetry-bridge ; ... } $ systemctl cat telemetry-bridge.service # /etc/systemd/system/telemetry-bridge.service [ Unit ] Description = Telemetry bridge for build fleet [ Service ] User = svc-ci ExecStart = /usr/local/bin/telemetry-bridge --config /etc/telemetry/bridge.yaml Restart = always [ Install ] WantedBy = multi-user.target Nothing there proves malicious behavior. It could be an entirely legitimate internal tool. But package inventory, IaC, and the approved service catalog have no owner for it. The binary's origin is not yet established. That is an unexplained deviation , not a confirmed implant. 🚨 Signal B — a network relationship to explain. $ ss -tnp | grep 203.0.113.42 ESTAB 0 0 10.10.4.23:51862 203.0.113.42:443 users: ( ( \"telemetry-bridge\" ,pid=2147,fd=11 ) ) A TCP session to port 443 may be expected telemetry traffic. Now I want the process owner, command-line metadata, service logs, endpoint ownership, and the documented reason the CI runner contacts it. Do not equate an external IP with a command-and-control server. 🚨 Signal C — SSH access that survives account offboarding. $ ssh-keygen -lf /home/svc-ci/.ssh/authorized_keys -E sha256 256 SHA256:7aQ2EXAMPLEsyntheticFingerprintNOTREAL ci-deploy ( ED25519 ) The fingerprint in this sample is illustrative text, not a real key-derived digest . A reviewer would compare actual fingerprints to the organization's approved key registry and look for SSH login events. One missing ticket is insufficient evidence of malicious intent; an unowned key plus unexplained external connectivity plus high-value runner privileges does justify urgent investigation. Safe follow-up commands on an authorized host, with triage impact assessed: # Service implementation and effective properties (no restart/reload) systemctl show telemetry-bridge.service \\ -p FragmentPath -p DropInPaths -p User -p ExecStart systemctl cat telemetry-bridge.service # Narrow time window; journal access and retention vary by distro journalctl --utc --no-pager -u telemetry-bridge.service \\ --since '2026-11-01 00:00:00' --until '2026-11-13 23:59:59' # Example: inspect the actual account-dependent effective SSH policy sshd -T -C user = svc-ci,host=reviewer.example.internal,addr=192.0.2.44 \\ | grep -E '^(authorizedkeysfile|authorizedkeyscommand|permitrootlogin|pubkeyauthentication) ' # On the clean evidence workstation, verify files against saved manifest ( cd ./evidence-2026-11-13 && sha256sum -c manifest.sha256 ) sshd -T without -C may omit the effect of Match rules, so I pass a hypothetical client connection context ( host / addr refer to the connecting client, not the server) when checking an account. The OpenSSH manual documents the parameter behavior. Journal data is not inherently tamper-proof; corroborate it with forwarded logs. One more item for the investigator's notebook: a real-time snapshot can miss an intermittently running timer, an inactive user systemd service, a socket-activated unit, a container-level configuration, or a credential that only lives in an API. This is why I need several passes and honest collection coverage . 6. Second pass: hunt across the fleet, not just inside one box This is where the real leverage begins. I do not want to read 200 nearly identical text files. I want to know which hosts deviate from their peer group . I build logical cohorts: build agents vs application servers vs database nodes; production vs staging; Linux distribution; cloud account; image version. Comparing a build runner with a PostgreSQL host is a reliable way to produce impressive but useless anomalies. With osquery, some quick starting points are: SELECT username , uid , gid , directory , shell FROM users WHERE uid = 0 ; SELECT pid , port , protocol , address FROM listening_ports ; SELECT pid , name , path , cmdline FROM processes ; Run them through an already deployed osquery/Fleet environment or test locally with osqueryi . Exact tables and columns are version/platform-dependent; check the installed schema before creating a global scheduled query. Fleet's REST API documentation covers live reports and their offline/timeout behavior. With Velociraptor, use the GUI to select narrowly scoped Linux-appropriate artifacts , test on one or two representatives, then launch a Hunt against a labeled cohort. Collect only what is required: users, SSH configuration/keys, scheduled tasks, service definitions, process/network metadata, and selected files. When an interesting outlier appears, pivot to deeper acquisition and event timelines. The heuristic is not “one weird file = rootkit.” It is independent signals converging on the same asset : Unexpected account or SSH key + newly introduced service/timer + suspicious outbound activity + no change ticket / no IaC explanation + sensitive CI/CD or cloud privileges | v High-priority investigation Practical fleet SQL: spot the outliers, then prove their meaning If osquery is already deployed, I would use a small set of schema-checked queries; these examples correspond to published osquery tables, but verify fields against your installed version with .schema in osqueryi before rolling out a query pack. -- An account with UID 0 deserves verification, not instant condemnation SELECT username , uid , directory , shell FROM users WHERE uid = 0 ; -- Linux systemd units: compare cohorts, not random hosts SELECT id , unit_file_state , active_state , fragment_path , user FROM systemd_units WHERE unit_file_state = 'enabled' ; -- Cron: inspect actual execution commands and file origins SELECT path , command , minute , hour , day_of_week FROM crontab ; -- Join network listeners with process metadata (snapshot only) SELECT l . address , l . port , l . protocol , p . pid , p . name , p . path , p . cmdline FROM listening_ports AS l LEFT JOIN processes AS p ON l . pid = p . pid ; Source: upstream schema for systemd_units , crontab , and listening_ports . Not all tables are available on all systems, and a scheduled query is not continuous historical telemetry. What I would actually compare: the same application role, OS image, environment and release . For example, five CI runners expected to have three custom systemd units, and one runner with a fourth. That fourth unit goes to a human review queue. It does not go straight to a list titled \"attackers found.\" 7. The biggest trap: your servers are only half the story Suppose the Linux host review looks fine, but the departing engineer controlled the deployment pipeline. Would I sign off on the product? Absolutely not. Think about a hidden GitHub/GitLab deploy key, an unowned runner, a scheduled pipeline, a registry write credential, an unsigned container image, a Terraform backend, a Kubernetes ClusterRoleBinding , or a cloud IAM trust policy. The attacker may no longer need a shell on a server to influence what runs on that server tomorrow. 🛠️⚙️ My cross-domain checklist: Plane What to verify Source of truth Identity IdP accounts, groups, sessions, SSO exceptions, shared identities IdP audit logs, HR offboarding, access reviews Git + CI/CD Deploy keys, tokens, runners, webhooks, pipeline definitions, protected branches Git audit logs, CI admin console, repository history Cloud IAM users/roles/trust, access keys, instance metadata, security groups, audit trails Cloud control plane, CloudTrail/Activity Logs/Cloud Audit Logs Kubernetes RBAC, service accounts, secrets access, workload specs, admission controls API server audit logs, GitOps desired state Artifacts Images, registry permissions, signatures, build provenance Registry, release process, verified build artifacts Secrets Vault/KMS policies, CI secrets, SSH CA, signing keys, database users Secret managers, IAM, access logs Recovery Backups, immutable copies, restore permissions, DR accounts Independent recovery/control-plane administration Do not assume your Terraform repo is a pristine baseline if the same person had write access to the repo and its state. Find independent history : signed releases, audit trails, access-change approvals, immutable backup points, cloud change records. And please, don't forget the mundane stuff: DNS, domain registrar, external monitoring, alert destinations, break-glass accounts, and vendor support portals. A quiet backdoor in the control plane can outlive a beautifully rebuilt VM. The control-plane test: did we remove their ability to change the next deployment? I would perform a second, separate review from the Git, cloud and identity administrative consoles rather than trusting the suspect server's answers. A useful review joins: principal → permission → action history → artifact affected → revocation/rotation outcome. Examples worth querying, with the correct permissions and in a read-only review: # Kubernetes: inventory role bindings; review sensitive permissions separately kubectl get clusterrolebindings -o wide kubectl get rolebindings -A -o wide # GitHub: review the organization's audit log in the admin console # Cloud: use your provider's independent audit console / SIEM export # Do not paste access tokens or secrets into a terminal transcript. For GitHub, read the organization audit-log documentation . For AWS, note that the default CloudTrail Event history covers recent management events, with a 90-day, single-account/single-Region scope; it does not establish that data access was never performed. Historical coverage may require configured trails or other audit stores. A host can pass every on-box scan and still be unsafe to reuse if its registry signing credentials, Git deploy key, or cloud role remain exposed. Fixing the next deployment's trust path matters just as much as fixing yesterday's server. 8. How I would turn raw output into a decision-ready report The evidence is only useful when it changes a decision. My report has two levels : one-page management summary and reproducible technical findings. An illustrative, entirely fictional fleet summary might look like this: Metric Example result Interpretation Assets in scope 64 Reconciled inventory Collected successfully 58 90.6% of scope Unreachable / incomplete 6 Unknown; not cleared Assets requiring focused review 8 Anomalies, not confirmed incidents Confirmed unauthorized persistence 1 Fictional example only Hosts with confirmed trustworthy state Not established by this scan Trust requires more evidence The specific numbers above are invented solely to show report structure; they are not results from the NDA engagement. A finding record should look like this: Finding ID: LIN-IR-007 Asset / role: runner-03 / CI build runner Source: SSH triage + control-plane comparison Observed artifact: unexpected authorized_keys fingerprint Evidence: raw/runner-03.txt; IdP audit event ID; change-history URL Validation: no approved owner or matching change found (example) Exposure: VPN-reachable SSH Privileges: runner user can access deployment credentials Blast radius: build -> artifact registry -> production deployment Severity / priority: P0 pending containment approval Confidence: Medium until access provenance is verified Action: restrict access, preserve evidence, revoke affected key, rotate exposed secrets, review adjacent runners, consider fresh reprovisioning Owner / due time: Incident commander / defined in response ticket Status: Investigating The example CSV included in the ZIP is explicitly synthetic. It illustrates rows for a normal exception, an unresolved anomaly, a high-risk signal, and a failed collection. Keep evidence, interpretation, and recommendations in separate columns This is the part I would insist on as a reviewer. For each finding, record observed fact (with raw artifact reference), analysis/hypothesis , independent corroboration , business exposure , confidence , and decision owner . Don't write \"backdoor installed\" when you have only \"unowned enabled service.\" Example: IR-2026-DEMO-014 | build-01 | CI runner FACT: Enabled local service 'telemetry-bridge.service'; owner not in catalog. FACT: Service process observed with outbound TLS session to 203.0.113.42:443. HYPOTHESIS: Could be an unapproved telemetry integration or persistence. CORROBORATION: No IaC entry; no approved exception; cloud/CI logs pending. STATUS: HIGH-RISK UNRESOLVED (not confirmed malicious) PRODUCT BLAST RADIUS: Runner has registry write capability. NEXT: Preserve snapshot/telemetry; restrict runner use; validate credential provenance; rotate if exposed; decide whether to rebuild runner. A genuinely useful final report also declares what was not observed or could not be measured : expired logs, missing privileged access, non-Linux workloads, unreachable hosts, tamperable local data, unknown third-party connectors, and retention limits. Report confidence separately from severity. The toolkit's SHA-256 manifest supports later file-integrity checks of collected output. It does not prove that a remote host's process list was truthful, that the collector had complete visibility, or that chain of custody is legally sufficient. My severity logic: not every unknown is malicious Disposition Typical evidence Decision Confirmed malicious / unauthorized control Validated unauthorized access/persistence or tampering Contain; preserve; scope incident; rebuild affected trust boundary; rotate credentials High-risk unresolved Strong anomalies, privileged paths, incomplete provenance Restrict exposure; investigate; prefer redeployment for critical systems Explained deviation Independently verified change ticket + expected configuration Record exception and return to monitoring No indicators observed, high coverage Broad collection, trustworthy references, control-plane review Conditional reuse with monitoring; not a guarantee of cleanliness Unscanned / low-confidence Offline host, insufficient privilege, missing logs Unknown — no security clearance One more nuance: severity of a finding and confidence in a conclusion are different fields. If the agent was offline, you didn't detect a clean host. You detected an observability gap. 9. Rebuild or reuse? The answer depends on the trust boundary This is the uncomfortable management decision. There are three plausible endings, and none should be determined by the color of a scanner dashboard. ✅ Scenario A — no suspicious evidence, good coverage, independently verified control planes. Reuse may be reasonable under explicit residual-risk acceptance, credential rotation, hardened access, new baselines, and heightened monitoring. Do not claim the systems are “proven clean.” Record what was checked, what was not, and for how long evidence was available. ✅ Scenario B — ambiguous persistence or missing trusted baselines. Reduce access, expand collection, and prioritize rebuilding internet-facing, privileged, and CI/CD hosts. If you cannot distinguish an old, legitimate admin script from covert access in a crown-jewel system, lack of proof is itself a business decision input. An immutable rebuild from trusted source can be cheaper than weeks of inconclusive investigation. ✅ Scenario C — confirmed compromise or unauthorized persistence. Invoke formal incident response. Preserve evidence and logs first where safe. Contain the affected identity, host, and adjacent access paths. For systems where OS-level integrity cannot be trusted, reprovision from verified images and reviewed IaC ; do not copy arbitrary old binaries or configurations forward. Rotate every credential and signing/deployment secret in the exposure scope , not merely the password of the user you found. Rebuild the delivery chain too if it was inside the blast radius. A full rebuild of all servers is not automatically justified by one stray SSH key. Conversely, a clean rootkit scan does not justify keeping a deployment controller whose credentials are unaccounted for. Scope follows evidence and trust relationships. The decision I want Engineering to sign ASSET: build-01 Business role: CI/CD; deploys to production Evidence coverage: host 100%, audit-log history partial Host IoCs: no confirmed hit Identity review: completed CI/CD tokens: 2 historical credentials still being traced Trusted rebuild path: available / reviewed Decision: REBUILD BEFORE RETURN TO HIGH-TRUST DUTIES Reason: disproportionate blast radius + unresolved secrets provenance Owner: Infrastructure / Security Recheck: after key rotation, clean build, and deployment validation This example is also fictional. The important part is the logic: risk acceptance belongs to the business owner, but evidence quality belongs to Security . Recovery means re-establishing provenance — not just deleting the scary file When rebuilding is warranted, I want to restore from known-good, independently reviewed sources : hardened signed images, reviewed IaC and pipelines, scoped identities, fresh credentials, controlled secrets, clean runners, and validated application artifacts. If the attacker could alter the base image or CI/CD system that builds it, simply recreating VMs from the same pipeline reproduces the uncertainty. I would set an explicit recovery gate: (1) exposure path closed; (2) independently verified identity and cloud access; (3) trusted build/provisioning lineage; (4) restored telemetry and protected logging; (5) tested functionality and rollback; (6) named owner accepts any residual unknowns. Later, I would add prevention: joiner/mover/leaver automation, two-person reviews of privileged changes, ephemeral CI runners where feasible, key/role inventories, immutable remote logs, tested restorations, and environment-specific baseline drift alerts. The point isn't to prove a negative. It is to reduce the number of ways the former identity — or someone holding its leaked credentials — can still influence the product. 10. The 24/48/72-hour action plan I would actually use Window Work Deliverable 0–4 hours Incident owner, offboarding verification, restrict privileged access, safeguard logs, identify crown jewels Initial containment log and inventory 4–24 hours Run collection on prioritized cohorts; reconcile failures; review identities, services, connections, package signals Coverage dashboard + candidate findings 24–48 hours Validate outliers with Velociraptor/osquery and control-plane evidence; review CI/CD/cloud/secrets; targeted YARA Confirmed vs explained vs unknown findings 48–72 hours Rebuild/rotation plan, owners, business decisions, evidence retention, new trusted baselines Signed disposition and remediation tracker Those are planning windows, not a claim that an investigation can always finish in 72 hours . An active incident, a missing inventory, or forensic preservation requirements may change the sequence substantially. What I would not do I would not apt install six tools across every target before preserving evidence. I would not treat chkrootkit , rkhunter , or ClamAV as a clearance certificate. I would not call a host clean simply because ss showed nothing interesting. I would not automatically delete unfamiliar cron jobs, SSH keys, or services before attribution. I would not silently ignore unreachable hosts. I would not let a well-formatted report outrank an unresolved production deploy token. 🛡️ Final thoughts: this was not “just Linux administration” When I work in Application Security, I usually think in terms of source code, application behavior, trust boundaries, CI/CD, deployment artifacts, and product impact. In this case, the entry point was operational: an absent DevOps engineer and a fleet of machines that still worked. But the real security question was the same one we ask in Product Security every day: What can an untrusted actor still control, through which path, and what evidence allows us to break that path? We did not need another tool that prints 3,000 lines in red. We needed a defensible chain from asset → identity → persistence → evidence → blast radius → treatment → verification . 🔐 If you remember one principle from this playbook, make it this: 🔐 “Nothing found” is a scan result. “Safe to operate” is a risk decision. They are not synonyms. And yes - sometimes AppSec inherits an Infrastructure/DFIR incident. The job is not to pretend you're a full-time forensic examiner. The job is to recognize the limits of your evidence, bring in specialized help when the scope requires it, and keep the product from paying for an invisible trust assumption. 💡 References and further reading NIST SP 800-61 Rev. 3 — Incident Response Recommendations MITRE ATT&CK — SSH Authorized Keys (T1098.004) MITRE ATT&CK — Systemd Service (T1543.002) MITRE ATT&CK — Cron (T1053.003) Velociraptor — Hunting and Deployment Fleet — Live Query / REST API Wazuh — File Integrity Monitoring YARA — Command-Line Guide Debian — debsums manual and its security limitations Sandfly — Agentless Linux Security Documentation GitHub — Secure Use of Self-Hosted Runners GitHub — Organization Audit Logs OpenSSH sshd manual — Effective Configuration and Match MITRE — Systemd Timers (T1053.006) MITRE — Kubernetes Role Manipulation (T1098.006) osquery — Linux systemd Table Schema AWS — CloudTrail Event History and Limits Tracee — Linux eBPF Runtime Telemetry Sandfly — June 2026 Agentless Response Update",
+            "url": "https://dev.to/d3one/the-devops-engineer-left-can-we-trust-our-linux-fleet-an-appsec-incident-response-playbook-98e",
+            "source": "DEV Community",
+            "category": "cybersecurite",
+            "tags": [
+                "ansible",
+                "aws",
+                "developpement",
+                "git",
+                "intel",
+                "kubernetes",
+                "linux",
+                "llm",
+                "macos",
+                "malware",
+                "programmation",
+                "python",
+                "rust",
+                "terraform",
+                "web",
+                "windows",
+                "zero_day"
+            ],
+            "published_at": "2026-11-22T23:00:00+00:00",
+            "collected_at": "2026-11-22T23:02:13.522294+00:00"
+        },
+        {
+            "id": "6a17b53a670ce2a36d414300340b50be5809a7c1c420ec06540fbf179f4ba51d",
+            "title": "Tiny 2.1: a 367,000-parameter question-answering transformer written in Turbo C 2.0 runs from a floppy on DOS-era PCs",
+            "description": "📅 November 22, 2026 • Tom's Hardware Tiny 2.1 is a question-answering language model with about 367,000 parameters that fits on a floppy disk and runs on DOS-era PCs. The project lives on GitHub as WollyMonjac/Tiny-2.1, was created on Nov 15, 2026 and ships under an MIT license for the code, with three derived data files keeping their own licenses, documented in DATA_LICENSES.md. Tom's Hardware describes it as not a large language model but a tiny question-answering transformer that needs 540 KB of memory and speaks through the PC speaker, and notebookcheck puts the whole package at about 435 KB, so it travels the way programs once did. Per the README, the model has 4 layers and a width of 96 , and it reads and writes letter by letter at the character level. The weights are stored as one byte per value with one scale per row, about 380 KB in all, and the model asks for about 540 KB of free conventional memory . A code inspection by ainewstodays adds fine detail: a 97-token vocabulary, a 128-character context window, 4 attention heads, a wide feed-forward middle layer and RMSNorm. The source is written in Turbo C 2.0 and rebuilds with a single TCC command, and the target hardware per the README is a Pentium or a DX-class machine under plain DOS. The training set is modest by design, about 3,500 facts , each phrased in many wordings, and the README says openly that outside them the model makes things up confidently. On questions worded the way they were taught it scores about 90 percent , and on 780 unseen test questions with new wordings and combinations it reaches about 61 percent , up from 6 percent for the first version. The README credits the C code to Claude Fable 5.2 and the training data to Opus 5.5 , per notebookcheck both Anthropic Claude models, so the whole pipeline from code to dataset was built by AI. Speed depends on the machine, with a math coprocessor an answer takes a few seconds, while on hardware without one it is emulated in software and an answer can take several minutes. The README lists the limits with the same candor, among them questions about two countries at once, rare chemical elements and division, with dependable sums up to 20+20 and the 12 times table, plus a habit of inventing an answer instead of saying it does not know. Attention has been steady, from Hackaday on Nov 18 to notebookcheck and MakeUseOf, and the model also runs in a browser through a WASM port at tiny.gottz.de , which serves the original 380 KB TINY.BIN. The practical meaning is the point of the story. It shows that a working neural network can run unassisted on hardware from the floppy era, which turns any old PC in a school lab, a museum or a demo into a working exhibit with no internet and no modern GPU. It also runs in a DOS emulator, and the full training kit is on GitHub with Python, NumPy and PyTorch, where a normal CPU is enough to retrain the model on your own facts . For education, retro computing and demos, Tiny 2.1 is a tidy reminder that the interesting question is not only how large a model can get, but how small a useful one can be made. Sources: https://www.tomshardware.com/tech-industry/artificial-intelligence/dev-squeezes-an-ai-language-model-onto-a-floppy-for-486dx-and-pentium-pc-stalwarts-tiny-2-1-needs-540kb-of-memory-and-speaks-via-pc-speaker-is-a-question-answering-transformer-with-367k-parameters https://github.com/WollyMonjac/Tiny-2.1 https://raw.githubusercontent.com/WollyMonjac/Tiny-2.1/main/README.TXT https://www.notebookcheck.net/Tiny-AI-runs-on-486-DOS-PCs-from-a-floppy-disk.1456755.0.html https://hackaday.com/2026/11/18/not-so-large-language-model-fits-on-a-floppy-disk/ https://www.makeuseof.com/someone-used-claude-to-build-a-chatbot-that-fits-on-a-floppy-disk/ Continue the conversation: https://t.me/AIAutomationArchitecture · Bluesky",
+            "url": "https://dev.to/delimitter/tiny-21-a-367000-parameter-question-answering-transformer-written-in-turbo-c-20-runs-from-a-3kf4",
+            "source": "DEV Community",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "anthropic",
+                "csharp",
+                "developpement",
+                "git",
+                "intel",
+                "llm",
+                "programmation",
+                "python",
+                "web"
+            ],
+            "published_at": "2026-11-22T22:59:57+00:00",
+            "collected_at": "2026-11-22T23:02:13.522678+00:00"
+        },
+        {
+            "id": "267999ca8ba862adc09eafe995db2c25cc416f225d294c41ca0a5ded5e40ef5f",
+            "title": "Tool-Use Schema Validation and Prompt Caching Boundaries in Claude Agents",
+            "description": "When building production tool-calling agents—or reviewing architecture scenarios for the Claude Certified Architect – Foundations track—two failure modes show up repeatedly: silent schema drift on tool arguments and accidental invalidation of prompt cache prefixes. 1. Strict Tool Schema Validation with Actionable Errors Relying solely on the model to respect optional vs. required parameters leads to brittle downstream execution. Always enforce strict schema checks before running side-effectful tools: def validate_tool_payload ( payload : dict , required : list [ str ] , allowed : list [ str ] ) -> tuple [ bool , str ] : missing = [ k for k in required if k not in payload ] if missing : return False , f \"Missing required parameters: {', '.join(missing)}\" extra = [ k for k in payload if k not in allowed ] if extra : return False , f \"Unsupported parameters: {', '.join(extra)}\" return True , \"ok\" Returning explicit validation messages in the tool_result block allows the model to self-correct on the next turn without aborting the session. 2. Keeping Prompt Cache Prefixes Stable Prompt caching works on exact prefix matching. Placing dynamic timestamps, per-request user IDs, or volatile retrieved snippets above static tool definitions forces cache misses on every turn. Recommended ordering: Static system prompt & behavioral constraints Tool definitions (alphabetically sorted, immutable per session) Long-lived reference documents (marked with cache breakpoints) Dynamic conversation history and latest user turn 3. Verifying Exam & Architecture Readiness If you are preparing for Anthropic's certification or benchmarking team readiness across tool design, context management, and multi-agent boundaries, you can review domain-by-domain practice questions on AICertMock or the dedicated Claude Certified Architect practice exam .",
+            "url": "https://dev.to/jimmy_fa_df2a6d4a40947e2a/tool-use-schema-validation-and-prompt-caching-boundaries-in-claude-agents-3mkk",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "anthropic",
+                "developpement",
+                "ios",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-11-22T22:58:34+00:00",
+            "collected_at": "2026-11-22T23:02:13.522952+00:00"
+        },
+        {
+            "id": "8111f51b09c7eb1bb036cf4c43fd35e0bbf1dc69030fe9759afc6dc38aa3541e",
+            "title": "I rate GitHub profiles like F1 drivers — and every share image is a server-rendered cutout",
+            "description": "gitone rates GitHub profiles like F1 drivers: PAC, RAC, AWA, EXP and RTG out of 99, all from live GraphQL data. The growth engine is one markdown line: [![My gitone card](https://gitone.langersword.in/<login>.png)](https://gitone.langersword.in/<login>) The PNG re-scouts every two hours, so it must render fast and correctly for strangers. Three serverless image bugs almost shipped with the launch. An un-awaited KV put was cut when the Workers response returned, so cold renders repeated and hit error 1102. Await plus a read-back fixed it: 0.15–0.6 s after the first hit. Satori silently drops WebP layers. Pixel checks showed webp YAVG 13 versus png YAVG 184, so every plate now ships a PNG twin for Satori. A baked dark rectangle sat behind every die-cut plate. Removing it gave real transparent cutouts that float on a README. Free and open source: github.com/LangerSword/gitone. Scout yours at gitone.langersword.in.",
+            "url": "https://dev.to/lakshaya_sharma_dc5a493cc/i-rate-github-profiles-like-f1-drivers-and-every-share-image-is-a-server-rendered-cutout-2651",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "git",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-11-22T22:58:21+00:00",
+            "collected_at": "2026-11-22T23:02:13.523101+00:00"
+        },
+        {
+            "id": "613e5c2334b1c667bd7424c4acb8584c4b89cb64e77a0bb42c4af49a9d653c2a",
+            "title": "SteadyShot: Where Human Signals Meet Precision Shooting",
+            "description": "This is a submission for the Presage SmartSpectra SDK Challenge What I Built I built SteadyShot , a first-person sniper game developed using Godot 4, where your physiological state can influence how accurately you aim. The game places you at a sniper position overlooking a desert canyon. Enemy units advance towards your position in waves, and your objective is to stop them before they cross the breach line. But SteadyShot goes beyond conventional sniper mechanics. Using the Presage SmartSpectra SDK, the game receives camera-derived heart-rate and breathing-rate estimates and uses them to influence aiming stability and shot consistency. This means aiming isn't entirely about moving your mouse onto a target. Your physiological signals become another gameplay variable. The game also features: Projectile-based shooting with bullet drop and wind drift. A bolt-action rifle with manual reloading and recoil. Multiple enemy types and progressively challenging waves. Dynamic day/night cycles and sandstorms. Night vision and thermal optics. Live heart-rate and breathing-rate history graphs. Sensor-free fallback mode, allowing the game to be played without Presage. The idea was to make physiological signals an actual part of the gameplay rather than simply displaying them on a dashboard. Demo Demo Video: This demo shows SteadyShot running with the Presage SmartSpectra SDK, including live physiological readings and how they influence aiming stability and shot consistency. Code GitHub Repository: Yasovardan-Ram / Steady-Shot STEADYSHOT A physiology-aware, first-person sniper game built with Godot 4. SteadyShot puts you on a desert-canyon overlook. Hold the position, track advancing infantry, account for wind and bullet drop, and stop enemies before they cross the breach line. When a compatible Presage SmartSpectra setup is available, webcam-derived heart-rate and breathing-rate estimates feed into the aiming-stability model. The sensor is optional: the game remains playable without it. Project: SteadyShot Engine: Godot 4.2+ Primary language: GDScript Optional sensor runtime: Node.js + Presage SmartSpectra SDK Window / viewport: 1600 × 900 (resizable/scalable through Godot display settings) Contents Gameplay overview Features Getting started Using the Presage SmartSpectra sensor Controls Game systems Architecture Project structure Configuration and saved data Releases and builds Troubleshooting Privacy and sensor limitations Development notes Gameplay overview You defend a sniper position above a desert valley. Enemy units advance in waves along terrain-aware routes. Every enemy that crosses the marked breach… View on GitHub The repository contains the complete Godot project, GDScript gameplay systems, and the Node.js Presage bridge. The README includes instructions for: Running the game from source. Installing the required dependencies. Configuring the Presage SmartSpectra integration. Connecting a camera and API key. Playing without a sensor. For judges: The game supports guest play, so you can explore the gameplay without creating an account. You can also choose to continue without a sensor to experience the core game. To test the physiological integration, you'll need a compatible camera setup and your own valid SmartSpectra API key. How It Responds to Human Signals SteadyShot integrates the Presage SmartSpectra Node.js SDK to obtain real-time, camera-derived physiological estimates. The integration currently uses two signals: Heart rate: Influences the physiological load used by the aiming-stability model. Breathing rate: Contributes to aiming sway and breathing-cycle-related shot-consistency feedback. How the integration works The integration uses a Node.js bridge between Presage and Godot. The player enters their SmartSpectra API key through the in-game sensor setup screen and connects their camera. The Node.js bridge initializes the SmartSpectra SDK and manages the sensor session. The bridge receives physiological estimates and forwards them to Godot through a local WebSocket connection. Godot processes the incoming readings and passes the relevant values to the player controller. The player controller uses these readings to influence scope sway and shot-consistency calculations. Incoming measurements are smoothed and checked for confidence and freshness. When readings become stale or unavailable, their influence gradually fades instead of treating old measurements as current. Shot-consistency feedback is calculated when the player fires. It considers available sensor freshness, physiological load, breathing phase, and player movement. I also wanted the sensor integration to remain optional. If the camera, SDK, or API key is unavailable, the game continues to work using its fallback aiming behaviour. The purpose of these signals is to influence gameplay, not to provide medical measurements or health-related advice. Prize Categories I'm entering both prize categories . Most Creative or Delightful Use The idea behind SteadyShot was to explore what happens when a game's mechanics respond to something happening inside the player, rather than relying exclusively on conventional input devices. A sniper game felt like an interesting way to explore this. In a game where precision is important, physiological signals can become another layer of challenge. Instead of using the SDK to create another health dashboard, I wanted to make its signals directly relevant to the player's experience. The result is a game where aiming stability is influenced by real-time physiological estimates, making the experience more interactive and personal. Best Thoughtful Real-World Use I'm also interested in exploring SteadyShot beyond entertainment. The underlying idea is to use physiological signals as an additional dimension in simulation-based training. For example, the current sniper environment could evolve into a controlled precision-training simulator where users can observe how changes in their physiological state correlate with their performance. The same underlying concept could potentially be explored in other simulation environments, including aviation and spaceflight training, where maintaining performance during demanding situations is important. Flight simulators already provide controlled environments for practising complex scenarios without exposing trainees to the risks of real-world operations. I see an opportunity to explore a similar approach with physiological feedback as an additional layer. SteadyShot is currently an experimental game prototype, not a validated professional training system. These applications are possibilities for further exploration, not capabilities I claim to have already implemented. My goal was to explore how real-time human signals could change not just what an application displays, but how the application itself behaves. Consent and Data Handling SteadyShot requires the player's explicit interaction with the in-game sensor setup screen before starting a SmartSpectra session. The player can also choose to continue without a sensor. The integration uses a camera to obtain physiological estimates through the Presage SmartSpectra SDK. The application follows these data-handling practices: Camera consent: Players explicitly initiate the sensor setup before the camera session begins. Sensor usage is optional. Local processing: Physiological signal processing is performed locally according to the current implementation. API key handling: The SmartSpectra API key is entered at runtime and passed to the Node.js bridge through a temporary process environment variable. It is not transmitted through the local WebSocket connection. Local communication: The bridge binds to 127.0.0.1 and uses a randomly generated per-session authentication token for communication with the game. SDK telemetry: SmartSpectra SDK telemetry is disabled in the bridge configuration. Data storage: Heart-rate and breathing-rate readings are used during gameplay and are not saved after a session. Other services: The application does not use additional external AI APIs or services beyond Presage. Local game data: Account records, settings, and scoreboard information are stored locally on the player's computer. The game receives physiological estimates and status information rather than raw ECG or respiratory waveforms. These estimates are used exclusively for gameplay purposes. SteadyShot is not intended for medical diagnosis, treatment, or health-related decisions. The core game remains playable without camera access or sensor connectivity.",
+            "url": "https://dev.to/yasovardanram/steadyshot-where-human-signals-meet-precision-shooting-4017",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "git",
+                "ios",
+                "javascript",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-11-22T22:58:20+00:00",
+            "collected_at": "2026-11-22T23:02:13.524100+00:00"
+        },
+        {
+            "id": "adc675e03ee140f45ba50184245a576899ea5dd564fe0da43e62948b3fc79b64",
+            "title": "Figured it was time to start sharing what I've been working on...",
+            "description": "So I've been working on a few projects for a while now, mostly just doing my own thing, trying stuff out, breaking things, fixing them, and occasionally wondering why something that should've taken 20 minutes turned into an entire evening. 😂 I figured instead of keeping all of this to myself, why not start sharing it? So here we are. Ric0 C0der Lab. Nothing too fancy. Just a place where I can post what I'm working on, show some progress, and hopefully connect with other people who enjoy this kind of stuff. First up... Sonic 3 & Knuckles This one's been keeping me pretty busy. I've been working on a project called Sonic 3 & Knuckles Remastered , and there's a lot more to it than I originally expected. Right now, a lot of my time is going into the actual game development side of things. Getting Sonic moving properly, figuring out terrain and collisions, building out the levels, and trying to make everything look and feel the way I remember it. One thing I'm really interested in is getting the game looking good on my 32:9 ultrawide monitor. Sounds simple enough, right? Yeah... not exactly. 😂 When you start changing how much of the world is visible on screen, suddenly you've got a whole new set of things to think about. But that's part of the fun. Some days I make pretty good progress. Other days I spend hours chasing down one little issue, fix it, and somehow create two more. I'm sure anyone who's worked on a game knows exactly what I'm talking about. There's some other stuff too Sonic is probably going to be the main thing I post about initially, but it's not the only project I've got going. I've also been experimenting with music and audio production, along with a couple of other creative ideas that I'm still figuring out. I'm not going to make a bunch of promises about what they'll turn into just yet. I'd rather actually build something and show you than spend weeks talking about what I'm going to build. Anyway... I don't really have some big content schedule planned out. If I get something cool working, I'll probably post it. If something breaks in a spectacular way, I might post that too. I'll share screenshots, gameplay clips, little development updates, and whatever else seems interesting along the way. And if you happen to be working on something similar, or just enjoy following projects as they come together, feel free to jump into the conversation. I'm always interested in seeing what other people are building. That's pretty much it for now. Back to figuring out why Sonic isn't doing what he's supposed to do. 😂",
+            "url": "https://dev.to/ric0c0derlab/figured-it-was-time-to-start-sharing-what-ive-been-working-on-4f58",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-11-22T22:51:43+00:00",
+            "collected_at": "2026-11-22T23:02:13.524442+00:00"
+        },
+        {
+            "id": "9d2f0d02314f375feb43a36226bc9484b99b15b1d30a4e47249be8ff23514f6a",
+            "title": "API credit would have fixed one of the four faults behind my AI agents' \"Try it free\" button",
+            "description": "Early on 22 November (UTC) an automated check caught the \"Try it free\" photo button of AllKeep Inventory, a home inventory web app, answering every try that reached it with a 500 (02:50 to 04:14 UTC), because the AI account behind it had run out of credit. Our error tracker had already counted 39 such errors in the week before. Topping the account up would have fixed one of four things wrong with that page. The other three were waiting behind it. A failed call spent the visitor's only free try, a 7.6 MB phone photo was refused before our code ran, and once the AI answered again, one of three answers came back with the category \"null\". The page AllKeep Inventory keeps a list of what you own, room by room and box by box, with photos and values, so there is something to hand an insurer after a fire or a burglary. Its landing page has a \"Try it free\" button: you take one photo of anything, with no account, and an AI model names the thing, writes a line about it and picks a category. One try per device; after that the page asks you to sign up. AllKeep is an experiment. AI coding agents write, test and review it, and I direct them and check what they measure. The fixes below all landed on 22 November, and the numbers come from their logs, test runs and pull requests. The flow is short. The page reads the photo into a base64 data URL and POSTs it as JSON to a Next.js route on Vercel. The route checks that this device has not used its try, calls a vision model, and returns a name, a description, a category and tags. 1. The 500, and what the visitor read An automated check of the live page saw the try fail at 02:50 UTC on a plain photo of a coffee mug. At 04:13 and 04:14 another photo, 155 KB, got a 500 twice, and the runtime log on Vercel said why: OpenAI API error: You have no credits remaining. Add credits to continue using the API The account is prepaid, and that morning every AI call in the product went through it. Our error tracker already knew. Its weekly email, sent the day before, listed this error as the top issue of the week with 39 events. What a visitor saw was worse than the 500. The page had two failure screens. A 429 got \"That's your free try.\", and anything else got a screen that told the visitor to try a different photo. So a person who came to see what the app does was told their photo was the problem. 2. A failed call spent the only free try The route takes the try first and calls the model second, so no paid call runs without a try on record. But nothing gave the try back when the call failed. The row in the anon_attempt table stayed at attemptCount: 1 , and the visitor who met the outage got \"That's your free try\" on their next photo. The fix releases the reservation when the model call throws, and only then: let result ; try { const provider = createRoutedAIProvider ( ) ; result = await provider . analyzeImage ( { imageUrl : imageBase64 , language , analysisType : \"full\" , // No workspace yet, so empty lists let the provider fill in its defaults. userContext : { categories : [ ] , tags : [ ] , currency : \"USD\" } , } ) ; } catch ( error ) { await prisma . anonAttempt . updateMany ( { where : { deviceId , attemptCount : 1 } , data : { attemptCount : 0 } , } ) ; throw error ; } An AI failure now answers 503 with the code AI_SERVICE_ERROR instead of a 500, and the page has a third screen for any 5xx: \"Our AI can't read photos right now\", then \"your photo is fine\", with buttons to create a free account or try again. The OpenAI text goes to the log and the error tracker only. One smaller thing came out of the code review. After a good answer the route saves the label on the same row, so it can create the item without a second model call once the visitor signs up. If that write failed, the whole request answered 500, which threw away a result the visitor had already paid for with their try. That write is now best effort: logged, and the 200 goes out anyway. 3. A phone photo bigger than the request limit Even with credit, a big photo straight from a phone camera would still have failed. A 7.6 MB phone photo got this from Vercel before the route ran at all: 413 FUNCTION_PAYLOAD_TOO_LARGE Vercel's functions take a request body of at most 4.5 MB by default , with a 20 MiB limit as an opt-in beta. The page sent the original file as a base64 data URL inside JSON, and base64 writes every 3 bytes as 4 characters. So the 7.6 MB file became a body of about 10.1 MB, and any file over about 3.4 MB was going to be refused, whatever the model's account held. None of the 11 AI fixture photos in the repo is over 330 KB, so nothing in our tests came near the limit. The page could have opted in to the bigger limit. Shrinking the photo in the browser instead also cuts what a phone uploads, from about 10.1 MB to 0.28 MB, so the fix makes the browser do the shrinking. The page draws the photo onto a canvas at most 1600 px on its long side and sends that as a JPEG: export const MAX_SIDE = 1600 ; export const JPEG_QUALITY = 0.85 ; export async function photoForAnalysis ( file : File ) : Promise < string > { try { const bitmap = await createImageBitmap ( file , { imageOrientation : \"from-image\" } ) ; try { const { width , height } = fitWithin ( bitmap . width , bitmap . height ) ; const canvas = document . createElement ( \"canvas\" ) ; canvas . width = width ; canvas . height = height ; const ctx = canvas . getContext ( \"2d\" ) ; if ( ! ctx ) throw new Error ( \"No 2D canvas\" ) ; ctx . fillStyle = \"#fff\" ; ctx . fillRect ( 0 , 0 , width , height ) ; ctx . drawImage ( bitmap , 0 , 0 , width , height ) ; return canvas . toDataURL ( \"image/jpeg\" , JPEG_QUALITY ) ; } finally { bitmap . close ( ) ; } } catch { return fileToDataUrl ( file ) ; } } In headless Chrome the 7.6 MB photo went out as 1200x1600 in a 278 KB request. The 155 KB photo, already small at 768x1024, went out at its own size in a 175 KB request. imageOrientation: \"from-image\" applies the photo's EXIF rotation, so a portrait photo is drawn upright. The white fill came from the code review: the first version turned the transparent parts of PNG and WebP files black. A file the browser cannot draw is sent as it is. The server got its own limit too: the route refuses a base64 string over 4 MiB, a little under Vercel's 4.5 MB. One case is left. A HEIC file over about 3 MB, in a browser that can't draw HEIC, still goes as it is and still fails on size. The screen it gets says \"try a different photo\", which for that case is the right advice. 4. When it worked, the category said \"null\" At 21:35 UTC, from a fresh IP, the coffee-mug photo answered 200 in 3.3 seconds (the page tells the visitor to expect about 8 to 14 seconds): \"Ceramic Coffee Mug\", a description, the category \"Kitchen & Dining\". A second try from the same device answered 429, as it should. A forced 503 on the live page showed the new \"your photo is fine\" screen. In the same check, one of three calls came back with \"category\": \"null\" , and the page printed it: CATEGORY null . The prompt has placeholders for the user's own categories, tags and currency. This is where they are filled in: if ( request . userContext ? . categories ) { const categoriesList = request . userContext . categories . length > 0 ? formatCategoriesForPrompt ( request . userContext . categories ) : getDefaultCategoriesString ( ) ; promptText = promptText . replace ( \"{CATEGORIES}\" , categoriesList ) ; } The fallback to the default list is there, but it sits inside the if . A signed-in user always has a context, so their prompt was always filled in. The anonymous route has no user and passed no context at all, so the whole block was skipped, and the same happened to {TAGS} and {CURRENCY} . The model was asked to pick a category from the literal text {CATEGORIES} , and sometimes it answered with the word \"null\". The fix is two lines and a filter. The route passes an empty context (empty lists, USD), which sends the provider down the default-list path it already had; that is the userContext line in the snippet in section 2. And a category that comes back empty or as \"null\", \"none\", \"undefined\" or \"n/a\" is dropped, so the page hides the row instead of printing the word. Seven of the 24 tests in the route and provider suites failed against the main branch; with the change, those 24 and the router's four, 28 in all, pass. The live check that posts the mug photo to production now also fails when the description or a real category is missing. The hole the outage made us look at While reading the route we looked at what \"one try per device\" means. The device is a UUID that the page makes itself and sends in a header. A new UUID is a new device, so anyone with a loop could make a paid vision call per request until the prepaid account was empty, the same state that caused the outage. The route now holds three limits before it calls the model: one IP address gets at most 3 tries a day, read from x-real-ip . Vercel sets that header itself and overwrites any forwarded address a client sends, \"to prevent IP spoofing\", so a client cannot forge it there; all anonymous tries together stop at a fixed number a day, set in ANON_AI_DAILY_CAP ; over that the route answers 503 and the page shows the \"can't read photos right now\" screen; ANON_AI_OFF=1 turns the route off with a redeploy and no code change. Three new tests fail against the old route and pass now. A second provider behind the first The outage also showed that one empty account stops the product's first step. Later that day the agents added a Gemini provider beside OpenAI, reusing the same prompts and the same parsing of the answer, and a small router that tries the provider named in AI_PROVIDER and hands the same request to the other one when the first fails on its own side. This is where the router decides what counts as \"its own side\": export function switchable ( error : unknown ) : boolean { if ( error instanceof AppError ) { // the provider's own trouble; a validation error is the request's and goes back to the caller return ( error . code === \"AI_SERVICE_ERROR\" || ( error . statusCode ?? 0 ) >= 500 || error . statusCode === 429 || error . statusCode === 402 ) ; } return true ; // a network error, a timeout, an unexpected response } Quota and credit answers from either side (HTTP 429 and 402, Gemini's RESOURCE_EXHAUSTED , OpenAI's insufficient_quota and \"no credits remaining\") are marked as one error type and never retried on the same provider. A bad request goes back to the caller, because the other provider would refuse it too. Unit tests mock both providers' HTTP, including a bad-key 400 that must not count as quota. The first model the agents wired in was gemini-2.5-flash , which Google had already deprecated: it is gone from AI Studio, and from 1 December 2026 its API requests go to another model ( Gemini deprecations ). Our new key could not call it at all; the API answered that the model is \"no longer available to new users\". The key worked on gemini-3-flash-preview , a preview model that the same page already lists with gemini-3.6-flash as its replacement. So the model name now comes from GEMINI_MODEL , and the next swap needs no code change, only a redeploy. The check at 21:35 UTC in section 4 ran after the router was merged and did not record which provider answered, so I can't say whether the OpenAI account had credit again by then. What I still don't know I have no count yet of how often the model returns no category after the merge, against one of three \"null\" answers before it. I also don't know how best to limit a free AI call for people with no account. Our device id is made by the client, so it limits nothing on its own. The IP limit is the only one the client does not make up itself, and it is crude, because a mobile network or an office can put many people behind one address, so the fourth visitor of the day from there gets \"That's your free try.\" without having tried. The daily cap only limits the total. You can try the photo yourself on the AllKeep Inventory page with the \"Try it free\" button. If you run a free, no-sign-up AI call on a public page, what do you limit it by (a captcha before the call, a signed token from the page, proof of work, a cap per IP, something else), and how many ordinary visitors did it turn away when you changed it?",
+            "url": "https://dev.to/nefayran/api-credit-would-have-fixed-one-of-the-four-faults-behind-my-ai-agents-try-it-free-button-2819",
+            "source": "DEV Community",
+            "category": "cloud",
+            "tags": [
+                "aws",
+                "developpement",
+                "gemini",
+                "openai",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-11-22T22:51:00+00:00",
+            "collected_at": "2026-11-22T23:02:13.525479+00:00"
+        },
+        {
+            "id": "403dab19505ce419c7d15f37724e63cead5e0468b19dff85dc7ccd5b22f1b0eb",
+            "title": "WARN Act and Your Paid Family Leave — What Happens to Your State Paid Leave After a Layoff Notice",
+            "description": "WARN Act and Your Paid Family Leave — What Happens to Your State Paid Leave After a Layoff Notice A WARN notice says your job is ending on a set date. If you were counting on paid family leave — for a new baby, a sick parent, or a seriously ill spouse — the question is whether that benefit survives the layoff. In most states, paid family leave is a state insurance program, not an employer perk, so a layoff does not cancel it outright. But timing matters: the rules change depending on whether your leave has already started, is planned for the notice period, or was supposed to begin after your last day. Paid family leave is state insurance, not an employer benefit In the states with paid family leave programs — California, New York, New Jersey, Washington, Massachusetts, Connecticut, Oregon, Colorado, and Rhode Island — the benefit is funded through small payroll deductions and administered by a state agency. Your employer collects the contributions, but the state pays the benefit. Because the state pays, a plant closure or layoff does not by itself end a claim. What matters is eligibility: enough wages in a base period, an approved qualifying reason, and a claim filed while you still qualify. If you are already on leave when the notice arrives If your leave is already approved and you are receiving benefits when the WARN notice is issued, your payments generally continue for the approved claim period — the state agency does not stop paying because your employer filed a notice. Check two things. First, make sure your employer keeps reporting your wages and leave status correctly through the notice period; a payroll error during a closure can delay a state payment. Second, if your employer was topping up your state benefit, that top-up typically ends when your employment ends. If your leave is planned during the 60-day notice period The WARN Act's 60-day notice period works in your favor. During those 60 days you are still employed, still earning wages, and still covered by payroll deductions, so a claim that starts during the notice period is treated like any other claim from an employed worker. If you had planned to take family leave soon, starting it during the notice period is usually cleaner than waiting until after your last day. If your leave was supposed to start after your last day This is where the news gets harder. Once your employment ends, you generally cannot start a new paid family leave claim based on that job. The programs are built around current employment and recent wages: you must have qualifying wages and, in most states, be employed when the leave begins. The details vary by state. Some allow a claim on qualifying base-period wages even if you no longer work for that employer; others require you to be employed when the leave starts. Do not guess. Call your state paid family leave agency before your last day and ask: \"My job ends on this date. Can I still file a claim for leave beginning after that date?\" Get the answer in writing. Paid family leave and unemployment do not overlap You generally cannot collect paid family leave benefits and unemployment benefits for the same weeks. Paid family leave covers time away from work to care for someone or bond with a new child; unemployment covers weeks when you are able to work but have no job. If your paid family leave ends and you are still without work, you can usually then apply for unemployment, as long as you meet that program's rules. The weeks cannot double up, so keep records of the dates each program covers. Job protection is separate from pay Paid family leave pays you; the federal Family and Medical Leave Act (FMLA) protects your job while you are on leave. But a genuine layoff — one that would have happened whether or not you took leave — can eliminate your position even during FMLA-protected leave. The law bars an employer from selecting you because you took leave; it does not require the employer to keep a job that no longer exists. What to do before your effective date File any pending claim now — a claim filed while you are still employed is simpler in every state. Ask HR in writing whether any employer-paid leave top-up continues through the notice period, and when it stops. Save your pay stubs, in case payroll records get messy during a closure. Check your state's filing deadline; a layoff is not an excuse for a late claim. And plan the handoff to unemployment: know the date you become eligible to file. The numbers behind this article The Layoff Atlas registry currently holds 756 WARN notices covering 61,768 reported workers in a 90-day window, with 26 notices missing a worker count. The heaviest upcoming effective week is December 27, with 9,971 workers scheduled, followed by November 29 with 6,462. California leads the states with 23,980 reported workers, followed by Washington with 16,420. These are reported plans, not confirmed job losses. Paid family leave is one of the few benefits that does not simply vanish when a WARN notice arrives, because the state — not your employer — is the one paying. The protection is real, but it is tied to timing and paperwork: file early, keep records, and ask your state agency about your dates before your last day of work. Data source: Layoff Atlas .",
+            "url": "https://dev.to/layoffatlas/warn-act-and-your-paid-family-leave-what-happens-to-your-state-paid-leave-after-a-layoff-notice-3flm",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-11-22T22:50:47+00:00",
+            "collected_at": "2026-11-22T23:02:13.526093+00:00"
+        },
+        {
+            "id": "8cbe41c66d1f5caeed8b1f780fcb0077a5d132477cb377b9f80aac50f8d42fd7",
+            "title": "The Other Arm Is a Memory",
+            "description": "A difference is two counts you took on purpose. \"Usually\" is one count, plus a story about other people. The Guardian writeup of daraxonrasib, a pill for pancreatic cancer, puts both numbers on one line. A year after the trial patients started it, 76.6% were alive. The rest of that line is the other kind of number. Usually, 40 to 45% of patients given chemotherapy alone survive a year. \"Were alive\" is this group. \"Usually\" is how the disease has gone for other groups. The paragraph never describes a second set of patients kept on chemo, beside these patients, for this trial. The subtraction is a feeling the headline trusts you to finish. A remembered rate can be real and still be the wrong object to subtract. Other years, other hospitals, other rules for who got through the door. Both numbers can stand. The gap between them is not automatically the pill. It is the gap between a cohort and a scrapbook, and hope can stay. The label \"measured effect\" does not fit. The body of the piece already taps the brake. Doctors say the pill cannot yet be called a cure, and they do not know how long it holds the disease down. Longer studies are the stated next step. Delete those two limits and the percents look finished. Leave the limits in and you still have an open question about time. The strong reading is what you get by pretending that question was answered. You have shipped this bug with cleaner charts. The new path is \"faster than last quarter.\" The rewrite \"beats what launch week felt like.\" Errors are \"down from the bad one people still quote.\" You had one group, and a number you already believed sitting in the control column. A control is dull on purpose. Same days, same door, the other build still on. If you cannot point at those requests, you do not have a lift. You have a before-picture and a wish. None of this says the pill did nothing. Keep the hope, and drop the fake precision. Don't subtract a historical rate from a new cohort and brief the remainder as the effect. Don't let the title finish arithmetic the paragraph never ran. Don't delete \"not a cure\" and \"we don't know how long\" because they slow the hook. Don't treat the follow-up as optional after you admitted duration is unknown. Don't grade your change against a memory and type \"experiment\" in the doc. If the other arm is \"usually,\" you counted one group. You did not measure a difference. Source HN discussion This post was generated automatically from public Hacker News data.",
+            "url": "https://dev.to/puneet_nanda_dc25d8b489ad/the-other-arm-is-a-memory-f17",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-11-22T22:49:43+00:00",
+            "collected_at": "2026-11-22T23:02:13.526374+00:00"
+        },
+        {
+            "id": "c4450afafbd5244c53b4d4f1ae955964648f8e29b3a98cd3acc67c9782b7ba5c",
+            "title": "I sorted every ALDI Australia coffee by price per 100 g (10 lines of Python)",
+            "description": "ALDI Australia prints a unit price on every shelf label, but you can only compare what is in front of you. I wanted the whole coffee range in one list, sorted by what you actually pay per 100 g or per capsule. So I pulled it as JSON and sorted it. Here is what came out, and the code to do it yourself. Disclosure: I built the scraper used below ( ALDI Australia Scraper on Apify ). You can do the same thing with any HTTP client and some patience; the analysis part works on any list of products. The data One search for coffee returned 30 products (22 Nov 2026). Each row looks like this: { \"name\" : \"Coffee Beans Medium 1kg\" , \"brand\" : \"LAZZIO\" , \"size\" : \"1 kg\" , \"price\" : 17.99 , \"wasPrice\" : null , \"unitPrice\" : 1.8 , \"unitPriceMeasure\" : \"100 g\" , \"unitPriceText\" : \"$1.80 per 100 g\" , \"category\" : \"Pantry\" , \"url\" : \"https://www.aldi.com.au/product/lazzio-coffee-beans-medium-1kg-000000000000366741\" } The useful part is that ALDI already gives unitPrice and the unit it refers to ( 100 g , 1 L , 1 each ). No need to parse \"400g\" out of product names. The code from apify_client import ApifyClient client = ApifyClient ( \"YOUR_APIFY_TOKEN\" ) run = client . actor ( \"brii3343/aldi-australia-scraper\" ) . call ( run_input = { \"searchQueries\" : [ \"coffee\" ] , \"maxItemsPerSource\" : 50 } ) items = list ( client . dataset ( run [ \"defaultDatasetId\" ] ) . iterate_items ( ) ) by_weight = [ i for i in items if i . get ( \"unitPriceMeasure\" ) == \"100 g\" ] by_weight . sort ( key = lambda i : i [ \"unitPrice\" ] ) for i in by_weight : print ( f '{i[\"unitPrice\"]:>6.2f} {i[\"brand\"]:<12} {i[\"name\"]}' ) Swap \"100 g\" for \"1 each\" to rank the capsules. What the numbers say Coffee sold by weight (AUD per 100 g): $/100 g Brand Product 1.80 Lazzio Coffee Beans Medium / Dark 1kg 2.20 Lazzio Ground Coffee Medium / Dark 500g 3.00 Lazzio Luxe Blend Premium Beans 1kg 3.15 Alcafe Aroma Classic Instant 200g 4.99 Alcafe Gold Instant 100g (Classic, Dark, Decaf) 5.27 Nescafé Original Instant 180g 6.50 Moccona Classic Instant 400g 9.33 Moccona Classic / Espresso Style 150g (Coffee-Mate also showed up at $1.12, but that is creamer. Searches match on words, so always eyeball the list before trusting the top row.) Capsules (AUD per capsule): $/capsule Brand Pack 0.44 Expressi 16 pack (6 blends) 0.55 Vittoria 10 pack 0.63 L'OR 30 pack Three things I did not expect: The same Moccona coffee is 30% cheaper in the 400 g jar ($6.50 vs $9.33 per 100 g). Same brand, same blend, different jar. L'OR capsules cost 43% more than ALDI's own Expressi ($0.63 vs $0.44), even in the bigger 30 pack. Capsules are about 3 times the price of beans per gram. An Expressi pack is 124 g for $6.99, so $5.64 per 100 g of coffee, against $1.80 for Lazzio beans. That is the real cost of the convenience. None of the 30 were on special that day ( wasPrice was empty for all of them), so these are regular shelf prices. Make it a price tracker A one-off list is nice; a list that tells you when something changes is better. Add \"changesOnly\": true and a \"watchName\" (for example \"coffee\" ) to the input. The first run stores everything; every run after that returns only new products and price changes, with previousPrice and priceShift . Put it on a daily schedule and send the rows to Google Sheets, Slack or email. Cost 30 products cost about $0.05 on the free plan (the scraper charges per product returned, $1.50 per 1,000), so a daily coffee check fits in the free monthly credit many times over. If you track another category, or ALDI Special Buys, I would like to hear what you find.",
+            "url": "https://dev.to/harborsift/i-sorted-every-aldi-australia-coffee-by-price-per-100-g-10-lines-of-python-idl",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "python",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-11-22T22:49:08+00:00",
+            "collected_at": "2026-11-22T23:02:13.526826+00:00"
+        },
+        {
+            "id": "f227b35b7bd1c4ce65b9ace96098345ff48fad7ad2e7c014012e8e475d30a7ef",
+            "title": "Making Claude Code Send Notifications to My Phone: A Stop Hook and ntfy",
+            "description": "What I did I set up Claude Code so that a notification reaches my phone every time a reply finishes. It uses a Stop hook (which runs automatically every time a reply finishes) and the ntfy notification service. The part that sends the notification is a standalone script that does not depend on a specific AI service; the only Claude Code-specific part is a thin entry point. It works while I am looking at the screen, and tapping the notification opens that conversation in the Claude mobile app. This post covers: (1) the problem with letting the AI send it, (2) the idea (a Stop hook and the ntfy notification service), (3) the full code, and (4) how it worked out and what to watch out for. Earlier post (the same idea, a different example): https://dev.to/sora_uzu/my-ai-skips-written-rules-so-i-turned-one-into-a-check-a-write-time-guard-hook-38ml The problem: I let the AI send the notification At first, the AI called a PushNotification tool (built into Claude Code) to send a notification to my phone, as a written rule. It had problems: If the AI does not call it, nothing is sent. Even as a written rule, it forgot on some days. It does not send while I am looking at the screen. That is how the tool works. What I wanted was for it to reach my phone regardless of whether I was looking at my PC screen. Calling a tool every time made replies slower. I also could not find a built-in setting for \"notify my phone on every reply\". The common approach turned out to be sending it from a Stop hook to an external notification service [6]. The idea: don't depend on a specific AI service The premise is that the notification mechanism should not depend on a specific AI service: if I switch AI tools, the core should keep working. Also, a rule that gets forgotten should not rely on the AI; build it into the system (the same idea as my previous post). Part Role Stop hook Claude Code runs it automatically every time a reply finishes [1] The core (a standalone script) Sends one fixed sentence to the ntfy notification service. It does not depend on a specific AI service ntfy.sh (free) Delivers a push notification to the ntfy app on my iPhone [2][3] Four principles: The core is a standalone script. The only Claude Code-specific part is a thin entry point (the hook) that just calls it. If I switch AI tools, the core stays. Only one fixed sentence leaves the machine. No personal content (health, money, schedule) goes to the notification service. The destination name (the topic) is a secret. Anyone who knows it can receive and send, so it is a long random name in a git-ignored file. A failure never stops the hook. It always exits normally, so a failed notification cannot interrupt the AI. What I built The script that sends the notification #!/usr/bin/env python3 import os , sys , urllib . request ROOT = os . path . dirname ( os . path . dirname ( os . path . abspath ( __file__ ) ) ) TOPIC_FILE = os . environ . get ( \"NOTIFY_TOPIC_FILE\" ) or os . path . join ( ROOT , \"private\" , \"notify-topic.txt\" ) DEFAULT_MESSAGE = \"Replied. Please check.\" TITLE = os . environ . get ( \"NOTIFY_TITLE\" , \"Personal AI\" ) # heading (ASCII, to avoid garbled text) def send ( message = DEFAULT_MESSAGE , click = None ) : try : topic = open ( TOPIC_FILE , encoding = \"utf-8\" ) . read ( ) . strip ( ) if not topic : return False headers = { \"Priority\" : \"default\" , \"Tags\" : \"speech_balloon\" , \"Title\" : TITLE } if click : headers [ \"Click\" ] = click # URL to open when the notification is tapped req = urllib . request . Request ( \"https://ntfy.sh/\" + topic , data = message . encode ( \"utf-8\" ) , headers = headers , method = \"POST\" ) with urllib . request . urlopen ( req , timeout = 8 ) as r : return 200 <= r . status < 300 except Exception : return False # fail quietly if __name__ == \"__main__\" : ok = send ( sys . argv [ 1 ] if len ( sys . argv ) > 1 else DEFAULT_MESSAGE , sys . argv [ 2 ] if len ( sys . argv ) > 2 else None ) print ( \"sent\" if ok else \"not sent\" ) sys . exit ( 0 ) # always exit normally Put the topic name on one line in private/notify-topic.txt (git-ignored). The Stop hook entry point (and how to register it) The hook receives JSON on stdin. From its session_id , it builds a link that opens that session when the notification is tapped [1][4]. #!/usr/bin/env python3 import json , os , sys sys . path . insert ( 0 , os . path . dirname ( os . path . abspath ( __file__ ) ) ) try : raw = sys . stdin . read ( ) data = json . loads ( raw ) if raw . strip ( ) else { } sid = str ( data . get ( \"session_id\" ) or \"\" ) . strip ( ) import notify # claude://code/{session-id} opens that conversation in the Claude mobile app notify . send ( click = ( \"claude://code/\" + sid ) if sid else \"claude://code\" ) except Exception : pass sys . exit ( 0 ) # always exit normally Register it in .claude/settings.json [1]: { \"hooks\" : { \"Stop\" : [ { \"hooks\" : [ { \"type\" : \"command\" , \"command\" : \"python3 \\\"${CLAUDE_PROJECT_DIR}/scripts/hooks_stop_notify.py\\\"\" } ] } ] } } Setting up the iPhone Install the free \"ntfy\" app from the App Store and subscribe to the secret topic name. How it worked out A test notification and the hook's automatic notifications arrived on my iPhone. Tapping the notification opened that conversation. The session_id the hook receives matched the session ID in the Claude mobile app. The notification heading ( Title ) worked too. Things to watch out for If the topic name leaks, others can receive and send. Keep it secret and never post it in articles or social media. Only one fixed sentence is sent, so a leak would not reveal content. A notification arrives on every reply , even for short exchanges. I have not added any filtering. Tapping to open the session works when Remote Control is enabled . It depends on an external service (ntfy.sh). If the server is down, nothing arrives. You can also self-host (I have not tried). I only tried a Mac with an iPhone. Summary The \"forgot to call it\" problem went away when I stopped asking the AI and made it a hook . Keep the core as a standalone script that does not depend on an AI service, and keep the hook as just an entry point. Send only one fixed sentence to the outside, and keep the destination name secret. References [1] Claude Code, Hooks reference: https://code.claude.com/docs/en/hooks [2] ntfy, Publishing (Click, Title and other headers): https://docs.ntfy.sh/publish [3] ntfy, Subscribe from your phone: https://docs.ntfy.sh/subscribe/phone [4] Claude, Open the Claude mobile app with a link ( claude://code/{session-id} ): https://support.claude.com/en/articles/14898120-open-the-claude-mobile-app-with-a-link [5] Claude Code, Remote Control: https://code.claude.com/docs/en/remote-control [6] A discussion about per-reply notifications: https://github.com/anthropics/claude-code/issues/28765 Japanese version on Zenn: https://zenn.dev/uzunaru/articles/412dbf004d4fa3",
+            "url": "https://dev.to/sora_uzu/making-claude-code-send-notifications-to-my-phone-a-stop-hook-and-ntfy-3hbp",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "anthropic",
+                "developpement",
+                "git",
+                "ios",
+                "programmation",
+                "python",
+                "web"
+            ],
+            "published_at": "2026-11-22T22:48:35+00:00",
+            "collected_at": "2026-11-22T23:02:13.527569+00:00"
+        },
+        {
+            "id": "77f67ca3ba334126c58035b5d5a655de308a41ef509bccadb25b5dca287d5d68",
+            "title": "Metered Newsroom Billing: Store Usage Evidence Before Closing Customer Accounts",
+            "description": "A newsroom's transcript indexing job needs a spending boundary before the monthly invoice exists. TL;DR: meter from the platform's usage records, retain an immutable monthly snapshot in your own billing store, and issue customer invoices from that snapshot. Enforce the workload's spending allowance separately, at admission time. The evaluation constraint is whether one exposed credential can consume another workload's allowance or rewrite the evidence behind a customer's bill. Freeze the evidence. A live usage read cannot reproduce an earlier invoice after the underlying records change. A snapshot per period gives invoice retries and reissues a stable input. This note proposes an experiment for a media application; the numbers below are illustrative fixtures, not production measurements. What can one exposed credential actually spend? For a Python RAG application moving from notebook-to-prod, start with two workloads: transcript indexing and editorial search. Both may belong to the same customer. They should not automatically share authority to consume the customer's entire allowance. A model call can be correctly attributed and still exceed what the indexing job was allowed to spend. The tempting design reads current usage when the billing page opens, multiplies it by a tariff, and saves an invoice. That leaves two problems unresolved. The total can change before a retry, and opening a page becomes an accidental prerequisite for closing the period. Moving the same calculation into a scheduled job fixes the second problem, but reproducibility still requires freezing its inputs. Neither version establishes a spending boundary. There are three separate decisions: admit a request, record what the platform says happened, and close a billing period. Keep their permissions separate. The runtime credential should not be able to alter closed snapshots or issue invoices. These are application design requirements, not assumed properties of any provider's key system. For concurrent work, checking a balance and then dispatching independently is insufficient: two workers can both see the same remaining allowance. Reserve allowance atomically before dispatch, settle against recorded usage afterward, and define what happens when final usage exceeds the reservation. If the platform offers no enforceable per-workload ceiling, the application must supply that boundary. A monthly snapshot cannot do it retroactively. Store evidence at the boundary between usage and invoices Treat the platform's usage records as the metering authority. Prompt token estimates are useful for admission decisions and prompt-cost aware evaluations, but estimates should not silently replace recorded usage in the customer's bill. Keep request identifiers and workload attribution alongside the evidence needed to explain the charge. Avoid copying article text or full prompts into billing records merely because they are available. Store raw captured usage evidence and the immutable period snapshot in an application-controlled billing store. A database with uniqueness constraints is a reasonable starting point; choose retention and access rules deliberately. The requirement is durable evidence with restricted writes, not a particular database product. Record the customer, workload, period boundaries, capture time, tariff revision, and the exact input used for invoice calculation. Those names describe an application schema, not a provider response. Close periods on a schedule even when nobody visits the billing page. Make the customer-and-period identity unique, and have invoice creation reference the accepted snapshot. A repeated close operation should retrieve the existing snapshot rather than replace it with a newer live total. Don't erase history. If a later reconciliation differs, preserve both reads and explain the adjustment through a separate record. The platform's record remains the one your bill has to explain. Immutability preserves what was invoiced; it doesn't make the original capture infallible. Define the period's timezone and boundary convention before collecting data. A focused fixture for a repeatable period close First capture the platform's usage response without guessing its fields. This standard-library Python example uses an explicit GET, environment-based credentials, bounded retries, and an exclusively created evidence file. Set INFRAI_API_ORIGIN to the deployment's HTTPS API origin, without a path or trailing slash, and USAGE_CAPTURE_FILE to a new private local evidence filename. Schedule capture through your application scheduler; a successful capture alone does not establish that the billing period is complete. import email . utils import json import os import time from datetime import datetime , timezone from pathlib import Path from urllib . error import HTTPError from urllib . request import Request , urlopen origin = os . environ [ \"INFRAI_API_ORIGIN\" ] . rstrip ( \"/\" ) if not origin . startswith ( \"https://\" ) : raise ValueError ( \"The API origin must use HTTPS\" ) request = Request ( origin + \"/v1/account/usage\" , headers = { \"Authorization\" : \"Bearer \" + os . environ [ \"INFRAI_API_KEY\" ] } , method = \"GET\" , ) for attempt in range ( 5 ) : try : with urlopen ( request , timeout = 30 ) as response : usage = json . load ( response ) break except HTTPError as error : if error . code != 429 or attempt == 4 : detail = error . read ( ) . decode ( \"utf-8\" , errors = \"replace\" ) raise RuntimeError ( f \"Usage capture HTTP {error.code}: {detail}\" ) from error delay = float ( 2 ** attempt ) retry_after = error . headers . get ( \"Retry-After\" ) if retry_after : try : delay = max ( delay , float ( retry_after ) ) except ValueError : retry_at = email . utils . parsedate_to_datetime ( retry_after ) delay = max ( delay , ( retry_at - datetime . now ( timezone . utc ) ) . total_seconds ( ) ) time . sleep ( delay ) evidence = { \"captured_at\" : datetime . now ( timezone . utc ) . isoformat ( ) , \"platform_response\" : usage , } path = Path ( os . environ [ \"USAGE_CAPTURE_FILE\" ] ) descriptor = os . open ( path , os . O_WRONLY | os . O_CREAT | os . O_EXCL , 0o600 ) with os . fdopen ( descriptor , \"w\" , encoding = \"utf-8\" ) as output : json . dump ( evidence , output , sort_keys = True ) The capture refuses to overwrite an existing file. Reconciliation requires a new capture identity. The account-level response still needs verified customer and workload attribution before it becomes an invoice input; don't assume that a platform account total is a customer total. The next example exercises the local snapshot boundary independently. Its input stands for captured usage normalized into application-owned fields. The amounts are invented test data in integer microdollars, not model prices or measured bills. import json import sqlite3 def close_period ( db , customer , period , captured_usage ) : payload = json . dumps ( captured_usage , sort_keys = True , separators = ( \",\" , \":\" ) ) with db : db . execute ( \"INSERT INTO snapshots(customer, period, payload) VALUES (?, ?, ?) \" \"ON CONFLICT(customer, period) DO NOTHING\" , ( customer , period , payload ) , ) row = db . execute ( \"SELECT payload FROM snapshots WHERE customer = ? AND period = ?\" , ( customer , period ) , ) . fetchone ( ) return json . loads ( row [ 0 ] ) with sqlite3 . connect ( \":memory:\" ) as db : db . execute ( \"CREATE TABLE snapshots (\" \"customer TEXT NOT NULL, period TEXT NOT NULL, payload TEXT NOT NULL, \" \"PRIMARY KEY (customer, period))\" ) original = { \"workload\" : \"transcript-indexing\" , \"recorded_cost_micro_usd\" : 1200000 , \"tariff_revision\" : \"fixture-v1\" , } later_read = { ** original , \"recorded_cost_micro_usd\" : 1400000 } first = close_period ( db , \"newsroom-demo\" , \"2026-10\" , original ) retry = close_period ( db , \"newsroom-demo\" , \"2026-10\" , later_read ) assert first == retry == original print ( json . dumps ( retry , sort_keys = True ) ) The useful result is that a changed input cannot change the accepted close. The difference between the later read and the accepted snapshot belongs in reconciliation. The assertion checks repeatability; it does not prove completeness of captured usage. The in-memory database disappears at exit. For deployment, use persistent storage and restrict update and delete privileges on closed records. The example's uniqueness constraint handles duplicate closes; it does not implement invoice delivery, a spending reservation ledger, or access control. An external invoice operation also needs its own idempotency identity, derived from the accepted customer-and-period record. Compare products by the authority they would hold Choose the missing layer before choosing a product. A billing system, a usage meter, and a backend platform occupy different positions in this experiment. Candidate Relevant role to evaluate Boundary to verify before adopting Stripe Billing Customer subscriptions and usage-based invoicing Verify how frozen period evidence maps to billing inputs and invoice retries; test workload admission separately. Lago Usage-based billing and customer billing workflows Evaluate event attribution and period closure against your snapshot policy; do not infer a runtime credential ceiling from invoice support. OpenMeter Usage metering for application events Evaluate the meter's relationship to provider usage evidence and the downstream invoice store; specify who owns reconciliation. For a team already using Stripe Billing, begin with the existing invoice workflow. Lago is a candidate when evaluating a broader billing workflow around usage events. OpenMeter is a candidate when the missing piece is metering and the invoice workflow is a separate decision. These roles are not evidence that any product has passed this note's exposure or reconciliation tests. Verify that with the documentation and a deployment-specific harness. Infrai is a suitable option when one REST API and one key across backend capabilities reduce integration work: a capability's contract stays stable when the vendor behind it changes, keeping the caller unchanged across vendor selection. Its specified per-call cost, vendor, latency, and request metadata also supply attribution inputs for an eval-driven workflow. A shared platform credential is still a boundary to examine: API consistency does not establish customer isolation, and per-call metadata does not replace the immutable monthly snapshot. The trade-off is concrete. Consolidating backend access can reduce integration work, while concentrating authority makes the scope of each runtime credential more consequential. Choose according to the permissions and spending exposure you can actually enforce. Measure the boundary before copying the choice Run the fixture as part of the notebook-to-prod transition, then extend the harness around the real admission and invoice paths. Repeat the same close twice, reconcile a changed later read, and verify that invoice reissuance uses the accepted snapshot. Introduce overlapping workers to test reservations. Attempt a snapshot mutation with the runtime identity. Measure exposure directly: how much can transcript indexing consume before new work is refused, including requests already in flight? Record attribution completeness, reservation overshoot, reconciliation differences, and duplicate invoice outcomes separately. An accurate monthly invoice is a different result from an effective workload cap. Both matter. Keep the prompt evaluation harness involved, too. A routing or prompt change can alter usage even when the public API contract stays stable. Compare answer quality and recorded consumption before promoting it. The decision is ready when the workload's maximum exposure is explainable and a disputed invoice can be reconstructed from retained evidence without a fresh live read. Sources References for product roles and credential-handling review: Stripe usage-based billing documentation: https://docs.stripe.com/billing/subscriptions/usage-based Lago documentation: https://docs.getlago.com/ OpenMeter documentation: https://openmeter.io/docs OWASP Secrets Management Cheat Sheet: https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html",
+            "url": "https://dev.to/tony_chen_2026/metered-newsroom-billing-store-usage-evidence-before-closing-customer-accounts-cli",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "programmation",
+                "python",
+                "web"
+            ],
+            "published_at": "2026-11-22T22:48:05+00:00",
+            "collected_at": "2026-11-22T23:02:13.528822+00:00"
+        },
+        {
+            "id": "27c3608cf84a2714aa4d4862ada4b84bcc6b23c08cf22d1f5b6f993d84352de5",
+            "title": "The Usefulness of Useless Knowledge [pdf]",
+            "description": "Comments",
+            "url": "https://www.ias.edu/sites/default/files/library/UsefulnessHarpers.pdf",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-22T22:10:58+00:00",
+            "collected_at": "2026-11-22T23:02:13.282556+00:00"
+        },
+        {
+            "id": "f71231c5e287beaaddf0b599e53ce5a23f81ab197a0a383b934db7235bc3fc25",
+            "title": "Bitcoin Price Takes a Beating as November Rout Erases Summer Gains",
+            "description": "Bitcoin rebounded above $61,000 on Sunday after plunging to a two-year low of $55,640, but the recovery failed to erase steep weekly losses. Bitcoin Rebounds Above $61K but November Losses Deepen Bitcoin reclaimed $61,000 on Sunday amid a market-wide relief rally, pulling the top cryptocurrency back from the brink of closing the week down nearly […]",
+            "url": "https://news.bitcoin.com/market-updates/bitcoin-price-takes-a-beating-as-november-rout-erases-summer-gains/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-11-22T22:05:57+00:00",
+            "collected_at": "2026-11-22T23:02:29.726253+00:00"
+        },
+        {
+            "id": "1a72a8f666343934e87d175361a591b39d40de11b3b1a2b10a29d7dbda607f48",
+            "title": "Agent swarm trying to solve P vs. NP",
+            "description": "Comments",
+            "url": "https://pequalnp.com/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-22T21:53:45+00:00",
+            "collected_at": "2026-11-22T23:02:13.282527+00:00"
+        },
+        {
+            "id": "86de3742ff15c009321f496f87bacc44d044018853a9a1a314064b7a0ce15590",
+            "title": "GitHub Actions accepts invalid YAML",
+            "description": "Comments",
+            "url": "https://yossarian.net/til/post/github-actions-accepts-invalid-yaml/",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "git",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-11-22T21:49:18+00:00",
+            "collected_at": "2026-11-22T23:02:13.334683+00:00"
+        },
+        {
+            "id": "1da50c24753579701adc6b5893a35d8e32876f65d65e605cfd5e0a0d2f7e69c7",
+            "title": "‘You Can See Everything’ has made more than $100M worldwide",
+            "description": "The new Elizabeth Holmes documentary is just beginning to roll out internationally.",
+            "url": "https://techcrunch.com/2026/11/22/you-can-see-everything-has-made-more-than-100m-worldwide/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-11-22T21:42:48+00:00",
+            "collected_at": "2026-11-22T23:02:11.667218+00:00"
+        },
+        {
+            "id": "746652d161cd0b58e5427317acea64621545b8bb4876d193c6435030dfcb6b69",
+            "title": "The struggle for freedom: How BSD escaped AT&T licensing",
+            "description": "Comments",
+            "url": "https://fosscomics.com/posts/16.%20BSD%20Unix%20Part%206%20-%20The%20Struggle%20for%20Freedom/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-22T21:33:12+00:00",
+            "collected_at": "2026-11-22T23:02:13.282855+00:00"
+        },
+        {
+            "id": "d4b52a587509ce36e95a1473c9253a1cd608196eda3a16afb1159f97b9398a98",
+            "title": "Corsair's tiny Xeneon Edge PC touchscreen discounted by $50 in all five colors",
+            "description": "Corsair has all five colors of its 14.5-inch Xeneon Edge touchscreen on sale for Black Friday for $50 off.",
+            "url": "https://www.tomshardware.com/pc-components/corsairs-tiny-xeneon-edge-pc-touchscreen-discounted-by-usd50-in-all-five-colors-14-5-inch-lcd-touchscreen-drops-to-usd199-99-comes-with-a-built-in-stand",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "pc"
+            ],
+            "published_at": "2026-11-22T21:32:16+00:00",
+            "collected_at": "2026-11-22T23:02:15.587333+00:00"
+        },
+        {
+            "id": "5dbda258a7055637f9e0b14c5a966bd33cfc09850107aa940820bcac0cb1a893",
+            "title": "High Tide (Linux TIDAL client) adds support for DLNA, Chromecast",
+            "description": "High Tide, the open-source TIDAL client for Linux, can now play to Chromecast and DLNA devices like TVs and smart speakers. The feature rolls out in v1.8.0, released this weekend with a variety of smaller bug fixes and minor bumps, including showing artist names over Discord RPC. But it’s the wireless streaming that’s the big ticket. Most people use High Tide to stream music to the same device, and if wanting to punt audio elsewhere, could do it via Bluetooth. I’d also wager that most TIDAL subscribers own a device that can run the official apps. Those offer the service’s […] You're reading High Tide (Linux TIDAL client) adds support for DLNA, Chromecast , a blog post from OMG! Ubuntu . Do not reproduce elsewhere without permission.",
+            "url": "https://www.omgubuntu.co.uk/2026/11/high-tide-chromecast-dlna-support",
+            "source": "OMG! Ubuntu",
+            "category": "linux",
+            "tags": [
+                "bluetooth",
+                "desktop",
+                "linux",
+                "ubuntu"
+            ],
+            "published_at": "2026-11-22T21:17:14+00:00",
+            "collected_at": "2026-11-22T23:02:17.968117+00:00"
+        },
+        {
+            "id": "90468db0d5a9c8d3332bd7b5ecafc5cdda4885306f4236ee71746cea8d56067d",
+            "title": "OpenAI’s chief scientist has thoughts on how to limit AI development",
+            "description": "To establish a speed limit on AI development, you need to agree on how to measure speed.",
+            "url": "https://techcrunch.com/2026/11/22/openais-chief-scientist-has-thoughts-on-how-to-limit-ai-development/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "openai",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-11-22T21:14:07+00:00",
+            "collected_at": "2026-11-22T23:02:11.667287+00:00"
+        },
+        {
+            "id": "b9531b7b4ff51be8c41fa53c9bf3a891f0ac55e81e61c40d9f412197fd99d18e",
+            "title": "Will the first approved psychedelic become a blockbuster?",
+            "description": "Comments",
+            "url": "https://www.pharmavoice.com/news/race-first-psilocybin-blockbuster-compass-usona/875270/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-22T21:13:10+00:00",
+            "collected_at": "2026-11-22T23:02:13.282761+00:00"
+        },
+        {
+            "id": "a9f7ae49b5fbd4f4edc31b0b0e42abd66e29e9dd398ea5acfa2e3ac3b0681ef3",
+            "title": "A Beginner's Guide to Local AI with Inkling, Qwen, and Unsloth",
+            "description": "Comments",
+            "url": "https://www.gpupartner.com/blog/beginners-guide-local-ai-inkling-qwen-unsloth",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-22T21:01:16+00:00",
+            "collected_at": "2026-11-22T23:02:13.282377+00:00"
+        },
+        {
+            "id": "7aaba70f0b275b7f7ad6bcd1cca54af827ea22601035d297410d17f1621ddae7",
+            "title": "The best apps to make new friends right now",
+            "description": "We've compiled a list of friendship apps, from friend discovery platforms like BFF to event-focused ones like Timeleft.",
+            "url": "https://techcrunch.com/2026/11/22/as-people-look-for-ways-to-make-new-friends-here-are-the-apps-promising-to-help/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-11-22T21:00:00+00:00",
+            "collected_at": "2026-11-22T23:02:11.667332+00:00"
+        },
+        {
+            "id": "d3085474db2ea4911cb61d40b934b9b18a19e743a4fa2dfab91ef293e2e2cf49",
+            "title": "I did a meditation and it sort of changed my personality?!",
+            "description": "Comments",
+            "url": "https://www.benkuhn.net/meditation/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-22T20:41:59+00:00",
+            "collected_at": "2026-11-22T23:02:13.282671+00:00"
+        },
+        {
+            "id": "74a60db956a9707263e41d2a31c3259e3c8acec930f71a1492ee0216aec5a2a9",
+            "title": "Bitcoin Could Test $50,000 if Nasdaq Slides, Arthur Hayes Warns",
+            "description": "Bitcoin could test $50K if the Nasdaq sell-off continues, following a weekend sell-off that took the cryptocurrency near $55K. Bitcoin climbed back above $60K on Nov. 21 after the Nasdaq Composite shed 5.28% in its latest session. Why Hayes Is Watching the Nasdaq A sell-off in U.S. technology shares preceded a fresh decline in bitcoin, […]",
+            "url": "https://news.bitcoin.com/market-updates/bitcoin-could-test-50000-if-nasdaq-slides-arthur-hayes-warns/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-11-22T20:40:50+00:00",
+            "collected_at": "2026-11-22T23:02:29.726341+00:00"
+        },
+        {
+            "id": "220d7ca6d5199dc673a5e4f33b5203552b8c282c33a3442858cb679d8436604c",
+            "title": "A miniature San Francisco with live buses, planes and boats",
+            "description": "Comments",
+            "url": "https://smallsf.com/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-22T20:33:23+00:00",
+            "collected_at": "2026-11-22T23:02:13.282439+00:00"
+        },
+        {
+            "id": "970ff241186f2f5ba32c2a9e0047aef7f8d6b9e3c88e247422fc0fdc6e6e1b6b",
+            "title": "Nyx, the Oldest Internet Service Provider",
+            "description": "Comments",
+            "url": "https://nyx.net/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-22T20:15:59+00:00",
+            "collected_at": "2026-11-22T23:02:13.282408+00:00"
+        },
+        {
+            "id": "0772eaee570c61b11bf9af1ef8c26c4e0baefc681ac44d39f17662d94ded54b6",
+            "title": "Gliver completes the Guix desktop",
+            "description": "Comments",
+            "url": "https://dustycloud.org/blog/gliver-completes-the-guix-desktop/",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-11-22T20:10:15+00:00",
+            "collected_at": "2026-11-22T23:02:13.334799+00:00"
+        },
+        {
+            "id": "0e664d457f9c98e5bca4713b4b1cbfc98c03e87304bbc5e8fed59b16303c56cb",
+            "title": "17-year-old Windows 7 gets unofficial DirectX 12 and Vulkan 1.4 support",
+            "description": "A community-developed project brings DirectX 12 and Vulkan 1.4 support to Microsoft's retired operating system, allowing modern Nvidia, AMD, and Intel graphics cards to work with Windows 7.",
+            "url": "https://www.tomshardware.com/software/windows/17-year-old-windows-7-gets-unofficial-directx-12-and-vulkan-1-4-support-enthusiasts-bring-nvidia-rtx-50-amd-rx-9000-and-intel-arc-gpus-to-the-aging-os",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "amd",
+                "cpu",
+                "gpu",
+                "hardware",
+                "intel",
+                "nvidia",
+                "pc",
+                "windows"
+            ],
+            "published_at": "2026-11-22T20:03:52+00:00",
+            "collected_at": "2026-11-22T23:02:15.587392+00:00"
+        },
+        {
+            "id": "cf87dab532b8822048e91c1a0924e68a4a8053108659a54f0378baf25b5d3cea",
+            "title": "All Delta Flights Through Atlanta Delayed as Automated System Falters",
+            "description": "Comments",
+            "url": "https://www.nytimes.com/2026/11/22/us/delta-flight-delays-system-outage.html",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-22T19:51:46+00:00",
+            "collected_at": "2026-11-22T23:02:13.282885+00:00"
+        },
+        {
+            "id": "6529399bad0858b5606a19fb5fae90478d0ac943664124a9e97c980a229d7354",
+            "title": "Assume People Are Not Interested in Your Blog Post",
+            "description": "Comments",
+            "url": "https://danielsada.tech/blog/assume-people-are-not-interested-in-your-blog-post/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-22T19:41:30+00:00",
+            "collected_at": "2026-11-22T23:02:13.283055+00:00"
+        },
+        {
+            "id": "bb337a358f7a7498a6c726d50b8ac0762561df7aeac73a331c6c719edc726ea5",
+            "title": "Bitcoin’s Price Dip Attracts a Whale as Hedge Fund Scoops up $1B",
+            "description": "Wallets associated with hedge fund Abraxas Capital Management received approximately 17,597 BTC, valued at more than $1 billion, during bitcoin’s price decline below $60,000. The substantial exchange withdrawals coincided with a dramatic recovery in the firm’s tracked bitcoin balances after months of contraction. Abraxas-Linked Wallets Receive 17,597 BTC During Bitcoin Sell-Off As bitcoin struggled through […]",
+            "url": "https://news.bitcoin.com/featured/bitcoins-price-dip-attracts-a-whale-as-hedge-fund-scoops-up-1b/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-11-22T19:36:11+00:00",
+            "collected_at": "2026-11-22T23:02:29.726430+00:00"
+        },
+        {
+            "id": "ba0c235af411be92b7ed4560b647d12810e8c38465f3fdb2bc7a2f1d2340909a",
+            "title": "An under-desk headphone hanger with three charging ports (up to 20W) for less than $10",
+            "description": "With two hanging hooks, notches for six cables and 20W of charging, Cozoo's quirky combo device has been a useful addition to my standing desk since 2023.",
+            "url": "https://www.tomshardware.com/peripherals/usb/under-desk-headphone-hanger-with-three-charging-ports-drops-below-usd10-cozoos-20w-combo-device-has-been-a-useful-addition-to-my-standing-desk-since-2023",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "pc"
+            ],
+            "published_at": "2026-11-22T19:34:47+00:00",
+            "collected_at": "2026-11-22T23:02:15.587443+00:00"
+        },
+        {
+            "id": "c49fbbdea2bc1982b2ab643cbf5b7738bbf97fea2c6b533fddc235f23ebd183e",
+            "title": "What Happened to Silicon Valley?",
+            "description": "Comments",
+            "url": "https://www.oreilly.com/radar/what-happened-to-silicon-valley/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-22T19:20:15+00:00",
+            "collected_at": "2026-11-22T23:02:13.282583+00:00"
+        },
+        {
+            "id": "964d85070741530e362a9977311af022ad5b635f254736db631bac9cbef3c54f",
+            "title": "scriptura: a cozy corner for your scripts",
+            "description": "Comments",
+            "url": "https://alanpearce.eu/post/scriptura/",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-11-22T19:13:26+00:00",
+            "collected_at": "2026-11-22T23:02:13.334988+00:00"
+        },
+        {
+            "id": "7279785142919f7cb1decc305c5ae841a42f4f82ed2e6614a1bf6c84b7fd8f18",
+            "title": "The Birds of GTA 6: A Field Guide to Vice City and Leonida's Wildlife",
+            "description": "Comments",
+            "url": "https://www.audubon.org/magazine/birds-of-gta-6-field-guide-vice-city-wildlife",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-22T19:10:34+00:00",
+            "collected_at": "2026-11-22T23:02:13.282335+00:00"
+        },
+        {
+            "id": "deee404f31a1e442438e6d801caf71a8eb538517f056399d782219fe4a0df790",
+            "title": "Nintendo Switch 2 bundles drop to pre-hike pricing in Black Friday run-up sale",
+            "description": "The Nintendo Switch 2 is down to its pre-hike pricing in a Black Friday run-up sale, knocking a rare $50 off a bundle that includes the console and Mario Kart World.",
+            "url": "https://www.tomshardware.com/video-games/handheld-gaming/nintendo-switch-2-bundles-drop-to-pre-hike-pricing-in-black-friday-run-up-sale-get-a-switch-2-along-with-mario-kart-world-and-nintendo-switch-online-for-usd50-off",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "pc"
+            ],
+            "published_at": "2026-11-22T19:00:00+00:00",
+            "collected_at": "2026-11-22T23:02:15.587492+00:00"
+        },
+        {
+            "id": "f7511684402b8adf536b468965bde3e191bcbea7f129f8e7a17594980c5f4546",
+            "title": "Hackers exploit GL.iNet cloud flaw to infect routers, KVM devices",
+            "description": "GL.iNet has confirmed that hackers exploited a vulnerability in its cloud remote management services to install custom malware on customers' routers and KVM devices, with some affected users reporting backdoors and reverse shells giving remote access to infected devices. [...]",
+            "url": "https://www.bleepingcomputer.com/news/security/hackers-exploit-glinet-cloud-flaw-to-infect-routers-kvm-devices/",
+            "source": "BleepingComputer",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "malware",
+                "ransomware"
+            ],
+            "published_at": "2026-11-22T18:45:37+00:00",
+            "collected_at": "2026-11-22T23:02:10.095871+00:00"
+        },
+        {
+            "id": "ae46cdc7199b60338815b090cf18f0c1015de0c691d4f54e5630f70905f3f93c",
+            "title": "Kalshi Faces Massive Nationwide Shutdown in NY Court Showdown",
+            "description": "The prediction market alerted that it might face a nationwide shutdown if the New York Supreme Court issues a temporary restraining order (TRO) in a Monday hearing after a court denied Kalshi’s intention to move the lawsuit into federal court. Kalshi Faces Nationwide Shutdown in New York’s Lawsuit Hearing Kalshi, one of the leading prediction […]",
+            "url": "https://news.bitcoin.com/regulation-and-legal/kalshi-faces-massive-nationwide-shutdown-in-ny-court-showdown/",
+            "source": "Bitcoin.com News",
+            "category": "cloud",
+            "tags": [
+                "aws",
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-11-22T18:36:15+00:00",
+            "collected_at": "2026-11-22T23:02:29.726498+00:00"
+        },
+        {
+            "id": "72e363ece1c9be244b4fd6122cd04c7786eed9a7564ba2a0ac0bf851bdeb0ac5",
+            "title": "Give your gaming setup a serious upgrade with the Razer Basilisk V3 for half price",
+            "description": "Whether you play competitive shooters, racing games, or RPGs, the Basilisk V3 offers customizable controls and an adjustable scroll wheel to suit different gaming preferences.",
+            "url": "https://www.tomshardware.com/pc-components/give-your-gaming-setup-a-serious-upgrade-with-the-razer-basilisk-v3-for-half-price-for-just-usd32-99-you-get-26-000-dpi-sensitivity-programmable-buttons-and-plenty-of-rgb",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "pc"
+            ],
+            "published_at": "2026-11-22T18:17:53+00:00",
+            "collected_at": "2026-11-22T23:02:15.587540+00:00"
+        },
+        {
+            "id": "9a3b40fecdd6ecdb7f4cc6e8aef390f650191732f7525a7cb9f263b3d52c8247",
+            "title": "Calculate radio link placement and node amount for your city's mesh network",
+            "description": "FSPL + Delta-Bullington based local-first WASM radio mesh network calculator with the end goal of making calls over mesh networks possible without pissing off anybody in the process (yes, I'm talking about you, Meshtastic maintainers). Feel free to tell me how this idea does or doesn't make sense and I'll continue vibing away in the meantime. Peace! source code Comments",
+            "url": "https://meshcoveragecalculator.lalala.ing/",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-11-22T18:17:44+00:00",
+            "collected_at": "2026-11-22T23:02:13.334901+00:00"
+        },
+        {
+            "id": "bccd7eb4b2d69b043d181f4d9a2170bcaf814ffc5d472d482d7e87e594d36df5",
+            "title": "Grab Keychron's full-sized low-profile K5 V2 wireless mechanical keyboard for its lowest-ever price of just $56",
+            "description": "If you're after a full-sized mechanical keyboard on a budget, this is one of the best deals around during early Black Friday. It has a white backlight and supports either Bluteooth or wired connectivity.",
+            "url": "https://www.tomshardware.com/peripherals/mice/grab-keychrons-full-sized-low-profile-k5-v2-wireless-mechanical-keyboard-for-its-lowest-ever-price-of-just-usd56-108-key-low-profile-clacker-supports-qmk-sports-three-layers-of-foam",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "pc"
+            ],
+            "published_at": "2026-11-22T18:15:16+00:00",
+            "collected_at": "2026-11-22T23:02:15.587593+00:00"
+        },
+        {
+            "id": "b51af88d58d8138dece563065fba5d4fb36814c6d7b0cee187ba56d653cab0fa",
+            "title": "Why data centers are at the center of the Big Tech backlash",
+            "description": "Journalist Paris Marx unpacks his new book \"Hyperscale.\"",
+            "url": "https://techcrunch.com/2026/11/22/why-data-centers-are-at-the-center-of-the-big-tech-backlash/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-11-22T18:08:43+00:00",
+            "collected_at": "2026-11-22T23:02:11.667369+00:00"
+        },
+        {
+            "id": "bc4f2b45a8f9442d5a4543f0ec73226e56ded85c4a59ac3f0692ae72e2167c51",
+            "title": "Harvard CS 2881R AI Safety",
+            "description": "Comments",
+            "url": "https://boazbk.github.io/mltheoryseminar/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-22T18:01:54+00:00",
+            "collected_at": "2026-11-22T23:02:13.282911+00:00"
+        },
+        {
+            "id": "1df8c4ddfaf2f3734955610851651ae03daee1039a3d12d46753eeaca3d84cc0",
+            "title": "Perplexity and Intelligence",
+            "description": "Comments",
+            "url": "https://openai.com/index/perplexity-and-intelligence/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "intel",
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-22T17:06:27+00:00",
+            "collected_at": "2026-11-22T23:02:13.282466+00:00"
+        },
+        {
+            "id": "70eecc407642e6be563ce1448ddd8f5f95c668d5adb39bba7fb1b64009702aee",
+            "title": "TechCrunch Mobility: A/B testing robots vs. humans",
+            "description": "Welcome back to TechCrunch Mobility, your hub for the future of transportation and, now more than ever, the role AI is playing in it.",
+            "url": "https://techcrunch.com/2026/11/22/techcrunch-mobility-a-b-testing-robots-vs-humans/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-11-22T17:06:00+00:00",
+            "collected_at": "2026-11-22T23:02:11.667411+00:00"
+        },
+        {
+            "id": "bfe31560bb45be3efa588a19e5483b1cb4f25e00f32c5ac344f0b72afd9fce13",
+            "title": "Peter Brandt Links 75% Bitcoin Drops to Parabolic Rallies",
+            "description": "Peter Brandt pointed to corrections of at least 75% that followed bitcoin’s previous parabolic rallies. The veteran trader questioned whether the current sell-off was following that pattern as losses deepened from bitcoin’s record high. Brandt Questions Whether Bitcoin’s Past Corrections Are Repeating Veteran futures trader Peter Brandt of The Factor Report compared bitcoin’s sell-off with […]",
+            "url": "https://news.bitcoin.com/market-updates/peter-brandt-links-75-bitcoin-drops-to-parabolic-rallies/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-11-22T17:01:11+00:00",
+            "collected_at": "2026-11-22T23:02:29.726578+00:00"
+        },
+        {
+            "id": "e91ccc67284b0c3105775d829bbedc868afdbe902ba784f021f5be3d46720da6",
+            "title": "Falsehoods Programmers Believe About ATProto",
+            "description": "Comments",
+            "url": "https://reiver.link/atproto/falsehoods-programmers-believe/",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-11-22T16:37:12+00:00",
+            "collected_at": "2026-11-22T23:02:13.334765+00:00"
+        },
+        {
+            "id": "3b756778f4e94e61736c9165f6b5957d4363364907786edffd7dc00e5eae367b",
+            "title": "As cars go digital, US consumers pay an extra $12 billion a year for repairs",
+            "description": "Today's vehicles need software tools to make repairs, and the subscriptions inflate insurance fees",
+            "url": "https://www.theregister.com/personal-tech/2026/11/22/as-cars-go-digital-us-consumers-pay-an-extra-12-billion-a-year-for-repairs/5311412",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "git",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-11-22T16:08:00+00:00",
+            "collected_at": "2026-11-22T23:02:12.118446+00:00"
+        },
+        {
+            "id": "6d9d709d1a0f7876ac7dbf1f70c5f4415dfa8c96697a666ef2e69321073cc0c9",
+            "title": "Maker builds Mad Max-inspired wall of 100 Noctua PC fans",
+            "description": "A wall of 100 Noctua PC fans was built by maker Sasa Karanovic because \"why not\" and to demo his new OpenFAN XL fan controller.",
+            "url": "https://www.tomshardware.com/pc-components/case-fans/maker-builds-mad-max-inspired-wall-of-100-noctua-pc-fans-stress-tests-usd2-355-open-source-openfan-xl-controller",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "pc"
+            ],
+            "published_at": "2026-11-22T16:00:46+00:00",
+            "collected_at": "2026-11-22T23:02:15.587634+00:00"
+        },
+        {
+            "id": "d305e9470748a079df15caf281d0ce0f516b8b576414ae3b6a32b0871b299bde",
+            "title": "Lenovo Pro 9n review: 18-core RTX Spark in a fancy chassis",
+            "description": "The Lenovo Pro 9n is a lighter alternative to the Surface Laptop Ultra, offering a vivid OLED panel and lots of ports, though it shares similar weaknesses, like battery life.",
+            "url": "https://www.tomshardware.com/laptops/lenovo-pro-9n-review",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "nvidia",
+                "pc"
+            ],
+            "published_at": "2026-11-22T16:00:00+00:00",
+            "collected_at": "2026-11-22T23:02:15.587677+00:00"
+        },
+        {
+            "id": "83ba6901edd0d56147b717a97c5d319067e564a9cbdd71f928b6abcc538e8d43",
+            "title": "Feature: A Lost Box Restored My Faith In Zelda's Staying Power",
+            "description": "Passing the torch. Let's see what's in the box The Treasure Chest A few weeks ago, my brother sent me a photo with zero context. He was at our parents’ house, helping them pack up for a cross-country move, when he found something unusual: a heavy metal box with a latch. Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/features/a-lost-box-restored-my-faith-in-zeldas-staying-power",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-11-22T16:00:00+00:00",
+            "collected_at": "2026-11-22T23:02:26.326072+00:00"
+        },
+        {
+            "id": "ea3aee782b863bdf9be2d78e6aef6759bdd6db6f56a5e45c9401aa8fe855f9f8",
+            "title": "Bitcoin Price Predictions Favor $50K as Market Fear Deepens",
+            "description": "Bitcoin prediction markets are painting a decidedly cautious picture on Sunday, Nov. 22, 2026, as traders weigh further losses against increasingly improbable recoveries. Across six Polymarket and Kalshi markets, $172.54 million in cumulative trading volume accompanies defensive options positioning and extreme market fear. Bitcoin’s price traded at $60,634 during Sunday’s trading session at 9:00 a.m. […]",
+            "url": "https://news.bitcoin.com/price-predictions/bitcoin-price-predictions-favor-50k-as-market-fear-deepens/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-11-22T15:45:39+00:00",
+            "collected_at": "2026-11-22T23:02:29.726657+00:00"
+        },
+        {
+            "id": "5f3f830dc6d118e1399902b5995226f55f0ea560bd7c765aa3cebafba53a6486",
+            "title": "Arm yourself against online threats with 30% off YubiKey 5C NFC bundles at Best Buy",
+            "description": "The YubiKey 5 NFC security key has dropped to an effective $ 37 per key at Best Buy when purchasing a bundle of two. Sporting both Type-A and Type-C flavors, this Black Friday deal could save you more than just money in the long run.",
+            "url": "https://www.tomshardware.com/tech-industry/cyber-security/arm-yourself-against-online-threats-with-30-percent-off-yubikey-5c-nfc-bundles-at-best-buy-at-usd37-per-key-this-deal-could-save-you-more-than-just-cash",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "pc"
+            ],
+            "published_at": "2026-11-22T15:45:00+00:00",
+            "collected_at": "2026-11-22T23:02:15.587730+00:00"
+        },
+        {
+            "id": "c75a4d0a4b580d8c62083be492821b5fbfb6759c8984a220ba699007312f6604",
+            "title": "Cleverbridge warns hackers stole credit card numbers, CVVs in data breach",
+            "description": "E-commerce platform Cleverbridge is warning that hackers breached its systems and stole customers' payment card information, including credit card numbers and CVV security codes. [...]",
+            "url": "https://www.bleepingcomputer.com/news/security/cleverbridge-warns-hackers-stole-credit-card-numbers-cvvs-in-data-breach/",
+            "source": "BleepingComputer",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "malware",
+                "ransomware"
+            ],
+            "published_at": "2026-11-22T15:43:04+00:00",
+            "collected_at": "2026-11-22T23:02:10.095945+00:00"
+        },
+        {
+            "id": "c818f11d70b8d7e33b50562d2e70d34ab8a7f0d0fd5fec846ce80624cc9287e3",
+            "title": "I joined the NTP Pool, but not with my Stratum 1 Pi",
+            "description": "Comments",
+            "url": "https://www.jeffgeerling.com/blog/2026/i-joined-the-ntp-pool/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-22T15:35:24+00:00",
+            "collected_at": "2026-11-22T23:02:13.282702+00:00"
+        },
+        {
+            "id": "d8d90467fabcd79e3770135532c2fbf0cb7df82e12a5ad6e5e8a5dc6933feaed",
+            "title": "Open Social Web Alliance",
+            "description": "Comments",
+            "url": "https://osw-alliance.net/en/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-22T15:24:32+00:00",
+            "collected_at": "2026-11-22T23:02:13.282730+00:00"
+        },
+        {
+            "id": "daee16a474d467015095c0e26a39285288de9a7fef3b23dcc83a65e9366280be",
+            "title": "Signal to block Siri, Gemini AI from capturing chats on iOS, Android",
+            "description": "Signal has announced new protections that block screenshots on iOS 27 and prevent AI assistants from capturing conversations on supported Android devices. [...]",
+            "url": "https://www.bleepingcomputer.com/news/security/signal-to-block-siri-gemini-ai-from-capturing-chats-on-ios-android/",
+            "source": "BleepingComputer",
+            "category": "cybersecurite",
+            "tags": [
+                "android",
+                "cybersecurite",
+                "gemini",
+                "ios",
+                "malware",
+                "ransomware"
+            ],
+            "published_at": "2026-11-22T15:15:25+00:00",
+            "collected_at": "2026-11-22T23:02:10.096000+00:00"
+        },
+        {
+            "id": "9dc96c937c8254f4c565d8c83bdf5ec09f09a2af62d7042742cf93eb2f0d1f4e",
+            "title": "Can a TV be too large? An investigation",
+            "description": "Can a TV be too large? This writer's recent upgrade to a 65-inch OLED came with some unexpected challenges.",
+            "url": "https://techcrunch.com/2026/11/22/can-a-tv-be-too-large-an-investigation/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-11-22T15:00:00+00:00",
+            "collected_at": "2026-11-22T23:02:11.667448+00:00"
+        },
+        {
+            "id": "cee9797a4048b42174e2c4abae7d0432aa03bef3e10deb1681f4d978a35a5c5c",
+            "title": "Neuralink trial participant ditches mouth stick to play GTA 6 with his mind",
+            "description": "This is one of the most complicated games yet to be played using Neuralink, with the patient using imagined movements like tapping a finger or sliding a hand to simulate commands on the PS5 controller.",
+            "url": "https://www.tomshardware.com/peripherals/wearable-tech/neuralink-trial-participant-ditches-mouth-stick-to-play-gta-6-with-his-mind-brain-computer-interface-maps-imagined-ring-finger-taps-and-hand-slides-to-a-playstation-5-controller",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "pc"
+            ],
+            "published_at": "2026-11-22T14:49:48+00:00",
+            "collected_at": "2026-11-22T23:02:15.587781+00:00"
+        },
+        {
+            "id": "266e9ff67feb6f2000b2f942fdefa962ecfdc3e88d9d8c8c090f547ee5977032",
+            "title": "What If Netscape Did SSL the HTTP Way?",
+            "description": "Comments",
+            "url": "https://owl.billpg.com/what-if-netscape-did-ssl-the-http-way/",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-11-22T14:48:20+00:00",
+            "collected_at": "2026-11-22T23:02:13.334931+00:00"
+        },
+        {
+            "id": "780f3b9ef42475350ca6b188b26ecbc455d1194db0f83bc67f67cb6c07e72d86",
+            "title": "‘The Dots Aren’t Done’: Michael Saylor Hints at Another Strategy Bitcoin Buy",
+            "description": "Michael Saylor revived speculation about another Strategy bitcoin purchase as the company’s holdings remained below their acquisition cost. Bitcoin traded near $60,000 after recovering from a sharper sell-off, while the latest disclosed purchase left Strategy holding 850,849 BTC. Saylor Shares Another Bitcoin Purchase Chart Michael Saylor, founder and executive chairman of Strategy Inc. (Nasdaq: MSTR), […]",
+            "url": "https://news.bitcoin.com/featured/the-dots-arent-done-michael-saylor-hints-at-another-strategy-bitcoin-buy/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-11-22T14:30:27+00:00",
+            "collected_at": "2026-11-22T23:02:29.726737+00:00"
+        },
+        {
+            "id": "0f730b6b868b910864321c9315f28936288d2d97817a0610f22fe610a1309f4b",
+            "title": "KFC offers disc-shaped fried chicken to sad disc-less GTA VI fans",
+            "description": "KFC Spain is offering free fried chicken discs to GTA 6 game owners bringing in their empty game cases as part of its 'The Replacement Disc' campaign.",
+            "url": "https://www.tomshardware.com/video-games/kfc-offers-disc-shaped-fried-chicken-to-sad-disc-less-gta-vi-fans-kfc-spains-the-replacement-disc-campaign-delivers-where-rockstar-disappoints-after-selling-usd3-79-billion-of-gta-vi-without-a-physical-disc",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "pc"
+            ],
+            "published_at": "2026-11-22T14:18:22+00:00",
+            "collected_at": "2026-11-22T23:02:15.587825+00:00"
+        },
+        {
+            "id": "f32a9693b9acf40274e87ddd613e59392e3663a781daa74163d594d9e9a5514e",
+            "title": "Institutional Conviction Meets Market Despair — Week in Review",
+            "description": "This editorial is from this week’s edition of the newsletter Week in Review, sent to subscribers on Friday. Subscribe to the newsletter to get this weekly editorial the second it’s finished. The newsletter also includes the biggest stories of the week, with a comment on each story. Bitcoin is trading below $62,000, down more than […]",
+            "url": "https://news.bitcoin.com/opinion-and-analysis/institutional-conviction-meets-market-despair-week-in-review/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-11-22T14:00:01+00:00",
+            "collected_at": "2026-11-22T23:02:29.726808+00:00"
+        },
+        {
+            "id": "1bc7b02f1aca54794bd70679793cf8eb9a474fed25ae2a4d6912a17708da42b2",
+            "title": "Mailbox: Ocarina Intruders, Pikmin Day, Too Many Humans - Nintendo Life Letters",
+            "description": "Issue #42 - November 2026. Hello, you. Yes, you. It's just us here today - everyone else is busy in Hyrule or Leonida right now. In fact, it's been like that for most of the month, it seems, as the Nintendo Life Mailbox is looking pretty empty! So, it'll be a nice quick one this month. We'll have you back with your preferred ride — equine or automotive — in a jiffy. Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/news/2026/11/mailbox-ocarina-intruders-pikmin-day-too-many-humans-nintendo-life-letters",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-11-22T14:00:00+00:00",
+            "collected_at": "2026-11-22T23:02:26.326168+00:00"
+        },
+        {
+            "id": "4d688ad8603b028282f9844de639ec62c79d8aa3110a8f5daf67e4de072fcbf7",
+            "title": "Bitcoin's quantum security challenge extends to bridges, custodians and millions of coins",
+            "description": "",
+            "url": "https://www.coindesk.com/tech/2026/11/22/bitcoin-s-quantum-security-challenge-extends-to-bridges-custodians-and-millions-of-coins",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-11-22T14:00:00+00:00",
+            "collected_at": "2026-11-22T23:02:29.470858+00:00"
+        },
+        {
+            "id": "9e90f9c0947157e7e7e9741eaa955ec5191728240cd75732108aa7039e38f2a5",
+            "title": "Show HN: I built a game where you are an LLM's subagent",
+            "description": "Comments",
+            "url": "https://github.com/gulivan/worker755",
+            "source": "Hacker News",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "llm",
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-22T13:56:58+00:00",
+            "collected_at": "2026-11-22T23:02:13.282613+00:00"
+        },
+        {
+            "id": "e6acb799a843297164f980e51df900a4e86724bdb3d11e3603f1b69c22b49a1c",
+            "title": "Ukraine revives its grounded fleet of 500+ US-made Puma drones with homegrown anti-jamming tech",
+            "description": "The Puma AE reconnaissance drones had been grounded by electromagnetic warfare until they received this upgrade.",
+            "url": "https://www.tomshardware.com/tech-industry/drones/ukraine-revives-its-grounded-fleet-of-500-us-made-puma-drones-with-homegrown-anti-jamming-tech-anti-jamming-upgrade-triples-range-to-31-miles",
+            "source": "Tom's Hardware",
+            "category": "hardware",
+            "tags": [
+                "cpu",
+                "gpu",
+                "hardware",
+                "pc"
+            ],
+            "published_at": "2026-11-22T13:51:18+00:00",
+            "collected_at": "2026-11-22T23:02:15.587870+00:00"
+        },
         {
             "id": "e41a995f8f4de149919fb5fccc455d47fdae17c42de1fb73209a74cab51a1bf2",
             "title": "Help Me Test My Multilingual School Website — Everyone Is Welcome!",
@@ -261,6 +1358,23 @@
             ],
             "published_at": "2026-11-22T13:20:00+00:00",
             "collected_at": "2026-11-22T13:51:29.192724+00:00"
+        },
+        {
+            "id": "f05db0d201daabf7d0823e794edf9f558fc59fe6ab80250385852f896a49eaec",
+            "title": "Testing Terraform with AWS Emulator",
+            "description": "Comments",
+            "url": "https://notes.hatedabamboo.me/terraform-tests-with-aws-emulator/",
+            "source": "Hacker News",
+            "category": "cloud",
+            "tags": [
+                "aws",
+                "open-source",
+                "programmation",
+                "startup",
+                "terraform"
+            ],
+            "published_at": "2026-11-22T13:00:36+00:00",
+            "collected_at": "2026-11-22T23:02:13.283162+00:00"
         },
         {
             "id": "47f6a91b89dfaf052d16648922360d1582390d1aeb5f5fcd91f29a5635ebffe0",
@@ -1173,6 +2287,22 @@
             "collected_at": "2026-11-22T04:22:55.170500+00:00"
         },
         {
+            "id": "1a10f1676d46fc01a909d8eab6d17033b89331ee5fd1f1e04952fc2f6f54665c",
+            "title": "Perplexity and Intelligence",
+            "description": "How perplexity measures progress in AI models, and why it could help developers establish a shared approach to evaluating emerging capabilities.",
+            "url": "https://openai.com/index/perplexity-and-intelligence",
+            "source": "OpenAI",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "chatgpt",
+                "ia",
+                "intel",
+                "openai"
+            ],
+            "published_at": "2026-11-22T00:00:00+00:00",
+            "collected_at": "2026-11-22T23:02:14.024806+00:00"
+        },
+        {
             "id": "ac4577986494f613ca2228e5f178f34553c5ccbb14cbf650caddebd7ea2adb7f",
             "title": "port scanning for mojang",
             "description": "Comments",
@@ -1424,6 +2554,21 @@
             ],
             "published_at": "2026-11-21T22:25:31+00:00",
             "collected_at": "2026-11-21T22:39:11.615648+00:00"
+        },
+        {
+            "id": "2986936e572a2e255636459ed63dd70296224ca7693047890cc887234bd04ffb",
+            "title": "A Better Vocabulary for Testing",
+            "description": "Comments",
+            "url": "https://alperenkeles.com/posts/vocab-for-testing/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-21T22:15:39+00:00",
+            "collected_at": "2026-11-22T23:02:13.282789+00:00"
         },
         {
             "id": "080f5b44a05a8e4afe067f515d35d706bdf0004a771ee97491128d853cd12d1a",
@@ -1828,6 +2973,21 @@
             "collected_at": "2026-11-21T22:39:13.739273+00:00"
         },
         {
+            "id": "5a4fcc4f67009b855301577d4973e1cad868a7229edca59f2677cae6f61ec0cf",
+            "title": "Ubuntu 27.04 daily builds are available to download",
+            "description": "If you plan to track development of Ubuntu 27.04 ‘Tenacious T-Rex’ up close, daily build images are now available for download. Daily builds are produced for the duration of a development cycle, right up until the final, stable release. They’re built from development code (obviously) and produced (almost) daily, to make testing changes easier. Those who don’t have specific need to test shouldn’t, but those who need or want to don’t need to wait for the public beta, or go to the hassle of upgrading from an earlier release (that’s possible too, btw). Ubuntu 27.04 is due for release on […] You're reading Ubuntu 27.04 daily builds are available to download , a blog post from OMG! Ubuntu . Do not reproduce elsewhere without permission.",
+            "url": "https://www.omgubuntu.co.uk/2026/11/ubuntu-2704-daily-builds-are-out",
+            "source": "OMG! Ubuntu",
+            "category": "linux",
+            "tags": [
+                "desktop",
+                "linux",
+                "ubuntu"
+            ],
+            "published_at": "2026-11-21T16:26:14+00:00",
+            "collected_at": "2026-11-22T23:02:17.968253+00:00"
+        },
+        {
             "id": "53e893a48ca02ab2292951b3421a66907c423a2d7425fb40073a816475e92a31",
             "title": "Is selling an AI version of your face to this microdrama startup the future of Hollywood?",
             "description": "An actor has licensed his face to a microdrama startup — in a trend that's already popular in China. Experts question the long-term consequences if this becomes a trend in Hollywood, too.",
@@ -2093,6 +3253,23 @@
             ],
             "published_at": "2026-11-21T14:00:00+00:00",
             "collected_at": "2026-11-21T22:39:13.739696+00:00"
+        },
+        {
+            "id": "e3c1a553851fb2eb0f7e08ab5f12d5a7c3eeff2ebb1cc4cb739742a349d143c9",
+            "title": "OpenAI, Anthropic and rivals seek AI agent rules to prevent commerce chaos",
+            "description": "",
+            "url": "https://www.coindesk.com/tech/2026/11/21/openai-anthropic-and-rivals-seek-ai-agent-rules-to-prevent-commerce-chaos",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "anthropic",
+                "bitcoin",
+                "blockchain",
+                "crypto",
+                "openai"
+            ],
+            "published_at": "2026-11-21T14:00:00+00:00",
+            "collected_at": "2026-11-22T23:02:29.470953+00:00"
         },
         {
             "id": "5366b80c8b29288ae66e25b523ef2733467ca9ef9aad7e5b0830adef50c8fc53",
@@ -6798,6 +7975,20 @@
             ],
             "published_at": "2026-11-20T14:00:00+00:00",
             "collected_at": "2026-11-20T23:32:19.874265+00:00"
+        },
+        {
+            "id": "e1daa22363421f59e75a135a6fdb7fc685407dfb3d7fa989960dbc8f34c1cec1",
+            "title": "Microsoft Debuts Offensive, Defensive Security Tools for the AI Era",
+            "description": "Microsoft announces new AI agent security tools and transparency standards to protect enterprise systems at its Ignite technical conference.",
+            "url": "https://www.darkreading.com/endpoint-security/microsoft-offense-defense-ai-security-tools",
+            "source": "Dark Reading",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "enterprise-security"
+            ],
+            "published_at": "2026-11-20T13:51:30+00:00",
+            "collected_at": "2026-11-22T23:02:10.923154+00:00"
         },
         {
             "id": "69888785b22655ff83fda9526365f42dbc6d6448925bc72399f564e4eb2ab61b",
@@ -11940,6 +13131,22 @@
             "collected_at": "2026-11-20T00:10:18.713169+00:00"
         },
         {
+            "id": "7b9a2e4c7e36b407eeae3acde792efeab8599df1a565a2bc396ee957f1e5813e",
+            "title": "Inside PyPy: First Contact with RPython",
+            "description": "Comments",
+            "url": "https://bernsteinbear.com/blog/inside-pypy-first-contact-with-rpython/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "python",
+                "startup"
+            ],
+            "published_at": "2026-11-19T16:26:51+00:00",
+            "collected_at": "2026-11-22T23:02:13.283026+00:00"
+        },
+        {
             "id": "9c02b7ab99b39b534ca359b66cfbffc699d07039c6618f1e5906e00e2ab60270",
             "title": "UK government forced to admit it issued Apple a secret encryption order",
             "description": "Comments",
@@ -13491,6 +14698,21 @@
             ],
             "published_at": "2026-11-19T12:55:13+00:00",
             "collected_at": "2026-11-19T14:59:36.094908+00:00"
+        },
+        {
+            "id": "e362a7ece225a0bb5146d20461c1ae9eec1902cecd0fa69c2a1244531bbedb09",
+            "title": "The Transvoxel Algorithm",
+            "description": "Comments",
+            "url": "https://transvoxel.org/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-19T12:50:25+00:00",
+            "collected_at": "2026-11-22T23:02:13.283081+00:00"
         },
         {
             "id": "15ca52071ceb1190e25aa33f4425a9db75c1b2ebbff35a41d5b68db60e36960e",
@@ -15875,6 +17097,21 @@
             "collected_at": "2026-11-19T14:59:21.304723+00:00"
         },
         {
+            "id": "22622c5217e5bf2810a4f954fb35b710b468afe227c1ae6ad10b6ed8452267b7",
+            "title": "Agentics: Mushy Software",
+            "description": "Comments",
+            "url": "https://12gramsofcarbon.com/p/agentics-mushy-software",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-19T05:02:09+00:00",
+            "collected_at": "2026-11-22T23:02:13.282968+00:00"
+        },
+        {
             "id": "123237ee062d821a277d7ca41fe2e880fb55c34ff344ec6a2d1bd147af7a7ce3",
             "title": "AWS Systems Manager Parameter Store raises API throughput limits",
             "description": "AWS Systems Manager Parameter Store has increased the default throughput limits for five API operations. For accounts that have turned on the higher throughput setting, the quotas have changed as follows, in transactions per second (TPS): GetParametersByPath (from 100 to 500 TPS) PutParameter (10 to 50) DeleteParameter (5 to 50) DescribeParameters (10 to 100) GetParameterHistory (10 to 100) Parameter Store provides powerful, hierarchical storage for configuration data. The higher quotas give more headroom to workloads that call these operations in bursts. Examples include applications that load configuration by path when many AWS Lambda functions start at once, infrastructure as code deployments that create or update many parameters, and cleanup jobs that bulk-delete stale parameters.",
@@ -16100,6 +17337,21 @@
             ],
             "published_at": "2026-11-19T01:45:23+00:00",
             "collected_at": "2026-11-19T05:19:29.992699+00:00"
+        },
+        {
+            "id": "049eb1e60fb88ef863949dc7b6cbb565afbf06fe25686c7616ce1440b5bdbbf4",
+            "title": "Ask HN: Tips for transitioning from web development to embedded/firmware?",
+            "description": "Comments",
+            "url": "https://news.ycombinator.com/item?id=50555002",
+            "source": "Hacker News",
+            "category": "web",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-19T01:37:45+00:00",
+            "collected_at": "2026-11-22T23:02:13.282943+00:00"
         },
         {
             "id": "8a80ff7a1f732ff5ff40db67af8b4076afc5d62f41a4bb6463307f18a8ae6de0",
@@ -19134,6 +20386,21 @@
             "collected_at": "2026-11-18T23:45:08.898740+00:00"
         },
         {
+            "id": "2fda02a945a4a6c71c88d40ad6374fdb61b22b22da49a48b644933d9ba6ca9ae",
+            "title": "Cathedral floor emerges in Sudan, revealing one of the biggest medieval churches",
+            "description": "Comments",
+            "url": "https://apnews.com/article/sudan-antiquities-nubia-cathedral-1b16f67da881ee5592de4481ee55c527",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-18T15:43:29+00:00",
+            "collected_at": "2026-11-22T23:02:13.282499+00:00"
+        },
+        {
             "id": "41448ef6610b1870e45c5e963aa773d23e663caeabf8c81430dd0baf34ba1886",
             "title": "German judge proposes dropping Movie2k case if operator hands over $2.56 billion in bitcoin",
             "description": "",
@@ -20178,6 +21445,21 @@
             ],
             "published_at": "2026-11-18T13:33:47+00:00",
             "collected_at": "2026-11-18T14:53:32.696850+00:00"
+        },
+        {
+            "id": "c3ca0e1c4d4a6cbb4e7478ce358558db761b7e7d619df1c1d63d506ba98f4321",
+            "title": "Advice for Young Researchers",
+            "description": "Comments",
+            "url": "http://togelius.blogspot.com/2026/11/advice-for-young-researchers.html",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-18T13:33:25+00:00",
+            "collected_at": "2026-11-22T23:02:13.282641+00:00"
         },
         {
             "id": "15d87152fe31dca5e1209b9519b9c926465d0a7be27f8be64a9cfe0b836edaa1",
@@ -489566,6 +490848,129 @@
             ],
             "published_at": null,
             "collected_at": "2026-11-22T13:51:25.521941+00:00"
+        },
+        {
+            "id": "7d27fffa3906bd9ac7f9426261752d0e40282d15cac34ab9d5716328c5bd1d95",
+            "title": "We haven’t seen the last of the major tech outages",
+            "description": "Over the last week or so, we have seen a nationwide FAA ground stop, a multi-day Outlook outage that brought entire companies to a standstill, and a banking outage at JPMorgan Chase. But the consensus is that there are more to come. Director of National Intelligence Jay Clayton told CNN: \"The American people should be […]",
+            "url": "https://www.theverge.com/tech/1039851/major-tech-outages",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "intel",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-11-22T23:02:11.722030+00:00"
+        },
+        {
+            "id": "a3c4e1668af85726456bcc10dea59798da05066af5c2c99bcb225ada57e7f95a",
+            "title": "Delta flights in and out of Atlanta delayed due to system outage",
+            "description": "All Delta flights in and out of Atlanta are facing significant delays on Sunday due to a problem with the system that calculates a plane's weight and balance. Hartsfield-Jackson Atlanta International Airport is Delta's largest hub and one of the busiest airports in the world. While only Delta is impacted at the moment, disruptions at […]",
+            "url": "https://www.theverge.com/transportation/1039779/delta-flights-delayed-system-outage",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-11-22T23:02:11.722112+00:00"
+        },
+        {
+            "id": "28c764e2cf8a36efd027dea031ee6d3d87104c6d9c827e15c2d038df19795afa",
+            "title": "Binding of Isaac developer removes AI music from Repentance Plus",
+            "description": "The Binding of Isaac: Repentance Plus has spent the last few days getting review-bombed on Steam after it was discovered that a particular segment of the game used AI music. Reddit user ShweetsStuff discovered the songs used during a Grand Theft Auto-themed section. They found several audio files with Suno metadata that pointed back to […]",
+            "url": "https://www.theverge.com/games/1039770/binding-of-isaac-ai-music",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-11-22T23:02:11.722183+00:00"
+        },
+        {
+            "id": "3bca3cc3786597675352ea8c4b5d986c996ca0f02950d5b08643e148309309ef",
+            "title": "Some of our favorite Switch 2 games are cheaper through Black Friday",
+            "description": "Black Friday is a great time to expand your game library because it’s a chance to catch deals that aren’t normally happening throughout the year. That’s true for Nintendo Switch 2 games, as well. In addition to a $50 off sale on one of its console bundles, Nintendo is also knocking $20 off some of […]",
+            "url": "https://www.theverge.com/gadgets/1037313/nintendo-switch-2-game-black-friday-cyber-monday-deal-sale",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-11-22T23:02:11.722259+00:00"
+        },
+        {
+            "id": "f6f43aa541208f0668fd0e766789558d14859e31649e6ff95167d8bb681eb827",
+            "title": "Sheherazaad’s Khudgarzi is gorgeous, ‘genre-chaotic’ South Asian folk",
+            "description": "Sheherazaad started making ripples in the music world a few years ago with her EP Qasr, which was produced by Grammy Award winner Arooj Aftab. Now she's back with Khudgarzi, her reverb-drenched folk-noir debut LP that's primarily sung in Urdu. The instrumentation on Khudgarzi draws on traditional South Asian music, including Carnatic and Hindustani styles, […]",
+            "url": "https://www.theverge.com/entertainment/1039762/sheherazaad-khudgarzi-review",
+            "source": "The Verge",
+            "category": "cloud",
+            "tags": [
+                "aws",
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-11-22T23:02:11.722320+00:00"
+        },
+        {
+            "id": "9afcf3940f2d316c49485626f15d78ea6244dcd96685dc04ff4e759c9f1d417f",
+            "title": "Protesters storm Meta offices in India",
+            "description": "Members of the opposition Congress party protested outside Meta's offices in Delhi on Friday and appear to have entered the building in a video shared by CNN. Members of the party's youth wing are demanding the company restore accounts of party leaders and warned of more protests to come. The Congress party has criticized Meta […]",
+            "url": "https://www.theverge.com/tech/1039732/protesters-storm-meta-offices-in-india",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-11-22T23:02:11.722388+00:00"
+        },
+        {
+            "id": "0e79d72565d3b36f6580dcd7f2d4aa83e08d3d97f4e3819dd041224195f143aa",
+            "title": "Nintendo’s Switch 2 console is $50 off for Black Friday",
+            "description": "Those hoping to save some cash on a Nintendo Switch 2 can do so starting today, November 22nd, through Saturday, December 5th, giving you plenty of time to think about it after Cyber Monday has passed. For a limited time, Nintendo has knocked $50 off one of its two current console bundles, temporarily rolling back […]",
+            "url": "https://www.theverge.com/gadgets/1038181/nintendo-switch-2-black-friday-deal-mario-kart-world-bundle-2026-sale",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-11-22T23:02:11.722453+00:00"
+        },
+        {
+            "id": "04ef9a262a51c092d3912b9d28d6203926cba637257f0a000fa12006cc8ca110",
+            "title": "‘The show is starting soon. Please turn on your headphones.’",
+            "description": "Up a few concrete steps and through the front door of a 200-year-old row house in New York City, I follow a crowd of people into the 178-seat SoHo Playhouse. As we filter to our seats, ushers hand each person a black drawstring bag with a pair of wired headphones connected to a small Auracast […]",
+            "url": "https://www.theverge.com/tech/1038879/off-broadway-love-me-auracast",
+            "source": "The Verge",
+            "category": "cloud",
+            "tags": [
+                "aws",
+                "gadgets",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-11-22T23:02:11.722507+00:00"
         }
     ]
 }
