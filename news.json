@@ -1,7 +1,508 @@
 {
-    "updated_at": "2026-11-22T23:02:30.966637+00:00",
-    "count": 31588,
+    "updated_at": "2026-11-23T04:59:49.216664+00:00",
+    "count": 31627,
     "articles": [
+        {
+            "id": "1b3f7bb025967983c31a303a589c578d13b5221b14c869151e149fecc8dc8dca",
+            "title": "Clean a messy Indian sales CSV for Power BI in 5 minutes with Python",
+            "description": "Every month I get a sales export that looks fine in Excel and then falls apart the moment it hits pandas or Power BI. Amounts come through as \"₹1,20,000\" . Customer IDs like 001 lose their leading zeros. Dates arrive as 15/01/2025 , 2025-03-01 , and 15-Jan-2025 in the same column. Cities show up as HYD , Hyd , Bangalore , and mumbai . I got tired of fixing the same issues by hand, so I built EazyDataFix , an open-source Python library that applies a readable recipe and records every change. Here's how I take the sample Indian sales file from the repo and get Power BI-ready tables in a few minutes. The messy file The sample is examples/power_bi_ready/sales.csv . It has 11 rows, including a duplicate of order 1001 , a padded city value, two unusable amounts (blank and n/a ), and two dates that are not dd/mm/yyyy . Order ID,Customer ID,City,Order Date,Amount,Channel 1001,001,HYD,15/01/2025,\"₹1,250.50\",Store 1001,001,HYD,15/01/2025,\"₹1,250.50\",Store 1002,002,Bangalore,02/02/2025,₹800,Online 1003,003, Hyd ,03/02/2025,\"₹2,300\",Store 1004,004,BLR,2025-03-01,₹450,Online 1005,005,Mumbai,15-Jan-2025,₹100,Store 1006,006,mumbai,16/01/2025,₹999.00,Online 1007,001,Hyderabad,20/01/2025,,Store 1008,007,Chennai,21/01/2025,n/a,Online 1009,008,DEL,22/01/2025,\"₹12,000\",Store 1010,009,New Delhi,23/01/2025,₹75.5,Online Save that as sales.csv , or pull the same file from the repo: from pathlib import Path import urllib . request url = ( \"https://raw.githubusercontent.com/suneelprojects/eazydatafix\" \"/main/examples/power_bi_ready/sales.csv\" ) Path ( \"sales.csv\" ) . write_bytes ( urllib . request . urlopen ( url , timeout = 30 ) . read ( ) ) What goes wrong in plain pandas import pandas as pd df = pd . read_csv ( \"sales.csv\" ) print ( df [ [ \"Customer ID\" , \"Amount\" , \"Order Date\" , \"City\" ] ] . head ( 3 ) ) print ( df [ [ \"Customer ID\" , \"Amount\" , \"Order Date\" ] ] . dtypes ) print ( pd . to_numeric ( df [ \"Amount\" ] , errors = \"coerce\" ) ) Customer ID is read as an integer, so 001 becomes 1 . Amount stays text. pd.to_numeric(..., errors=\"coerce\") turns every rupee value into NaN , including everyday Indian groupings like \"₹1,20,000\" , \"₹12,000\" , and \"₹1,250.50\" . Dates are worse if you let pandas guess: print ( pd . to_datetime ( df [ \"Order Date\" ] , errors = \"coerce\" , format = \"mixed\" , dayfirst = True ) ) Most dd/mm/yyyy values parse, but 2025-03-01 silently becomes 3 January 2025 , not 1 March. I'd rather reject a date I didn't declare than load the wrong day into a dashboard. City names stay messy too: HYD , Hyd , Bangalore , mumbai , and DEL would all show up as different places in a slicer. A recipe instead of a pile of cleanup cells pip install eazydatafix Spell out the rules in a recipe. IDs stay text, so leading zeros survive. Amounts drop the ₹ and the commas — the same treatment that turns \"₹1,20,000\" into a real number. Dates must match %d/%m/%Y ; anything else is quarantined, not guessed. City aliases collapse to one spelling each. Chennai and Hyderabad already match the names I want, so they pass through. April is fiscal month 1, which is common for Indian reporting. There's no model deciding what to fix: the same file and the same recipe always produce the same tables and the same log. import eazydatafix as edf recipe = edf . PipelineRecipe ( name = \"india_sales_powerbi\" , workflow = \"powerbi_ready\" , columns = { \"order_id\" : edf . ColumnRule ( dtype = \"string\" ) , \"customer_id\" : edf . ColumnRule ( dtype = \"string\" ) , \"city\" : edf . ColumnRule ( dtype = \"string\" , category_mapping = { \"HYD\" : \"Hyderabad\" , \"Hyd\" : \"Hyderabad\" , \"BLR\" : \"Bengaluru\" , \"Bangalore\" : \"Bengaluru\" , \"mumbai\" : \"Mumbai\" , \"DEL\" : \"New Delhi\" , } , ) , \"order_date\" : edf . ColumnRule ( dtype = \"datetime\" , date_format = \"%d/%m/%Y\" , on_error = \"quarantine\" , ) , \"amount\" : edf . ColumnRule ( dtype = \"number\" , currency_symbols = ( \"₹\" , ) ) , \"channel\" : edf . ColumnRule ( dtype = \"string\" ) , } , powerbi_config = edf . PowerBIReadyConfig ( table_name = \"sales\" , keys = ( edf . PowerBIKey ( \"sales\" , ( \"order_id\" , ) ) , ) , generate_date_table = True , date_columns = { \"sales\" : ( \"order_date\" , ) } , fiscal_year_start_month = 4 , ) , ) pipeline = edf . Pipeline ( recipe ) plan = pipeline . preview ( \"sales.csv\" ) result = pipeline . apply ( \"sales.csv\" , plan ) print ( result . is_ready , result . readiness_result . readiness_score ) print ( result . tables [ \"sales\" ] . to_string ( index = False ) ) result . save ( \"powerbi_output\" , formats = ( \"csv\" , \"excel\" ) ) preview does not change the source file. I apply only after the plan looks right. This run is ready, with a score of 100.0 . You may see a pandas warning about day-first dates during a quality check; the recipe still parses with %d/%m/%Y . The cleaned sales table keeps 001 as text, turns \"₹12,000\" into 12000.0 , and leaves blank and n/a amounts as null on orders 1007 and 1008 : order_id customer_id city order_date amount channel 1001 001 Hyderabad 2025-01-15 1250.5 Store 1002 002 Bengaluru 2025-02-02 800.0 Online 1003 003 Hyderabad 2025-02-03 2300.0 Store 1006 006 Mumbai 2025-01-16 999.0 Online 1007 001 Hyderabad 2025-01-20 <NA> Store 1008 007 Chennai 2025-01-21 <NA> Online 1009 008 New Delhi 2025-01-22 12000.0 Store 1010 009 New Delhi 2025-01-23 75.5 Online The two rows whose dates didn't match the recipe are set aside, not forced into the model. Print them with result.rejected_rows[\"sales\"] : Order ID Customer ID City Order Date Amount Channel 1004 004 BLR 2025-03-01 ₹450 Online 1005 005 Mumbai 15-Jan-2025 ₹100 Store If the source format changes, I update date_format and preview again, rather than letting a second format slip in. The change log Every step is recorded, which is the part I want next to a dashboard: for change in result . changes : print ( f \"{change.step}: rows {change.rows_before}->{change.rows_after}, \" f \"removed {change.removed_rows}, changed values {change.changed_values}\" ) clean/ColumnNormalizer: rows 11->11, removed 0, changed values 0 clean/WhitespaceTrimmer: rows 11->11, removed 0, changed values 1 clean/MissingMarkerDetector: rows 11->11, removed 0, changed values 2 column:amount: rows 11->11, removed 0, changed values 9 column:channel: rows 11->11, removed 0, changed values 0 column:city: rows 11->11, removed 0, changed values 7 column:customer_id: rows 11->11, removed 0, changed values 0 column:order_date: rows 11->9, removed 2, changed values 9 column:order_id: rows 9->9, removed 0, changed values 0 finish/DuplicateRemover: rows 9->8, removed 1, changed values 0 powerbi_ready: rows 20->20, removed 0, changed values 260 Headings are normalised, \" Hyd \" is trimmed, blank and n/a amounts become null, nine currency values are parsed, seven city names are standardised, two dates are quarantined, and the duplicate order 1001 is removed. result.save(...) also writes pipeline_report.json with the same log. The Power BI pass adds a continuous date table from 15 January 2025 through 3 February 2025: 20 days, one row per day. Because the fiscal year starts in April, 15 January 2025 is fiscal year 2025 and fiscal month 10. Loading the files into Power BI The output folder contains powerbi_ready_sales.csv (eight ready orders), powerbi_ready_date.csv , powerbi_ready.xlsx with both tables as sheets, powerbi_ready_readiness.json with field types, the score, and the relationship, sales_rejected.csv for orders 1004 and 1005 , and a copy of the recipe. In Power BI Desktop, use Get Data on the CSV files or the Excel workbook. Before you build visuals, check the types against the readiness file: IDs, city, and channel are Text, amount is Decimal Number, and order_date is Date. Relate sales.order_date to date.date as many-to-one. That relationship is already described in the JSON. EazyDataFix prepares the model inputs. It does not create a .pbix file, visuals, measures, or a dashboard, and that's deliberate. I want the cleaning to be reviewable and repeatable. Save the recipe with recipe.save(\"india_sales_powerbi.json\") and replay it next month with edf.Pipeline(edf.PipelineRecipe.load(\"india_sales_powerbi.json\")).run(\"sales.csv\") . If you'd rather start from a clone of the repo, the same flow is in python examples/power_bi_ready/prepare.py . Try it The quickstart notebook walks through a smaller sales file in Colab, with no local install. The code and this Power BI example are in the GitHub repo . Site and docs: eazydatafix.com . pip install eazydatafix . If a recipe breaks on your export, I'd like to hear about it.",
+            "url": "https://dev.to/suneelkumarkola/clean-a-messy-indian-sales-csv-for-power-bi-in-5-minutes-with-python-54g2",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "git",
+                "programmation",
+                "python",
+                "web"
+            ],
+            "published_at": "2026-11-23T04:53:35+00:00",
+            "collected_at": "2026-11-23T04:59:33.624476+00:00"
+        },
+        {
+            "id": "70de7a1ba54a2408f4ffc8c84163bcc07315938147571eac6916a5127e8049f2",
+            "title": "Could a ticket from the last run make your eval pass?",
+            "description": "Imagine the second run passes without opening a ticket. The incident-response agent must open a ticket for a checkout alert. Run 1 creates T-104 . Run 2 finishes without calling the ticket tool. The grader's entire question is whether a ticket exists for the alert. It finds T-104 both times. Give the case a clean starting point This case assumes the alert has no ticket. Set up an isolated test queue for each run, or scope the fixture and the queries to a fresh test incident. Before the agent starts, have the harness check that the incident has no matching ticket. If that check finds an old ticket, mark the setup invalid and rebuild it. There’s no agent verdict to take from that attempt. If your production rule is to reuse a ticket when one already exists, that starting state deserves its own case with its own expected behavior. Make the grader show which run created the ticket For the clean case, I’d require a creation record from the ticket system tied to an action in the current run. The record should identify the ticket and the incident. The harness can tie it to the run through the tool call and a request or operation ID. A successful lookup establishes that the ticket exists. A submitted request establishes an attempt. A timestamp can narrow the search, but another worker could have created a ticket in the same interval. If the ticket system creates tickets in the background, define how long this case allows for creation and follow the operation to its terminal state or that deadline. A complete service record with no matching creation by the deadline supports a fail. If the service record is incomplete and the verdict depends on it, mark the result unresolved. These are parts of the harness I’d check together. Nugalaxy harness-engineering guides Check the grader with two examples I’d test the grading rule on its own before trusting it in the harness. That lets me exercise the old-ticket problem directly, even though the clean case now rejects it at setup. Evidence supplied to the grader Expected verdict A matching ticket already exists. The complete run evidence shows the agent never made a create call. Fail. The run did not create the ticket. The incident starts with no ticket. The ticket system confirms creation for this incident, and the operation is tied to this run. Pass. The run created the ticket. Then I’d check the harness separately by starting the clean case with a matching ticket already present. It should stop at setup and record an invalid test. Other worked examples show how to connect agent requirements to the evidence available outside the conversation. Nugalaxy Evaluation Cases The next time I see two passes, I want to open each run and find the ticket it actually created. What a harness needs to keep for that kind of review is one of the questions I work through in AI Agent Evaluation Design . Kindle edition",
+            "url": "https://dev.to/sara_mo/could-a-ticket-from-the-last-run-make-your-eval-pass-2451",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-11-23T04:53:34+00:00",
+            "collected_at": "2026-11-23T04:59:33.624934+00:00"
+        },
+        {
+            "id": "ed86d832f662ee873261ed47b68ef12d9687c738c6ce4af1416ab8ede32b99e0",
+            "title": "How to extract pages from a PDF without re-encoding them",
+            "description": "By Alex, who builds Cuelark. This article mentions our own free PDF tools. Someone sends a 40-page bank statement and the form only wants pages 2 and 5. Or a scanned admission packet where the university asks for the mark sheet alone. You need a smaller PDF with a few pages pulled out, and you want those pages to look exactly like they did before. That last part is where a lot of people get burned. The quick fix most of us reach for is \"Print to PDF\" or a screenshot pasted into a document. Both work in the sense that you get a file. But they redraw the page. Text can stop being selectable, scans get recompressed, and sometimes the file gets bigger instead of smaller. This post covers the approach we use: copy the page objects into a new file and leave their contents alone. I'll show it with two command-line tools, then explain a few results that surprised me when I measured them. Copying pages vs redrawing them A PDF page is a set of drawing instructions plus the resources it points to: fonts, images, sometimes form fields and links. An extraction tool can do one of two things. Copy. Take the page object and everything it references, and write it into a new PDF. The JPEG inside a scanned page goes across byte for byte. Text stays text. Redraw. Render the page to pixels (or to a new set of drawing commands) and build a new PDF from that. This is what printing and screenshotting do. For \"give me pages 2 and 5\", you almost always want the first one. Redrawing only makes sense when you are deliberately flattening something, like burning in annotations. Option 1: qpdf qpdf is a small, mature tool for structural PDF changes. On Debian or Ubuntu: sudo apt install qpdf On macOS, brew install qpdf works. I tested everything below with qpdf 12.2.0. To keep pages 2, 4, 5 and 6 from scan.pdf : qpdf scan.pdf --pages . 2,4-6 -- out.pdf The . means \"the input file I already named\". The page list accepts a few handy shortcuts: # page 8 to the last page (\"z\" is the last page) qpdf --empty --pages scan.pdf 8-z -- tail.pdf # odd pages only qpdf scan.pdf --pages . 1-z:odd -- odd.pdf # the last six pages, in reverse order (\"r1\" is the last page) qpdf scan.pdf --pages . r6-r1 -- reversed.pdf # page 2 of one file followed by page 1 of another qpdf --empty --pages scan.pdf 2 letter.pdf 1 -- combined.pdf --empty starts from a blank document instead of using the first file as the base. That difference affects file size more than you'd think, as the measurements below show. Password-protected files If the PDF has a user password, qpdf refuses with invalid password . If you know the password, write an unlocked copy first and extract from that: qpdf --password= 'your-password' --decrypt locked.pdf unlocked.pdf qpdf unlocked.pdf --pages . 1 -- page1.pdf Only do this with files you are allowed to open, obviously. The point is that extraction tools generally need an unlocked copy, and qpdf will tell you clearly when that is the problem. Option 2: poppler's pdfseparate and pdfunite If you already have poppler-utils installed (it provides pdftotext , pdfinfo and friends), you can extract without anything new: # one file per page, for pages 2 to 6 pdfseparate -f 2 -l 6 scan.pdf page-%d.pdf # stitch the pages you want back together pdfunite page-2.pdf page-4.pdf page-5.pdf page-6.pdf out.pdf It is two steps instead of one and leaves temporary files around, but it's useful on machines where you can't install packages. I used poppler 25.03.0 for these tests. What I measured I didn't want to hand-wave about sizes, so I generated two test files on a Linux box and ran the commands above. A \"scanned\" PDF. Twelve A4 pages, each one a 1654 Ã— 2339 pixel JPEG at 200 ppi, built with Python's Pillow. The file was 5,525,089 bytes. Extracting pages 2, 4, 5 and 6: Method Output size Pages qpdf --pages . 2,4-6 1,846,776 bytes 4 pdfseparate + pdfunite 1,849,205 bytes 4 Both outputs come out at almost exactly a third of the original, which is what you'd expect for 4 of 12 roughly equal pages. The images were not touched. You can check that yourself: pdfimages -list out.pdf The listing still showed 1654 Ã— 2339 JPEGs at 200 ppi, each around 450 KB, the same as in the source. A text PDF. Eleven pages of plain text exported from LibreOffice, 29,419 bytes, with one embedded font. I extracted pages 3 and 4 two ways: Method Output size qpdf doc.pdf --pages . 3-4 -- out.pdf 22,416 bytes qpdf --empty --pages doc.pdf 3-4 -- out.pdf 11,183 bytes Two pages out of eleven, and the first command kept about three quarters of the original size. That looked wrong, so I dumped the objects with qpdf --json . Two things were going on. First, when you use . , qpdf keeps document-level objects from the input file. LibreOffice had written an XMP metadata stream (4,960 bytes) and a tagged-PDF structure tree, and both came along. With --empty , they didn't, and the size halved. The catch: pdfinfo reports the first file as Tagged: yes and the second as Tagged: no . Tags help screen readers, so if accessibility matters for the document, keep the bigger file. Second, both pages use the same embedded font subset, about 8 KB compressed. Copying a page means copying everything it references, so that font comes along whichever command you use. Even the smaller file is still 38% of the original for 18% of the pages. So here is the practical rule: with scans, extracting pages saves space roughly in proportion to the pages you drop. With text-heavy PDFs, shared fonts and document-level data set a floor, and the saving can be small. If you need the file under a size limit, extraction alone may not get you there. You may need compression as a separate step. What redrawing costs. For comparison, I rendered the same two text pages to PNG at 150 dpi with pdftoppm and rebuilt a PDF from the images. That file was 418,755 bytes, about 37 times the size of the --empty output. And pdftotext found zero words in it, because the text was now a picture. That's the \"Print to PDF from a screenshot\" path, and it's a bad trade for documents that are mostly text. Check the output before you send it A few quick commands I run before attaching an extracted PDF to anything that matters: pdfinfo out.pdf | grep Pages # right page count? pdftotext out.pdf - | head # text still selectable? pdfimages -list out.pdf # scans kept their resolution? qpdf --check out.pdf # structure OK? Then open it and look at every page. Page numbers printed on the paper won't match the PDF's page indexes if the document has a cover or roman-numeral front matter, and that's the most common reason someone ends up with the wrong page. Extract, remove, or split? These three get mixed up a lot, including in search results: Extract keeps only the pages you pick. \"I need pages 2 and 5.\" Remove keeps everything except the pages you pick. \"Drop the blank page and the ad at the end.\" Split turns one PDF into several files. \"One file per chapter\", or \"parts that each fit under an email attachment limit\". With qpdf, all three are just different page lists. If you'd rather not use a terminal, or you're on a phone, we built browser versions that do the same copy-not-redraw thing. Our extract PDF pages tool takes ranges like 2, 4-6 or an open end like 8- , and copies the selected pages into a new file in their original order. Text stays selectable and scans aren't re-encoded. If you want the opposite, Remove PDF pages keeps the rest of the document. And Split PDF handles the multi-file cases: every N pages, odd and even pages, or parts capped at a size such as 24 MB for email. All three run inside the browser tab, so the file isn't uploaded anywhere. You can confirm that in your browser's network panel while a file is processing. That matters for the kind of documents people usually extract pages from: statements, ID scans, mark sheets. Summary Use a tool that copies pages (qpdf, pdfseparate/pdfunite, or a browser tool built the same way). Avoid print-to-PDF and screenshots for this job. qpdf in.pdf --pages . 2,4-6 -- out.pdf covers most cases. z means the last page, r1 counts from the end, :odd and :even filter. Expect scans to shrink in proportion to the pages removed. Expect text PDFs to shrink less, because shared fonts get copied with every page that uses them. --empty drops document-level data such as metadata and accessibility tags. Smaller file, but check whether you need the tags. Check page count, text, and image resolution before you send the file. If you have a PDF where extraction behaves strangely, like links breaking or form fields vanishing, I'd like to hear about it in the comments. Those edge cases are where most of our bug fixes come from.",
+            "url": "https://dev.to/cuelark/how-to-extract-pages-from-a-pdf-without-re-encoding-them-4b",
+            "source": "DEV Community",
+            "category": "linux",
+            "tags": [
+                "developpement",
+                "linux",
+                "macos",
+                "programmation",
+                "python",
+                "web"
+            ],
+            "published_at": "2026-11-23T04:53:12+00:00",
+            "collected_at": "2026-11-23T04:59:33.625995+00:00"
+        },
+        {
+            "id": "9851b0b3455deedadd67fb66048da04e4408000d5048cfa6a8e5fc580c5ae6b9",
+            "title": "0.8ms Canvas Snapping in Pure TypeScript: Phase 0 Adaptive Multi-Ray Radar",
+            "description": "In modern web-based graphical workspaces—such as cloud architecture editors, infinite spatial canvases, and node-graph tools— intelligent edge snapping (Click-to-Snap) is one of the highest-frequency interactions. When a user pans or clicks across a complex HTML5 canvas containing hundreds of thousands of rasterized pixels, the engine must extract the exact geometric bounding box of the target card in sub-millisecond (< 1ms) latency , establishing a rock-solid physical anchor for 60fps cinematic camera trajectories, connector docking, and spatial alignments. However, when probing directly on rasterized pixels, straightforward intuition almost immediately encounters fundamental physics bottlenecks. 1. The Fatal Flaw of Single-Ray Tracing in Real-World UI When developers first approach bitmap bounding box detection, the natural inclination is to cast four orthogonal rays (Up, Down, Left, Right) starting from the cursor click point $(x_0, y_0)$. In a naive implementation, each ray advances 1 pixel per step, computing the local Sobel color gradient magnitude $G$: $$G_x = \\begin{bmatrix} -1 & 0 & +1 \\ -2 & 0 & +2 \\ -1 & 0 & +1 \\end{bmatrix} * I, \\quad G_y = \\begin{bmatrix} -1 & -2 & -1 \\ 0 & 0 & 0 \\ +1 & +2 & +1 \\end{bmatrix} * I$$ Whenever the gradient magnitude exceeds a threshold ($G > \\text{Threshold}$), the ray assumes it has collided with the card's outer border and halts. While this works on synthetic flat color swatches, it breaks down completely in real-world production architecture diagrams and UI cards : Text Glyph Traps : Real UI cards are densely packed with service names, IP addresses, port numbers, and icons. Letterforms such as \"O\", \"D\", \"B\", or Chinese glyphs like \"口\" and \"日\" possess intense black-and-white edge contrast ($G \\ge 180$). A single ray never reaches the card perimeter—it halts prematurely inside the glyph, producing a useless $15\\text{px} \\times 12\\text{px}$ red fragment box; Sub-Pixel Antialiasing Jitter : Font smoothing engines generate soft grayscale transition zones, inducing erratic high-frequency micro-gradients; Unacceptable Model Footprint & VRAM Overhead : Introducing heavy neural network models (e.g. 30MB ONNX / MobileSAM) to box a simple rectangular card incurs hundreds of milliseconds of cold-start inference latency and locks hundreds of megabytes of VRAM—an unacceptable trade-off for fluid 60fps canvas manipulation. To solve this, FocusFlow employs a tiered deterministic perception pipeline. This article, serving as Episode 01 of our Hardcore Algorithm Series, demystifies the foundational perception layer: Phase 0 Adaptive Multi-Ray Parallel Radar . 2. The Phase 0 Algorithm Pipeline: 4 Core Phases 2.1 Step 1: 11×11 Local Window Variance & Dynamic Thresholding Instead of blindly firing rays, the algorithm defines an 11×11 pixel micro-window centered at $(x_0, y_0)$ to sample color mean and variance: Flat Background Discrimination : When local variance is minimal ($\\sigma^2 < \\tau_{\\text{var}}$), the cursor resides in the card's uniform background. The system adaptively elevates the edge gradient cutoff barrier, creating a \"physical breakwater\" ensuring that subtle text antialiasing fuzz cannot trigger false premature stops; Glyph Interior Click Guard : If variance is significantly elevated, the cursor clicked directly on a character stroke or icon. The algorithm automatically triggers a micro-step drift to shift the radar origin onto an adjacent flat background patch. 2.2 Step 2: 4-Directional 5-Ray Parallel Laser Array The fatal flaw of a single ray is that \"single-point failure equals total failure.\" In Phase 0, we introduce a parallel laser beam array along each primary scan direction (8px spacing): Ray 1 (y - 16px) ─────────Pierces Line Gap────────────► [Hits Outer Border] (Valid) Ray 2 (y - 8px) ──Hits Glyph 'P' Stroke (Pruned) Ray 3 (Main y0) ─────────Pierces Kerning Gap─────────► [Hits Outer Border] (Valid) Ray 4 (y + 8px) ──Hits Glyph 'h' Stroke (Pruned) Ray 5 (y + 16px) ─────────Pierces Paragraph Gap────────► [Hits Outer Border] (Valid) All 5 beams advance synchronously along the X-axis. While individual beams inevitably collide with internal letter strokes, typographic white space—line height and letter kerning—guarantees uninhibited escape corridors for the remaining beams. 2.3 Step 3: Bidirectional Majority Voting Mechanism When all 5 beams halt, the engine executes spatial clustering across the recorded stopping depths: Beams trapped on character strokes stop at shallow, widely dispersed depths (e.g. 14px, 28px), earning only 1 to 2 isolated votes in the histogram; Beams that pierced through whitespace strike the physical card border at nearly identical coordinates ($\\pm 2\\text{px}$ tolerance window), commanding 3 to 5 votes. Majority rules: isolated internal text collisions are discarded as high-frequency outliers, while the consensual stopping distance is crowned as the true physical boundary for that direction. 2.4 Step 4: Polar Gradient Projection & Sub-Pixel Precision With all four directions resolved by majority voting, a preliminary bounding box $(L, T, R, B)$ is constructed. Geometric consistency guards verify aspect ratio and eccentricity, followed by polar gradient histogram analysis orthogonal to each detected edge to snap coordinates to fractional sub-pixel accuracy ($\\pm 0.3\\text{px}$). 3. Real-World Benchmark Results (4K Resolution, 50 Realistic Cards) Metric Traditional Single-Ray Sobel Phase 0 Multi-Ray Radar Mean Execution Latency 0.35 ms 0.78 ms Glyph Trap Decoupling Rate 8.2% (Frequent Trap) 94.6% (Consistent Penetration) Memory Allocation / GC 0 GCs (0 KB Heap) 0 GCs (Pure Stack Math, 0 KB Heap) Runtime Footprint 0 KB 0 KB (Pure TypeScript Inline) Sub-Pixel Snapping Error $\\pm 1.8\\text{px}$ $\\pm 0.3\\text{px}$ 4. Resources & Links Companion 4K Video : YouTube (60fps 4K UHD) Original Architecture Article : tumio.site Live Demo : FocusFlow Playground Open Source Repository : GitHub (tumio-ltd/focusflow)",
+            "url": "https://dev.to/xiangc_92294/08ms-canvas-snapping-in-pure-typescript-phase-0-adaptive-multi-ray-radar-56ne",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "git",
+                "intel",
+                "programmation",
+                "typescript",
+                "web"
+            ],
+            "published_at": "2026-11-23T04:52:51+00:00",
+            "collected_at": "2026-11-23T04:59:33.626787+00:00"
+        },
+        {
+            "id": "b47c2a46b1556ffafc74bd1a130383a35ba1ce6206a4d5fe3d4b94966047a053",
+            "title": "schemagate: 91% fewer schema tokens for text-to-SQL, and only the tables the caller may read",
+            "description": "Text-to-SQL prompts usually carry the whole database schema, and pay for it on every question. schemagate sends the model only the tables a question needs, and only the ones the person asking may read. 91% fewer schema tokens on real warehouses (Spider 2.0, databases with 50+ tables, median) #1 on UniQL Oracle: 64.93%, ahead of Claude-4.5-Sonnet (49.61) #1 on BIRD Mini-Dev Legacy: SQLite 81.0 · MySQL 72.4 · PostgreSQL 72.6 LiveSQLBench-Large: 34.58%, #9 among agents; the BIRD team is adding it to the board In LangChain's official integrations as SchemagateRetriever ( pip install langchain-schemagate ); also works with LlamaIndex and MCP What it doesn't do: it picks what the model sees; the SQL is still the model's job. https://github.com/ashishsinha1602/schemagate",
+            "url": "https://dev.to/ashish_sinha_5241c7673d93/schemagate-91-fewer-schema-tokens-for-text-to-sql-and-only-the-tables-the-caller-may-read-1df5",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "anthropic",
+                "developpement",
+                "git",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-11-23T04:52:38+00:00",
+            "collected_at": "2026-11-23T04:59:33.626955+00:00"
+        },
+        {
+            "id": "0d1c0aa7f2ba9aa932d0adf9a2e44d48313da8a5d90db9db452dad761f0c766a",
+            "title": "Inkling 2 Mini in a React chat: wiring reasoning effort through the Vercel AI SDK",
+            "description": "By the Cuelark Team. Model details come from Thinking Machines Lab's launch post and model card and from Hugging Face's release post, all checked on 23 November 2026. We didn't run the model itself. The checkpoint is about 20GB and our test box has 15GB of RAM. The code ran against a local mock of an OpenAI-compatible server, and we rendered the model's official chat template against the requests the SDK actually sent. Read this as a wiring test, not a quality review. Thinking Machines Lab released Inkling 2 Mini on November 20 with open weights under Apache 2.0. It's a Mixture-of-Experts model with 26.4B total parameters and 3.4B active. Of its 24 layers, the middle 12 run three times per token, which brings it to about 5.4B effective active parameters. It takes text and images, outputs text, and supports a context window of up to 1M tokens. The checkpoint is about 20GB in mixed NVFP4 and MXFP8. The model card recommends Apple silicon with 32GB or more, a DGX Spark, or a GPU with 32GB or more of VRAM. The launch post says it leads open-weights models under 100B total parameters on DeepSWE v1.1 (48.2%) and Vals Index v2.2 (46.5%). Those are the lab's own numbers, and we didn't check them. For a chat app, one setting matters more than anything else: reasoning effort. Here's how to wire it from a React dropdown to the model, plus two things in the chat template worth knowing first. Serving it Hugging Face's post gives two commands. For local GGUF: llama serve -hf ggml-org/Inkling-2-Mini-GGUF:IQ4_NL And for SGLang on datacenter hardware (trimmed; the post has the full flags and notes it needs SM103): python -m sglang.launch_server --model-path thinkingmachines/Inkling-2-Mini \\ --served-model-name inkling --host 0.0.0.0 --port 30000 The post says Llama App, built on llama.cpp, exposes a local OpenAI-compatible API, and SGLang serves /v1/chat/completions . SGLang's example request passes \"reasoning_effort\": \"low\" in the body, so the Vercel AI SDK's generic OpenAI-compatible provider is enough. The route // app/api/chat/route.ts import { streamText , convertToModelMessages , type UIMessage } from 'ai' ; import { createOpenAICompatible } from '@ai-sdk/openai-compatible' ; const inkling = createOpenAICompatible ( { name : 'inkling' , baseURL : process . env . INKLING_BASE_URL ?? 'http://localhost:30000/v1' , includeUsage : true , } ) ; export async function POST ( req : Request ) { const { messages , effort = 'low' , keepThoughts = false } = await req . json ( ) ; // Old reasoning goes back as reasoning_content, and Inkling's template // puts it back into the prompt. Drop it unless you want it in context. const history : UIMessage [ ] = keepThoughts ? messages : messages . map ( ( m : UIMessage ) => ( { . . . m , parts : m . parts . filter ( ( p ) => p . type !== 'reasoning' ) } ) ) ; const result = streamText ( { model : inkling . chatModel ( 'inkling' ) , // matches --served-model-name messages : await convertToModelMessages ( history ) , reasoning : effort , // sent as reasoning_effort maxOutputTokens : 4096 , } ) ; return result . toUIMessageStreamResponse ( { sendReasoning : true } ) ; } On the client, useChat sends the effort with each message: sendMessage({ text: input }, { body: { effort } }) . Reasoning arrives as reasoning parts, which you can render in a collapsible <details> above the answer. What the test showed AI SDK 7's top-level reasoning option accepts none , minimal , low , medium , high , xhigh and max . That's the same list of names Inkling's chat template uses. In our mock run, each one reached the server unchanged as reasoning_effort . provider-default leaves the field out. Streamed reasoning_content deltas showed up as a reasoning part in the UI message, and the usage chunk filled in the token counts. Then we ran the official chat_template.jinja from the Hugging Face repo against those requests. A few things stood out: Names map to numbers. none is 0, minimal 0.1, low 0.2, medium 0.7, high 0.9 and both xhigh and max 0.99. If you leave the field out, you get 0.9, so the default is close to the top. With this template, an xhigh and a max option in your UI do the same thing. Numbers work in the template, but not in the SDK option. The template accepts any value from 0.0 to 0.99. The provider's reasoningEffort option only takes a string, so passing 0.35 failed before any request was sent. Passing a raw reasoning_effort: 0.35 under providerOptions.inkling got through unchanged. We didn't confirm that SGLang or llama serve accept a number there. Unknown names throw. \"turbo\" raised Unknown reasoning_effort . Validate the dropdown value on the server. Old reasoning is resent. By default the SDK sends earlier reasoning back as reasoning_content , and the template renders each one into the prompt as a thinking block. With six tiny fake thoughts, the rendered prompt grew from 1,102 to 1,681 characters. Real reasoning is much longer, so in a long chat this fills context fast. That's why the route strips it unless keepThoughts is set. We don't know whether keeping it helps answer quality. Tool calls need parsed arguments. The SDK sends tool_calls[].function.arguments as a JSON string, like the OpenAI API. The raw template rejects that (\"must be a parsed object, not a JSON string\"). After JSON.parse , the same history rendered fine. Your server may parse it first. Test one tool round trip on yours before building an agent on it. Honest limits We didn't run the model. Everything above covers the request and the template. None of it measures speed or answer quality. The lab lists its own weak spots. It isn't the strongest small model for multi-turn chat or for instructions with many constraints. It scores 50.0% on MultiChallenge and 33.4% on ComplexConstraints v1.1, both behind Qwen3.8-27B. none isn't off. The model card says the minimum reasoning effort doesn't fully disable reasoning. Because the middle layers run three times, compute per token is also higher than 3.4B active parameters suggests. Agent safety. The model card warns that the model may delete or overwrite files without asking. It recommends a sandbox and confirmation for destructive actions. Local runtimes are new. Per the model card, support for looped models in local runtimes is new, and speed varies by runtime and hardware. If you want to experiment, a research checkpoint, TML-d24-varloop-research , lets you change the number of loop passes. Fewer passes are faster, but answers may be a little worse. Sources Introducing Inkling 2 Mini, Thinking Machines Lab Inkling 2 Mini model card Welcome Inkling 2 Mini, Hugging Face blog thinkingmachines/Inkling-2-Mini on Hugging Face (source of chat_template.jinja ) If you'd rather not build the reasoning toggle and message list yourself, Cuelark UI has shadcn-style AI chat components that work with this setup.",
+            "url": "https://dev.to/cuelark/inkling-2-mini-in-a-react-chat-wiring-reasoning-effort-through-the-vercel-ai-sdk-3gg3",
+            "source": "DEV Community",
+            "category": "hardware",
+            "tags": [
+                "5g",
+                "developpement",
+                "openai",
+                "programmation",
+                "python",
+                "web"
+            ],
+            "published_at": "2026-11-23T04:51:58+00:00",
+            "collected_at": "2026-11-23T04:59:33.627697+00:00"
+        },
+        {
+            "id": "cfea5651761404d96d1d8c83e38b7fb95a760fef761c86a0a931ddea382db08a",
+            "title": "Cloud Storage and User Avatar Uploads: A Node.js-Based Guide to Tenant Boundaries",
+            "description": "Short answer: the easiest storage path for a Node.js avatar upload is the one that keeps the application responsible for authorization and gives the storage layer a narrow, testable job. Put each object under a tenant-scoped key, upload through a short-lived capability, keep the bucket private, and make deletion a durable workflow rather than a best-effort request. That answer changes once the same e-commerce system must retain signed documents until an explicit deadline. Avatars are replaceable presentation data. A signed document is evidence with a lifecycle. Mixing their policies in one permissive upload path is how a convenient feature becomes a tenant-isolation incident. I have been paged by missed jobs and duplicate deliveries, so I treat scheduled deletion with the same suspicion as any other queue consumer: retries are normal, delivery is not exactly once, and the handler must be safe to run again. The storage API matters, but the boundary around it matters more. The incident lesson: convenience is not an isolation policy The bounded failure pattern is familiar. A web request accepts an upload, builds a key from an account identifier, and asks storage to save the bytes. Later, a background job finds documents past their deadline and removes them. An avatar endpoint and a document endpoint may even share the same helper because both receive a filename and a stream. That helper hides the important differences. An avatar can usually be replaced by a newer object. A signed document needs a recorded deadline, an owner, an audit trail, and a deletion decision that survives a worker restart. If the key is the only place tenant identity exists, a typo in a prefix or an over-broad listing operation can turn an authorization rule into a naming convention. Naming conventions are not an authorization system. The invariant I want is small enough to test: every read, write, and delete is authorized against a tenant and an object record before storage is called. The object key is derived from that record, never accepted as an authority from the browser. The storage credential used by the application cannot be treated as a user permission. This is the tradeoff. A direct browser upload can reduce application bandwidth and make large files easier to handle, but it moves part of the protocol into a client you do not control. A server-mediated upload gives the application a stronger inspection point, at the cost of handling more bytes and keeping the request path healthy. For small avatars, that extra control is usually worth the simpler failure story. For signed documents, a short-lived upload capability can be appropriate when the server still creates the object record first and validates the completion afterward. The advice does not apply unchanged to public image hosting, anonymous uploads, or data that has no tenant boundary. In those systems, a public delivery model may be intentional. It is a poor default for customer documents. Which cloud storage should a Node.js-based user choose for avatars? Ease is not the number of methods in a client library. It is the number of states an operator has to reason about at 03:00. A useful upload path has an explicit state machine: pending, accepted, available, expired, and deleted. The database is the source of that state; object storage holds bytes and metadata. For an avatar, the record can contain the tenant ID, account ID, object key, content type accepted by policy, byte count, and a checksum or equivalent integrity value. The serving path checks the account relationship before returning a short-lived read capability. It does not turn a user-supplied key into a read URL. For a signed document, add the retention deadline and a deletion status. Do not infer the deadline from an object timestamp. Clocks, retries, restores, and manual reprocessing make that inference hard to defend. A deadline is business data. Store it where the retention worker can query it, audit it, and test it. The object key should be boring. For example, a generated identifier can prevent collisions without exposing an email address or a document name: Boring is good. package objects import \"fmt\" func Key ( tenantID , objectID string ) string { return fmt . Sprintf ( \"tenants/%s/objects/%s\" , tenantID , objectID ) } It must converge. Keep it explicit. The function is not a security boundary by itself. It is a consistency tool. Authorization still happens before Key is used, and the resulting key is stored with the object record so a future code path does not reconstruct it from request input. The upload completion path deserves the same care. A client can disappear after bytes arrive, or report completion after a retry. Record an upload intent before issuing a capability, verify the resulting object against the intent, and make the completion transition idempotent. A second completion should return the already-known result, not create another document record. Which failure modes should the design make boring? The first is cross-tenant access. Test it directly: create two tenants, create objects with similar names, and assert that a read, overwrite, and delete for tenant A cannot affect tenant B. Test the worker too. A retention query that forgets tenant_id is more dangerous than a malformed upload because it can affect many records without a user request. The second is duplicate delivery. A scheduler can run the same deletion task twice. A queue can redeliver it. A deployment can stop the worker after the storage delete and before the database update. The handler should therefore use a stable document ID, re-check ownership and deadline, issue a delete that is safe to repeat, and then record the outcome. If the database update loses a race, the next attempt should converge rather than resurrect the object. Here is the shape of that decision in Go. The interfaces are deliberately generic; the useful part is the order of checks and the idempotent outcome. package retention import ( \"context\" \"time\" ) type Document struct { ID string TenantID string Key string DeleteAt time . Time DeletedAt * time . Time } type Repository interface { Find ( ctx context . Context , documentID string ) ( Document , error ) MarkDeleted ( ctx context . Context , documentID string , at time . Time ) error } type BlobStore interface { Delete ( ctx context . Context , key string ) error } func Expire ( ctx context . Context , repo Repository , store BlobStore , documentID string , now time . Time ) error { doc , err := repo . Find ( ctx , documentID ) if err != nil { return err } if doc . DeletedAt != nil || now . Before ( doc . DeleteAt ) { return nil } if err := store . Delete ( ctx , doc . Key ) ; err != nil { return err } return repo . MarkDeleted ( ctx , doc . ID , now ) } In production, the repository query and update need concurrency control appropriate to the database, and the storage delete needs a clearly defined error policy. A not-found result can be success for an idempotent delete; an authorization or transport failure cannot. The code also assumes the object record was created from a trusted tenant context. It is not a substitute for that check. The third failure is a deadline that is technically reached but operationally invisible. Emit a count of due documents, deletion attempts, successful transitions, retryable failures, and records stuck in an intermediate state. Keep tenant identifiers out of high-cardinality metric labels; put them in structured logs only when access controls and retention rules permit it. An alert should tell an on-call engineer whether the queue is late, storage is failing, or the database is rejecting state changes. How should avatars and signed documents share infrastructure? Share the primitive, not the policy. A common object-store adapter can expose put, get, and delete operations. The avatar service should own image validation, replacement, and serving rules. The document service should own retention deadlines, legal holds if the domain requires them, audit records, and deletion reconciliation. Separate prefixes help operations, but separate authorization checks and records do the real work. The same split applies to access paths. A private object with a short-lived read capability is a different contract from a public CDN URL. For avatars, caching may be useful after authorization has been evaluated, but the cache key must not accidentally collapse two tenants into one response. For documents, avoid making a long-lived URL the durable reference. Resolve access from the document record, authorize the requester, and issue the shortest practical read capability. Node.js developers often choose storage by how quickly the first multipart example runs. That is a reasonable prototype test. It is not enough for a production choice. Compare the options against the operations your team must own: conditional writes, integrity checks, private access, lifecycle controls, auditability, retry behavior, local testing, and exit strategy. A provider with a friendly Node.js SDK can still be awkward if deletion status cannot be reconciled cleanly. A self-hosted or standards-based endpoint can be easier to test but may transfer durability and incident response to your team. I would write the decision record around those boundaries, not around a library choice. State who can mint upload capabilities, where tenant authorization lives, how a deadline is recorded, what a repeated delete means, how orphaned bytes are found, and how a tenant can export or remove its data. That document is more durable than a library choice. A deployment and test plan that survives retries Start with unit tests for key derivation, tenant checks, deadline comparisons, and repeated completion. Add integration tests against the same storage protocol used in production, including a missing-object delete and a timeout after the storage operation succeeds. Then run a small end-to-end test that creates an upload intent, completes an avatar, replaces it, and verifies that the old object is eventually removed without deleting another tenant's object. For signed documents, test the deadline as data. A document due at 2026-01-15T00:00:00Z should not be deleted by a worker whose effective time is earlier, and it should be eligible at or after that instant according to the product's stated boundary. The year in this example is a test fixture, not a retention recommendation. Use UTC in persisted timestamps and make the worker's clock injectable. Deploy the worker with bounded concurrency and backoff. A large retry storm can be an isolation risk if it causes operators to disable checks under pressure. Prefer a dead-letter or quarantine state that preserves the document ID and failure reason without silently extending retention. Reconciliation should scan for mismatches such as a deleted database record with a remaining object, and an object record marked deleted with a recoverable storage error. Deletion is also a compliance workflow. GDPR Article 17 describes a right to erasure, but the correct product behavior depends on the legal basis, exceptions, and other obligations that apply to the business. Treat the deadline in the record as an explicit application decision, and retain only the audit evidence needed to demonstrate what happened. Do not promise that deleting an object from one service erases every replica unless the entire data lifecycle has been mapped. The practical choice for the original avatar question is therefore modest: choose the storage interface your Node.js team can exercise locally, secure privately, observe in production, and leave without rewriting authorization. Keep avatar objects replaceable and document objects governed by a durable deadline. The easiest path is the one whose retries, tenant checks, and deletion states are visible in tests and runbooks. References GDPR Article 17, Right to erasure: https://gdpr-info.eu/art-17-gdpr/ RFC 9110, HTTP Semantics: https://www.rfc-editor.org/rfc/rfc9110 OWASP File Upload Cheat Sheet: https://cheatsheetseries.owasp.org/cheatsheets/File_Upload_Cheat_Sheet.html Sources https://gdpr-info.eu/art-17-gdpr/ https://www.rfc-editor.org/rfc/rfc9110 https://cheatsheetseries.owasp.org/cheatsheets/File_Upload_Cheat_Sheet.html",
+            "url": "https://dev.to/fairchildblake8483/cloud-storage-and-user-avatar-uploads-a-nodejs-based-guide-to-tenant-boundaries-2p2",
+            "source": "DEV Community",
+            "category": "web",
+            "tags": [
+                "developpement",
+                "javascript",
+                "programmation",
+                "rgpd",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-11-23T04:51:42+00:00",
+            "collected_at": "2026-11-23T04:59:33.629107+00:00"
+        },
+        {
+            "id": "d2becb85268c631c0a1b80e8ab8bb141eb30982a2bda433424a83836a63726f8",
+            "title": "Are Public Tiny Desk AI Clips 8-Bit 4:2:0, and What Happens If You Upgrade Them to 10-Bit? (ffmpeg, Tested)",
+            "description": "A 10-bit export sounds like a free upgrade. If a clip is already 8-bit 4:2:0, writing it into a 10-bit file does not invent the two extra bits. It only changes the label, or, if you re-encode, it spends some of the original picture on compression. I re-checked the eight public samples on tinydeskoutstanding.video today, 23 November 2026. SHA-256 of each file matches its filename, and a live Content-Length check agreed. I measured pix_fmt , bits_per_raw_sample and the colour tags with ffprobe 7.1.5, built two 8-bit synthetic controls and one genuine 10-bit ramp, then compared a lossless 10-bit “upgrade” and a typical High10 re-encode with ffmpeg’s psnr filter. This is a measurement article, not a pricing article. The live pricing page , re-fetched at 12:21–12:24 Asia/Shanghai, still lists a single run — same for Just Me , Back Row and Whole Band — at $9.98 (998 credits) for 480p, $12.98 (1,298) for 720p, $24.98 (2,498) for 1080p and $39.98 (3,998) for 4K, with tables recorded on November 12, 2026. I am quoting those numbers only because I re-checked the page today. What the public files actually are Every public clip is H.264 High, yuv420p , bits_per_raw_sample=8 . That is 8-bit 4:2:0. None of them is 10-bit. The official reference, db09b1c5 (4,258,704 bytes, used on the three scene pages), is 720×1280 at 30 fps. Six gallery files are 24 fps, at 720×1280, 540×960, 540×940 or 480×854. Colour tags are not uniform. Five files ( 0299078c , 632c0129 , 947f5eb2 , db033545 , f7ff5268 ) are tagged bt709 primaries, transfer and matrix, with color_range=tv . Three files have all four tags unset , including the official reference: db09b1c5 — 720×1280, official reference 8256cd87 — 480×854 875d2458 — 540×940 An unset tag is not a 10-bit signal. It is a missing colour description. A player will guess. I am not going to guess for it. A lossless “upgrade” does not invent information I took each 8-bit source and wrote a 10-bit file with libx264 -qp 0 -pix_fmt yuv420p10le . The output is tagged yuv420p10le , bits_per_raw_sample=10 , profile High 4:4:4 Predictive (qp 0 is lossless; High / High10 reject a lossless encode). I then compared that 10-bit file back to the 8-bit source in 8-bit 4:2:0. On all eight public clips, and on both 8-bit synthetic controls, ffmpeg reported: PSNR Y=inf U=inf V=inf average=inf Infinite PSNR means every 8-bit sample came back the same. The 10-bit file is a 10-bit container around 8-bit values. The two new bits are zero (or a fixed shift). They are not recovered highlight or cleaner chroma. A lossy High10 re-encode is just a re-encode The upgrade people actually run is usually a lossy one: High10, a CRF, maybe “for HDR later.” I used -crf 18 -pix_fmt yuv420p10le -profile:v high10 and measured PSNR against the same 8-bit source. On the official reference: Y = 44.616191, U = 49.552584, V = 49.483695, average = 45.726054 That is a perfectly ordinary lossy H.264 number. It is not new information. The other seven public files landed between average 43.379048 ( f7ff5268 ) and 45.351928 ( 947f5eb2 ). If you needed a 10-bit label for a toolchain, the lossless path above is the one that does not spend picture quality to get it. When 10-bit actually holds more The counter-example has to start as 10-bit. make_bitdepth_test_clips.py writes a 2-second, 30 fps, 720×1280 ten_bit_native.mp4 whose luma ramp is 64..940 in 10-bit limited range — adjacent 10-bit codes that collapse onto the same 8-bit value. After truncating that file to 8-bit yuv420p , PSNR against the 10-bit original, compared in 10-bit space , is finite: Y = 56.256889, U = inf, V = inf, average = 58.017802 Chroma is mid-grey in both, so U and V stay infinite. Luma is not. The low bits were real, and throwing them away is measurable. The same pair, compared in 8-bit space , is PSNR inf : the 8-bit view of the 10-bit source is exactly the truncated file. That is the whole point. 10-bit only helps when the source has those bits. The public Tiny Desk clips do not. The 8-bit synthetic ramp and flat card, run through the same lossless upgrade, also came back inf . The pipeline reports a difference when there is one, and reports none when you only relabel 8-bit data. How to run the check make_bitdepth_test_clips.py writes the three synthetic MP4s. pixfmt_check.py inventories every file in a samples folder, performs the lossless and CRF 18 upgrades, and, if the native 10-bit ramp is present, compares the truncation. #!/usr/bin/env python3 \"\"\"Measure pix_fmt, bit depth and colour tags; show a 10-bit 'upgrade' adds no information.\"\"\" from __future__ import annotations import argparse , json , re , subprocess , sys from pathlib import Path PSNR_RE = re . compile ( r \"PSNR(?:\\s+\\S+)*\\s+y:([inf\\d.]+)\\s+u:([inf\\d.]+)\\s+v:([inf\\d.]+)\\s+average:([inf\\d.]+)\" , re . I , ) def run ( cmd , timeout = 300 ) : p = subprocess . run ( cmd , stdout = subprocess . PIPE , stderr = subprocess . PIPE , timeout = timeout ) return p . returncode , p . stdout . decode ( \"utf-8\" , \"replace\" ) , p . stderr . decode ( \"utf-8\" , \"replace\" ) def probe_video ( path : Path ) -> dict : rc , out , err = run ( [ \"ffprobe\" , \"-v\" , \"error\" , \"-select_streams\" , \"v:0\" , \"-show_entries\" , \"stream=codec_name,profile,pix_fmt,width,height,bits_per_raw_sample,\" \"color_space,color_primaries,color_transfer,color_range\" , \"-of\" , \"json\" , str ( path ) , ] ) st = ( json . loads ( out or \"{}\" ) . get ( \"streams\" ) or [ { } ] ) [ 0 ] return st Point the checker at the eight public MP4s and at the synthetic folder. Quote the PSNR line, not the profile name. A file can say yuv420p10le and still be an 8-bit picture with zeros in the low bits.",
+            "url": "https://dev.to/lpgit/are-public-tiny-desk-ai-clips-8-bit-420-and-what-happens-if-you-upgrade-them-to-10-bit-ffmpeg-4p99",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "python",
+                "web"
+            ],
+            "published_at": "2026-11-23T04:51:28+00:00",
+            "collected_at": "2026-11-23T04:59:33.629936+00:00"
+        },
+        {
+            "id": "943d5737f047530f7401b93d279773f05d75a64f1e1a2e84505e3183b5583714",
+            "title": "Google ARTEMIS Hands-On: Letting AI Coding Agents Control an Android Emulator Over MCP",
+            "description": "A reel went around this week claiming Google had quietly open-sourced a tool called ARTEMIS that lets Claude Code, Codex or Cursor drive an Android phone. The claims: about 15k GitHub stars, 99% success on 100+ real phone tasks, it opens apps, taps and types, it tests your app after every change and hands back a report with screenshots and logs. My team ships Android apps, and the slowest part of every change is still someone tapping through the same five screens on a device. If an agent in my editor can do that for me, I want it. But I don't trust star counts or success rates from a 30-second video, so I cloned the repo, booted an emulator on a Linux box and ran it. Short version: the project is real, the numbers in the reel are a little off, and it did every job I gave it. The most useful thing I found was a failure mode, not a feature. What ARTEMIS actually is The repo is github.com/google/artemis , Apache-2.0, written in Python. It was created on 13 August 2026 and had 17,876 stars and 1,989 forks when I checked on 22 November 2026. The README pitches it as \"Let AI assistants and test suites use real phones like a human.\" Under the hood it's a LangGraph agent that reads the screen through Android's accessibility tree (it installs its own small Accessibility Helper APK on the device, with UIAutomator2 as the fallback), looks at screenshots with a vision model, and acts through ADB. You can drive it four ways: a web console, a CLI, a Python SDK, and an MCP server, which is the part the reel was about. It has two execution profiles: Flash : one model in a tight observe-think-act loop. The README says 3 to 5 seconds per step. There's no plan, no pre-action safety check, no verifier and no report. Pro : a multi-agent graph. A Planner writes a Markdown task plan with verify and assert items, an Operator executes it, a Safety Net vets each single action before it fires, a Checker audits the result at the end, and an optional Outputter writes a report. The README says 15 to 40 seconds per step. The reel's claims, checked Open-sourced on Google's GitHub : confirmed. It's under the google org. About 15k stars : low. It was 17,876 when I looked. 99% success on 100+ real phone tasks : needs correcting. The README's chart shows 99.1% Pass@1 on AndroidWorld, Google Research's benchmark of 116 tasks across 20 apps. AndroidWorld runs on an emulator, not real phones, and the number is self-reported. The repo doesn't include the harness or the model settings used for that run, so I couldn't reproduce it. Opens apps, taps and types : confirmed in my runs. Works on a plugged-in phone or emulator : emulator confirmed. USB phones are documented, but I didn't test one. Tests your own app after each change : documented. mobile_run_task takes an app_path that installs an APK before the run. I didn't test that path. Returns a report with screenshots and logs : partly. Pro can write a report if you ask for one, and the MCP tools return trace summaries, screenshots and Logcat. Flash gives you a trace, not a report. Android only : confirmed. iOS is on the roadmap. Runs on Gemini or Claude : broader than that. It supports Gemini (the default), Claude, GPT-4o, OpenRouter, xAI and local models through an OpenAI-compatible endpoint. I only ran Gemini. Works with Claude Code, Codex and Cursor : the installer writes configs for all three, plus Antigravity, Windsurf, VS Code, Cline/Roo and OpenClaw. I didn't run it inside any of them. I talked to the MCP server from my own client, which I explain below. My setup I used a Debian box with 8 vCPUs and 15 GB of RAM, with nested KVM available. /dev/kvm existed but my user couldn't open it, so I gave it a temporary ACL and took it away when I was done. With KVM working, a headless Android 14 emulator is straightforward: sdkmanager \"platform-tools\" \"emulator\" \"system-images;android-34;google_apis;x86_64\" echo no | avdmanager create avd -n artemis34 \\ -k \"system-images;android-34;google_apis;x86_64\" -d pixel_6 emulator -avd artemis34 -no-window -no-audio -no-snapshot \\ -gpu swiftshader_indirect -memory 3072 -cores 4 & adb shell getprop sys.boot_completed # 1 after ~50 s Then ARTEMIS itself: git clone https://github.com/google/artemis.git && cd artemis uv sync # Python 3.12 venv uv run artemis doctor The official path is ./start.sh , which also installs ADB, scrcpy and FFmpeg and offers to wire up your IDEs. I went the manual route so I could see each piece. doctor came back \"Ready (optional gaps)\". The Gemini key was detected, the emulator was connected at 1080x2400, and scrcpy was missing, which only turns off video replay. First run: the default model was busy My first task failed after three minutes with LLM call timed out after 180 seconds . The logs were full of Gemini 503s (\"This model is currently experiencing high demand\"). The default config points every node at gemini-3.8-flash , falling back to gemini-3.7-flash , and both were overloaded right then. A separate preset in the same file names gemini-2.5-flash , which now returns 404 for new users. The fix is three lines in config/artemis.jsonc : \"default\": { \"provider\": \"google\", - \"model\": \"gemini-3.8-flash\", + \"model\": \"gemini-3.6-flash\", \"thinking_level\": \"medium\", \"fallback\": { \"provider\": \"google\", - \"model\": \"gemini-3.7-flash\", + \"model\": \"gemini-3.5-flash\", Plus the history-chunking model further down. After that, everything ran. If you put this in CI, pin a model you know you have capacity on, and use a fallback from a different model family, not just the next version down. Task 1: the README example, from the CLI uv run artemis run \"Open Settings, find Battery and tell me the current battery level\" \\ --profile flash -s emulator-5554 It finished in 28 seconds, including spawning the background daemon, in three turns: launch Settings, tap the Battery row, report \"The current battery level is 100%.\" adb shell dumpsys battery agreed: level 100. It made 5 model calls. The MCP server This is the bit that matters for coding agents. The server is a FastMCP app you launch over stdio: uv run artemis mcp --generate-config claude # or codex, cursor, antigravity uv run artemis mcp --install all # writes global config + rules The Claude config it prints is just .venv/bin/python -m mcp_server with PYTHONPATH set. For Codex it writes a TOML block with startup_timeout_sec = 120 . I didn't have Claude Code or Codex on this box, so I wrote a small Python MCP client that launches the server the same way those configs do and calls the tools directly. Same transport, same server, same tool calls. It shows exactly what an editor agent sees: params = StdioServerParameters ( command = f \"{REPO}/.venv/bin/python\" , args = [ \"-m\" , \"mcp_server\" ] , cwd = REPO , env = dict ( os . environ , PYTHONUNBUFFERED = \"1\" , PYTHONPATH = REPO ) ) async with stdio_client ( params ) as ( r , w ) , ClientSession ( r , w ) as s : await s . initialize ( ) res = await s . call_tool ( \"mobile_run_task\" , { \"task_desc\" : goal , \"model\" : \"Flash\" , \"device_serial\" : \"emulator-5554\" } ) # returns a trace_id at once; then poll: await s . call_tool ( \"mobile_manage_task\" , { \"action\" : \"status\" , \"trace_id\" : tid } ) await s . call_tool ( \"mobile_inspect_trace\" , { \"action\" : \"view_summary\" , \"trace_id\" : tid } ) The server reported itself as artemis 1.29.0 and listed five tools: mobile_run_task : starts a Flash or Pro run in the background and returns a trace_id straight away. It takes app_path , locked_app_package , verification_level and expected_output_desc . mobile_manage_task : status , stop , or inject_instruction to steer a run that's going wrong. mobile_get_device_state : a screenshot, or a numbered element list with bounds on a 0â€“1000 grid. mobile_inspect_trace : step-by-step reasoning and actions after the fact. mobile_diagnose : an environment doctor that tells the agent what to fix. Their descriptions and schemas add up to 17,696 characters. That's context your agent loads on every session whether it touches a phone or not, so I'd only enable this server in projects that need it. mobile_diagnose with probe_device=true came back in 1.6 seconds: 5 of 5 required checks passed, the device probe saw 24 elements, and the hierarchy came from the helper. The hierarchy view is compact and agent-friendly. Here's the Battery screen: [6] Text: 'Battery charging, 100 percent.' | Bounds: [912,0][931,53] [9] Text: '100 %' | Bounds: [58,249][361,342] [13] Text: 'Battery Saver' | Bounds: [58,512][347,542] [14] Text: 'Off' | Bounds: [58,542][105,563] Task 2: dark theme over MCP, Flash Goal: \"Open Settings, go to Display and turn on Dark theme, then confirm Dark theme is on.\" Step 1 (5.4s) click({'target': 8}) # back to main Settings Step 2 (8.4s) swipe({'direction': 'up'}) Step 3 (11.8s) click({'target': 14}) # Display Step 4 (14.5s) click({'target': 20}) # Dark theme toggle Step 5 (17.4s) report_task_status({'status': 'completed', ...}) mobile_manage_task reported completed after 20.2 seconds. That's about 3 seconds per step, which matches the README. I didn't trust the agent's word for it: adb shell cmd uimode night said \"Night mode: no\" before the run and \"Night mode: yes\" after. It made 9 model calls. It also handled its starting point well. The phone was still on the Battery page from Task 1, so its first move was to go back rather than relaunch Settings. Task 3: a contact, with Pro, and the result I'd flag in review Goal: \"Open the Contacts app, create a new contact named Ada Lovelace with mobile number 555-0100, save it, and verify the contact shows up in the contacts list. Report the steps you took.\" The Planner wrote a three-milestone plan with a verify item (\"contact details saved successfully\") and an assert@end (\"contact 'Ada Lovelace' is visible in the contacts list\"). The Operator then launched Contacts, skipped the Google sign-in promo, tapped +, typed Ada, Lovelace and 555-0100 into the right fields, saved, and navigated back to the list. The first seven actions came 6 to 8 seconds apart. The last two took longer because of more 503 retries. The work was real. The contacts provider had the row: display_name=Ada Lovelace, data1=555-0100, mimetype=vnd.android.cursor.item/phone_v2 Then the final review ran. By that point my Gemini key, which was on the free tier, had used up its daily limit of 20 requests for gemini-3.6-flash . The Checker's call came back 429, and ARTEMIS logged this: Final check errored (); releasing fail-open. Run outcome: task_status=completed, tests(passed=0, failed=0, inconclusive=2) Automation 'web_..._8286c6ef' is success So the MCP status said completed , with a test_summary of 0 passed and 2 inconclusive. The device state was correct. But if I had wired this into a pipeline that only checked status == \"completed\" , a run whose verifier never ran would have gone green. That's a design choice, and the data is there: test_summary is machine-readable and clearly says inconclusive: 2 . You just have to read it. If you use ARTEMIS as a test gate, fail on anything other than failed == 0 and inconclusive == 0 , and run with verification_level=\"checkpoints\" or \"strict\" so the asserts are checked along the way, not just once at the exit. Pro also costs more. This run took 360 seconds and 26 model calls, and ARTEMIS's own usage log shows about 4.5 times the prompt volume of the Flash dark-theme run, for a task with nine actions. About that 99% The README's leaderboard chart puts ARTEMIS at 99.1% Pass@1 on AndroidWorld's 116 tasks. FinalRun is next at 97.4%, the human baseline is 80.0%, and Gemini 2.5 Computer Use sits at 69.7%. AndroidWorld is a solid benchmark: 116 hand-crafted tasks, instantiated with random parameters on a live emulator, with durable reward signals. But this chart is ARTEMIS's own, the repo doesn't ship the eval harness or say which model and profile produced the number, and AndroidWorld runs on an emulator. \"99% on real phones\" isn't what it says. What I can say from three tasks: three out of three were done correctly on the device, and I checked each one with adb rather than trusting the agent's report. That's a sanity check, not a benchmark. What I didn't test A physical phone over USB. Claude Code, Codex or Cursor themselves. I used the same stdio MCP server from my own client. Installing and testing my own APK through app_path . Claude, GPT-4o or local models. Gemini only. Video replay (no scrcpy on this box), Logcat capture, and the Pro written report. Where I'd use it The pattern ARTEMIS's own rules file pushes is the right one. The coding agent uses ARTEMIS to explore the app and find the real path through the UI, then writes a deterministic test (Espresso, UIAutomator, Maestro, whatever you use) that runs without a model in the loop. The mobile_run_task docs say it outright: \"run once to discover the path, then author a deterministic script.\" That's also my answer to the \"automates repetitive tasks\" claim. It can, but paying for a model call and about 3 seconds per step, every time, is the expensive way to repeat something. For a smoke check after a change (\"build, install, log in, tell me if anything weird pops up\"), Flash is fast enough to stay in the edit loop. For anything you'll gate a merge on, use Pro with checkpoint verification, pin a model you have capacity on, and read test_summary instead of status . To try it: git clone https://github.com/google/artemis.git && cd artemis ./start.sh # toolchain + optional IDE wiring uv run artemis doctor uv run artemis mcp --install claude # or codex, cursor, all Then ask your agent to open your app on the emulator and tell you what it sees. Originally published on Medium .",
+            "url": "https://dev.to/ishank-dev/google-artemis-hands-on-letting-ai-coding-agents-control-an-android-emulator-over-mcp-6dh",
+            "source": "DEV Community",
+            "category": "intelligence_artificielle",
+            "tags": [
+                "android",
+                "anthropic",
+                "developpement",
+                "gemini",
+                "git",
+                "ios",
+                "linux",
+                "llm",
+                "openai",
+                "programmation",
+                "python",
+                "rust",
+                "web"
+            ],
+            "published_at": "2026-11-23T04:51:15+00:00",
+            "collected_at": "2026-11-23T04:59:33.631334+00:00"
+        },
+        {
+            "id": "02fb542e3a96f388d428ce5a6e17f57ac1c2cf91b3c1a34798e5f49a428ab30f",
+            "title": "File size labels on quality options: honest numbers, never guesses",
+            "description": "When I first built the download page on ramrom.io , the quality dropdown was simple: 1080p, 720p, 480p, 360p. Pick one, get the file. It worked, and nobody complained. But I kept noticing something in my own use: I would pick 1080p on my phone, then watch the download crawl, then wish I had picked 720p instead. The label had told me the resolution, but not the one thing that decides whether a download is a good idea right now — how big the file actually is. So I added file size labels. It sounds like a five-minute job. It was not, because the honest version of it is harder than the quick version. The quick version is to guess. A 1080p video is roughly so many megabytes per minute, so you multiply the duration by a bitrate you made up and print the result. Plenty of sites do exactly that, and plenty of visitors have learned to ignore the numbers because they are wrong so often. The problem is that the providers I use do not always tell me the size. Some return a content length for every format. Some return it for the video streams but not for the audio. Some return nothing at all, and the only way to know the size is to ask the file itself — a HEAD request against the download URL — which is another network call, another chance to fail, and another few hundred milliseconds before the page can show anything. So the rule I settled on is simple: a size label only appears when I actually know the size. When the provider gives me a content length, I format it — bytes into KB, MB or GB with one decimal, nothing cleverer than that — and show it next to the quality. When the provider gives me nothing, I try a HEAD request against the file URL and read the Content-Length header, but only within the same short timeout I already use for the resolve call, so a slow answer cannot hang the page. And when neither source gives me a number, the label says nothing about size at all. No estimate, no \"approx\", no number with a tilde in front of it. The option just reads \"1080p\" and the visitor decides on resolution alone, the way they did before. That last part was the real decision. It is tempting to fill every gap with a guess so the dropdown looks complete and consistent. A row without a size looks unfinished next to rows that have one. But a guessed number is worse than a missing number, because a missing number is honest about what I do not know, and a guessed number pretends to know. The visitor cannot tell the difference until the download is already running, which is exactly when it is too late. There was one more edge case worth handling. Some providers report a size for the video-only stream and a separate size for the audio track, when the format the visitor picks is a combined file. Adding those two numbers together would be a guess dressed up as arithmetic, because the combined file is not always the sum of its parts. The result is a small, uneven-looking dropdown. Most options carry a size, a few do not. Nobody has ever complained about the missing ones. What changed is that the sizes that do appear are right, and on a phone with a slow connection that is the difference between picking 720p confidently and picking 1080p and regretting it halfway through. It is a small piece of the site, and it took longer than it should have. But it is the same lesson most of the site keeps teaching me: the honest label is the feature. Everything else is decoration.",
+            "url": "https://dev.to/mobeenahmedgondal/file-size-labels-on-quality-options-honest-numbers-never-guesses-1ejk",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-11-23T04:50:11+00:00",
+            "collected_at": "2026-11-23T04:59:33.631841+00:00"
+        },
+        {
+            "id": "14ba747caeb0e7cd1597ce691ff54e6fe1f0cc51b25c053516903178a0f6b22e",
+            "title": "Multilingual Customer Support Tools Under $150/mo for Small Teams",
+            "description": "Five tools that answer customers in their own language, priced for a three-person team and staying under $150 a month. 1. The Short Answer For a three-person team the strongest multilingual customer support option under $150 is Zoho Desk Professional at $69. Help Scout, Crisp and Tidio also fit. Freshdesk only stays under the limit if you have two agents or fewer. Language affects buying behaviour. CSA Research’s 2020 survey of 8,709 shoppers across 29 countries found 76% preferred to buy products with information in their own language. Key takeaways Zoho Desk Professional is $69 a month for three agents and supports a help center in more than 40 languages. Crisp Essentials is a flat €95 (≈ $110) for up to 10 seats, so the price does not rise as you add agents. Freshdesk places multilingual features on its Pro plan at $55 per agent — three agents exceed $150. AI replies are often billed separately. Help Scout charges $0.75 per AI resolution on top of seats. 2. What “Multilingual” Actually Means Vendors use the term for three different capabilities. Confirm which one you are paying for. Translated help center Help articles available in several languages so customers can self-serve without writing in. Live translation Agents work in English; the tool translates both directions in real time. AI replies in any language An AI agent answers directly in the customer’s language using your help content. Tip: Begin with a translated help center. It resolves the largest share of questions for the least effort, and every tool below supports one. 3. Five Tools Compared Prices reflect the cheapest plan that includes multilingual features, annual billing, November 2026 list prices. Always verify on the vendor site. Tool Plan needed Price Multilingual feature AI agent Best for Zoho Desk Professional $23/agent Multilingual help center Zia Lowest cost per agent Help Scout Standard $25/user AI Assist translates replies AI Answers ($0.75/resolution) Email-first teams Crisp Essentials €95 flat (≈ $110), ≤10 seats Live chat translation Included (usage-capped) Chat-first teams Tidio Starter + Lyro $24.17 + $32.50 for 50 AI chats Lyro replies in customer’s language Lyro (50 conversations) Small stores Freshdesk Pro $55/agent Multilingual help desk & knowledge base Freddy AI (paid add-on) Teams of 1–2 4. Which Tool Fits Which Team Zoho Desk (best value) Full help desk at a low per-agent price. Professional plan adds a multilingual help center. Strong on email, chat, social and phone. Monthly billing jumps to $35 per agent. Help Scout (best for email) Clean shared inbox plus help center. AI Assist (included on paid plans) can translate replies. Unlimited contacts on paid plans. Customer-facing AI Answers costs $0.75 per resolution. Crisp (best for chat) Live chat and messaging priced per workspace, not per agent. Essentials covers up to 10 seats and translates chats in real time. Price stays flat as you grow to 10 seats. AI usage is capped on this plan. Tidio (best for small stores) Live chat with Lyro, an AI agent that detects language and replies in it. Lowest starting price with AI included. The 50-chat Lyro plan exhausts quickly; reported language coverage varies between sources. Freshdesk (best for 1–2 agents) Mature help desk. Multilingual support and knowledge base start on Pro. Strong ticketing, SLAs and reporting. At $55 per agent a third seat exceeds $150; Freddy AI is billed separately. 5. What a 3-Agent Team Actually Pays Cheapest plan with multilingual features, annual billing, November 2026: Tidio — $57 Zoho Desk — $69 Help Scout — $75 + AI usage Crisp — ≈ $110 Freshdesk — $165 (over budget) Warning: AI replies are usually extra. Help Scout at $0.75 per resolution means 200 AI resolutions add $150 on their own. 6. Is Machine Translation Good Enough? For most routine questions, yes. The same CSA survey found 65% of shoppers prefer content in their language even when quality is imperfect. Quality still varies by language. Vendors often advertise dozens of languages, but results are typically strongest in English and major European languages. Test your top three languages with real tickets before committing. Keep a human on refunds, complaints and anything legal. A mistranslated word is more expensive there. If your primary languages (Hindi, Arabic, mixed-language messages) are poorly supported by these tools, custom options exist at https://neuradynamics.ai/ . 7. How to Choose in Five Steps List your top three languages from last month’s tickets and site traffic. Decide the primary channel (email, chat or WhatsApp) — this narrows the field quickly. Price the tool for your actual team size; per-agent pricing rises fast, flat pricing does not. Test real tickets in each language; have a native speaker review 10 replies per language. Set clear escalation rules so refunds, complaints and legal questions go to a person. 8. Why Language Support Pays Off 76% prefer to buy when product information is in their language 75% are more likely to buy again if support is in their language 40% never buy from websites in other languages (Source: CSA Research, 2020, 8,709 consumers, 29 countries.) Still keep a human reachable. A 2024 Gartner survey found 64% of customers would prefer companies did not use AI for service, mainly from fear of losing human contact. 9. FAQ What is the cheapest multilingual help desk? Zoho Desk Professional at $23 per agent (annual) with a multilingual help center. Three agents = $69, well under $150. Can these tools translate messages automatically? Yes. Crisp translates live chats on Essentials. Help Scout’s AI Assist can translate replies. Tidio’s Lyro answers directly in the customer’s language. Always test quality in your main languages. Is machine translation good enough? For order status, policies and how-to questions, usually yes. Keep complaints, refunds and legal topics with a person. When should you build a custom multilingual agent? When your main languages are poorly supported or when answers depend on data spread across several systems. Otherwise an off-the-shelf tool is more economical. Originally published at https://neuradynamics.ai/blogs/multilingual-customer-support-software",
+            "url": "https://dev.to/neuradynamics/multilingual-customer-support-tools-under-150mo-for-small-teams-40e6",
+            "source": "DEV Community",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-11-23T04:48:28+00:00",
+            "collected_at": "2026-11-23T04:59:33.632749+00:00"
+        },
+        {
+            "id": "71cacddcd908b2d739cb3fef8c0eb8ea7785c1af46eebf203351efa6f4346e31",
+            "title": "Laravel Scheduler Not Running? Catch Silent Cron Failures",
+            "description": "The most expensive production bugs I see in Laravel apps do not throw errors. They simply stop. The scheduler has not run since a server move three weeks ago, so invoices never synced, trial reminders never went out and the nightly report everyone stopped reading is quietly empty. Nothing alerted, because nothing failed. It just never ran. I run Loop Origin , a software company that builds and maintains custom Laravel applications and the servers under them. I wrote this with help from AI tools and checked every command and config myself. This guide covers one problem: a Laravel scheduler that is not running, and how to catch silent cron and queue failures before your customers or your finance team do. Why is my Laravel scheduler not running, and how do I catch it? Direct answer: Laravel's scheduler only runs when a system cron calls php artisan schedule:run every minute. If that cron line, the PHP binary, a stale overlap lock or maintenance mode breaks, tasks stop silently. Catch it with an external heartbeat: each task pings a monitor on success, and the monitor alerts when a ping is late. The core mistake: monitoring from inside the thing that died Most teams' first fix is a scheduled job that checks the other scheduled jobs. It feels sensible, and it fails in exactly the case that matters: when the scheduler itself is dead, the checker is dead too. The same goes for \"we log every run\": a missing log line is not an alert. The pattern that works is a dead man's switch. Every important task reports \"I ran and finished\" to something outside the server. That outside system knows each task's expected interval and raises an alert when a report is late. Silence becomes the signal. The usual causes, from most to least common These are the failure modes I check first on an inherited codebase: The cron line never made it to the new server. The app was moved to a new VPS or a fresh container image, and nobody re-added * * * * * cd /var/www/app && php artisan schedule:run >> /dev/null 2>&1 to the right user's crontab. Cron runs as a different user or PHP binary. The crontab lives under root, so storage/logs becomes root-owned and web requests start failing; or php on cron's minimal PATH points to an older version than PHP-FPM uses. A stale overlap lock. withoutOverlapping() holds a mutex in the cache. If the server crashes mid-run, the lock can survive, and by default it expires after 24 hours, so the task is skipped all day without an error. php artisan schedule:clear-cache clears it. Maintenance mode left on. A failed deploy leaves the app down; scheduled tasks do not run in maintenance mode unless marked evenInMaintenanceMode() . onOneServer() without a shared cache. It needs a central cache store (Redis, Memcached, database or DynamoDB). With file cache on two servers, both run the task, and you get duplicates instead of silence. Timezones and daylight saving. A task scheduled for 2:30 AM in a timezone that observes daylight saving can be skipped or run twice on the changeover days. Schedule critical work in UTC or outside the changeover window. Queue workers running old code. The scheduler dispatched the job, but Supervisor workers were never restarted after a deploy ( php artisan queue:restart ), so they fail on a renamed class and everything lands in failed_jobs , which nobody reads. Monitoring options compared Approach Catches \"never ran\" Catches \"ran and failed\" Catches \"stuck or slow\" Setup effort Grepping logs manually No Only if someone looks No None, and that is the problem emailOutputOnFailure() No Yes, by email No Low Internal \"check the checker\" job No (dies with the scheduler) Yes Partly Medium External heartbeat (Healthchecks.io, Cronitor, Better Stack, Sentry Crons) Yes Yes, with a fail ping Yes, with a start ping and a max duration Low Queue depth and wait-time alerts (Horizon waits, queue:monitor ) Not for cron Indirectly Yes, for queues Low to medium You need the last two together: heartbeats for the scheduler and its tasks, queue alerts for the jobs those tasks dispatch. AI-generated image. Production setup: heartbeats on every task that matters In Laravel 11 and later, schedules live in routes/console.php . The scheduler has ping hooks built in, so you do not need a package: use Illuminate \\ Support \\ Facades \\ Schedule ; // 1. Scheduler pulse: proves cron + schedule:run are alive at all Schedule :: call ( fn ( ) => null ) -> name ( 'scheduler-pulse' ) -> everyMinute ( ) -> pingOnSuccess ( config ( 'heartbeats.scheduler' ) ) ; // 2. A business-critical task with its own heartbeat Schedule :: command ( 'invoices:sync' ) -> everyFiveMinutes ( ) -> withoutOverlapping ( 15 ) // lock expires after 15 min, not 24 h -> onOneServer ( ) // requires a shared cache store (e.g. Redis) -> pingBefore ( config ( 'heartbeats.invoices_sync' ) . '/start' ) -> pingOnSuccess ( config ( 'heartbeats.invoices_sync' ) ) -> pingOnFailure ( config ( 'heartbeats.invoices_sync' ) . '/fail' ) ; The /start and /fail suffixes follow Healthchecks.io's ping URL convention; check your monitor's documentation for its own. Store the URLs in config, not in code, so staging does not ping production monitors. Give the overlap lock an expiry slightly longer than the task's worst normal runtime, so a crash costs you 15 minutes rather than a day. On the monitor side, set each check's period to the schedule interval and a grace time that covers normal variance. A five-minute sync with a ten-minute grace alerts you within about fifteen minutes of the last good run. Queues: alert on wait time, not just failures A task that dispatches 500 jobs to a stalled queue looks healthy to the scheduler. Watch the queue itself: // routes/console.php: emit QueueBusy when the default queue backs up Schedule :: command ( 'queue:monitor redis:default --max=500' ) -> everyMinute ( ) ; // app/Providers/AppServiceProvider.php use Illuminate \\ Queue \\ Events \\ QueueBusy ; use Illuminate \\ Support \\ Facades \\ Event ; use Illuminate \\ Support \\ Facades \\ Log ; Event :: listen ( function ( QueueBusy $event ) { Log :: critical ( 'Queue backed up' , [ 'connection' => $event -> connection , 'queue' => $event -> queue , 'size' => $event -> size , ] ) ; } ) ; If you use Horizon, set the waits thresholds in config/horizon.php and route its long-wait notifications to Slack or email. Also schedule a daily count of failed_jobs that alerts above zero for critical queues; a growing failed table is a silent outage. My guide on running Laravel queues in production covers Supervisor, retries and the failed jobs workflow in depth. Deploy steps that prevent the next silent stop Add these to your deploy script or runbook so the failure modes above cannot come back: # after code is in place php artisan down --retry=60 php artisan migrate --force php artisan config:cache && php artisan route:cache php artisan queue:restart # workers pick up new code php artisan up # never leave maintenance mode on by accident php artisan schedule:list # confirm tasks and next run times crontab -l -u www-data | grep -q 'schedule:run' || echo 'MISSING SCHEDULER CRON' >& 2 Run cron as the same user as PHP-FPM (often www-data ), use an absolute PHP path in the crontab if the server has several versions, and keep the crontab in your infrastructure code so a new server gets it automatically. My Linux VPS hardening checklist for Laravel servers covers the user and permission side. Silent-failure checklist A scheduler pulse task pings an external monitor every minute. Every business-critical task has its own heartbeat with start, success and fail pings. Each heartbeat has a period and a grace time that match the schedule. withoutOverlapping() has an explicit expiry close to the task's worst runtime. onOneServer() is used only with a shared cache store. Critical tasks avoid daylight-saving changeover hours, or run in UTC. Queue size or wait-time alerts exist for every queue a scheduled task feeds. A daily check alerts when failed_jobs grows for critical queues. Deploys run queue:restart and finish with php artisan up and schedule:list . The crontab is defined in infrastructure code and verified on every new server. Alerts go to a channel a named person watches, with a short runbook link. This is the same thinking behind reliable integrations: my posts on the transactional outbox pattern in Laravel and QuickBooks and Xero invoice sync both depend on a scheduler and workers that you can prove are running. If you would rather hand this off, this is the kind of work we cover in Laravel maintenance and development . FAQs How do I check if the Laravel scheduler is running? Run php artisan schedule:list to see tasks and next run times, check crontab -l for the correct user, and look for a recent ping on your scheduler pulse monitor. A pulse that stopped is the clearest answer. What does php artisan schedule:clear-cache do? It deletes the mutex locks created by withoutOverlapping() . Use it when a task stopped running after a crash or a killed process left its lock behind. Should I use schedule:work in production? schedule:work is meant for local development. In production, use a system cron entry calling schedule:run every minute, or a dedicated scheduler process managed by your container platform. Why does my scheduled task run twice? Usually because two servers run the scheduler without onOneServer() and a shared cache store, or because a daylight-saving change repeated the hour. Fix the cache store first. Do I need a paid service for cron heartbeats? Not necessarily. Healthchecks.io is open source and can be self-hosted, and several hosted monitors offer free tiers; check current plans. The key is that the monitor runs outside the server it watches. Does this apply to Laravel 10 and older? Yes. The ping methods and withoutOverlapping() work the same way; only the location differs, since older versions define the schedule in app/Console/Kernel.php . Wrap-up A scheduler that is not running never throws an exception, so error tracking will never tell you. Make silence loud: an external heartbeat for the scheduler and every critical task, wait-time alerts on the queues behind them, and a deploy script that cannot leave the app down or the workers stale. It is an hour of setup that saves the week you would otherwise spend explaining missing invoices. What is the longest a scheduled job silently stopped in an app you inherited? Tell me in the comments. Follow & Connect LinkedIn: Loop Origin X: Muhammad Ali Mughal (@AliMughal887) GitHub: Loop Origin (@LoopOrigin) Watch on YouTube: Resume Boost AI · PixelValut · Daily AI News By Ali",
+            "url": "https://dev.to/muhammadalimughal/laravel-scheduler-not-running-catch-silent-cron-failures-2nif",
+            "source": "DEV Community",
+            "category": "linux",
+            "tags": [
+                "developpement",
+                "git",
+                "linux",
+                "php",
+                "programmation",
+                "web"
+            ],
+            "published_at": "2026-11-23T04:47:47+00:00",
+            "collected_at": "2026-11-23T04:59:33.634065+00:00"
+        },
+        {
+            "id": "94bae0d3f63a6a70a8ffebd6ddfa6482fb50fbd9814e0367baba40137eea863f",
+            "title": "Market rout kills 50 basis points December Fed rate hike bets",
+            "description": "",
+            "url": "https://www.coindesk.com/markets/2026/11/23/market-rout-kills-50-basis-points-december-fed-rate-hike-bets",
+            "source": "CoinDesk",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-11-23T04:45:47+00:00",
+            "collected_at": "2026-11-23T04:59:47.842827+00:00"
+        },
+        {
+            "id": "b7cf04a84828baaf8d2fabf3cb5ac877c315df8f2ed90c2f42b0af5a29342ad9",
+            "title": "XNU Linux: Full OS X GUI Userspace on Linux",
+            "description": "Comments",
+            "url": "https://github.com/AFK-surf/xnulinux",
+            "source": "Hacker News",
+            "category": "linux",
+            "tags": [
+                "linux",
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-23T03:49:24+00:00",
+            "collected_at": "2026-11-23T04:59:33.356493+00:00"
+        },
+        {
+            "id": "001e9725042752c559c5d2e2a4d6230182b4d133e59efc87d3b79b9a68ed078c",
+            "title": "YouTube is cooking up 7 new app icons, and the retro designs are a treat",
+            "description": "Remember the old YouTube TV icon? It could soon return to your home screen.",
+            "url": "https://www.androidauthority.com/youtube-new-app-icons-3737984/",
+            "source": "Android Authority",
+            "category": "mobile",
+            "tags": [
+                "android",
+                "smartphone"
+            ],
+            "published_at": "2026-11-23T03:48:49+00:00",
+            "collected_at": "2026-11-23T04:59:40.950455+00:00"
+        },
+        {
+            "id": "dc6bc1be4748e6ac643dc924ff7315952a27e89a5379efc314124a1c868a2f2a",
+            "title": "Bitcoin’s $236 Million Buy Wall: Real Demand or an Illusion?",
+            "description": "Bitcoin’s order books reveal where buyers and sellers intend to trade, but the millions of dollars displayed on exchange screens tell only part of the story. Understanding market depth, liquidity, and disappearing orders offers a clearer picture of how much buying power actually exists. What Is a Bitcoin Order Book and How Does It Work? […]",
+            "url": "https://news.bitcoin.com/learning-insights/bitcoins-236-million-buy-wall-real-demand-or-an-illusion/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-11-23T03:30:15+00:00",
+            "collected_at": "2026-11-23T04:59:48.035444+00:00"
+        },
+        {
+            "id": "4eaab2a35fc91725136850e46a8a09bd40b4ad747798c1bbad5a9b7d8e0653e6",
+            "title": "Good morning and welcome to my idea of a new web",
+            "description": "Comments",
+            "url": "https://dave.writersweb.org/index.md",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-11-23T03:15:06+00:00",
+            "collected_at": "2026-11-23T04:59:33.450826+00:00"
+        },
+        {
+            "id": "a4a9b36f04a08d22477f7cdbe2d1f2c27d42323c346763dfc5158235d6b480d0",
+            "title": "De-fanging dangerous triggers in GitHub Actions across an organization",
+            "description": "Comments",
+            "url": "https://pyfound.blogspot.com/2026/11/de-fanging-dangerous-triggers-in-github.html",
+            "source": "Lobsters",
+            "category": "developpement",
+            "tags": [
+                "developpement",
+                "git",
+                "open-source",
+                "programmation"
+            ],
+            "published_at": "2026-11-23T03:02:13+00:00",
+            "collected_at": "2026-11-23T04:59:33.451080+00:00"
+        },
+        {
+            "id": "85c394a8b1f41dca1d0f6aa834d2ce759426dd92286617c1584eb4e37d6f8cc5",
+            "title": "21shares Sees Bitcoin Hitting New High in 2027, Cycle Peak Later",
+            "description": "21shares expects bitcoin to surpass its 2025 record in 2027 while placing the cycle peak beyond that year. Its wider outlook forecasts growth in stablecoins, tokenized assets and other markets, even as a fresh bitcoin decline tests the price comparison underpinning its call. Bitcoin Record Forecast Rests on Demand and Cycle History Crypto investment product […]",
+            "url": "https://news.bitcoin.com/featured/21shares-sees-bitcoin-hitting-new-high-in-2027-cycle-peak-later/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-11-23T02:30:39+00:00",
+            "collected_at": "2026-11-23T04:59:48.035557+00:00"
+        },
+        {
+            "id": "0e1657c60c814e16f285e69104e8830e18b1e0be7fd6f7dd5413dab0a8262a71",
+            "title": "Advanced Character Physics (2001) [pdf]",
+            "description": "Comments",
+            "url": "https://www.cs.cmu.edu/afs/cs/academic/class/15462-s13/www/lec_slides/Jakobsen.pdf",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-23T02:17:27+00:00",
+            "collected_at": "2026-11-23T04:59:33.357441+00:00"
+        },
+        {
+            "id": "9fade936af02215eed99a1e50bec3f5eb7b9ccc1c24feb2af9070c5ff353205a",
+            "title": "Treemap of the Riemann Hypothesis Lean Proof",
+            "description": "Comments",
+            "url": "https://pengowray.github.io/riemann-zeta-proof-visualizer/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-23T01:50:23+00:00",
+            "collected_at": "2026-11-23T04:59:33.357162+00:00"
+        },
+        {
+            "id": "0a36bf7d26eb81466366db2249433d4cab69600dce0272b32ce0839ee2d95e79",
+            "title": "Ripple CEO Sees Room for Crypto Rally as XRP Trades Below $1",
+            "description": "Ripple CEO Brad Garlinghouse expects a broader crypto rebound after Anthropic’s stock market debut, citing the recovery that followed Spacex’s June listing. XRP recouped part of its losses after falling to a two-year low over the weekend. Ripple CEO Sees a Crypto Rebound After Anthropic’s IPO Ripple CEO Brad Garlinghouse said on Nov. 19 that […]",
+            "url": "https://news.bitcoin.com/featured/ripple-ceo-sees-room-for-crypto-rally-as-xrp-trades-below-1/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "anthropic",
+                "bitcoin",
+                "blockchain",
+                "crypto"
+            ],
+            "published_at": "2026-11-23T01:30:03+00:00",
+            "collected_at": "2026-11-23T04:59:48.035662+00:00"
+        },
+        {
+            "id": "04e5e033b7998e4feb3c5278d1c3f5cdb4135dd575ade7a858b8ef4e29b36942",
+            "title": "How Notable Capital, GIC, and Baillie Gifford bet big on Anthropic before its IPO",
+            "description": "Three significant backers share what gave them conviction to bet billions on Anthropic.",
+            "url": "https://techcrunch.com/2026/11/22/how-notable-capital-gic-and-baillie-gifford-bet-big-on-anthropic-before-its-ipo/",
+            "source": "TechCrunch",
+            "category": "technologie",
+            "tags": [
+                "anthropic",
+                "innovation",
+                "startup",
+                "technologie"
+            ],
+            "published_at": "2026-11-23T01:25:53+00:00",
+            "collected_at": "2026-11-23T04:59:31.783040+00:00"
+        },
+        {
+            "id": "eab63579d6f6bbeb88e23d292785aa21b01fe174c456ea4ce39670648299c8c6",
+            "title": "Free alternative TV network built from the Internet Archive's forgotten videos",
+            "description": "Comments",
+            "url": "https://spelunkr.tv",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-23T01:13:51+00:00",
+            "collected_at": "2026-11-23T04:59:33.356352+00:00"
+        },
+        {
+            "id": "769cfa66df9799335c2163d26739d88b8e1991ff46023b7aaf42d499905e2477",
+            "title": "What we learned operating auth for 1k APIs",
+            "description": "Comments",
+            "url": "https://nango.dev/blog/lessons-from-operating-api-auth-for-900-apis/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-23T01:01:11+00:00",
+            "collected_at": "2026-11-23T04:59:33.356950+00:00"
+        },
+        {
+            "id": "b4396a85c60a7dad3d194029f26ef88f379a3f364d02846c1ec9fbb14fc7c34f",
+            "title": "Solo Bitcoin Miner Wins $190K Jackpot Against 130 Million-to-One Odds",
+            "description": "A solo bitcoin miner operating with just 8 TH/s of computing power struck a roughly $190,000 jackpot on Sunday, Nov. 22, 2026, joining a growing procession of unlikely winners as the bitcoin mining industry confronts punishing economics and depressed digital asset prices. A $190,000 Bitcoin Jackpot With Astronomical Odds Imagine purchasing a lottery ticket with […]",
+            "url": "https://news.bitcoin.com/mining/solo-bitcoin-miner-wins-190k-jackpot-against-130-million-to-one-odds/",
+            "source": "Bitcoin.com News",
+            "category": "blockchain_web3",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto",
+                "git"
+            ],
+            "published_at": "2026-11-23T00:30:54+00:00",
+            "collected_at": "2026-11-23T04:59:48.035761+00:00"
+        },
+        {
+            "id": "82cf2a2e564dc585bbdeded284299b2113a939408a725f3f351a5e73aef3bce3",
+            "title": "$1 of GPT-5.1 tokens finds new ways around China’s Great Firewall",
+            "description": "PLUS: Lenovo's infra group finally makes big profit; Indonesia’s glaciers are gone; Australian bank releases its AI bug-finder; and more!",
+            "url": "https://www.theregister.com/security/2026/11/23/1-of-gpt-51-tokens-finds-new-ways-around-chinas-great-firewall/5311532",
+            "source": "The Register",
+            "category": "technologie",
+            "tags": [
+                "entreprise",
+                "informatique",
+                "technologie"
+            ],
+            "published_at": "2026-11-23T00:23:31+00:00",
+            "collected_at": "2026-11-23T04:59:32.260771+00:00"
+        },
+        {
+            "id": "d76d1fd47e7f903ad709849633ab74b09aa2e665e195067e554ff2d61f8a9455",
+            "title": "0rwx – A simple model of AI usage, inspired by Unix permissions",
+            "description": "Comments",
+            "url": "https://0rwx.com/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-22T23:53:00+00:00",
+            "collected_at": "2026-11-23T04:59:33.357327+00:00"
+        },
+        {
+            "id": "753163aad3a55af835db78a3145efcaa6c2062a89d1377573485270b33f23fa9",
+            "title": "Chainflip Hacker Steals $12 Million as FLIP Token Craters 69%",
+            "description": "Chainflip suffered a major security breach on Saturday, Nov. 21, 2026, when an attacker drained approximately $12 million from its bitcoin and ethereum vaults. The incident forced the cross-chain trading protocol into emergency shutdown and sent its native FLIP token into a steep sell-off. Chainflip Vaults Emptied in Coordinated Bitcoin and Ethereum Transactions The decentralized […]",
+            "url": "https://news.bitcoin.com/security/chainflip-hacker-steals-12-million-as-flip-token-craters-69/",
+            "source": "Bitcoin.com News",
+            "category": "cybersecurite",
+            "tags": [
+                "bitcoin",
+                "blockchain",
+                "crypto",
+                "ethereum"
+            ],
+            "published_at": "2026-11-22T23:16:47+00:00",
+            "collected_at": "2026-11-23T04:59:48.035848+00:00"
+        },
+        {
+            "id": "61d8127e693f0b0f3ba7ef2dc32bc9bfe97d415c3f165973c0ab2ef8ad20a2b9",
+            "title": "Progress map for the Lean formalization of Alessandro Masullo's manuscript",
+            "description": "Comments",
+            "url": "https://claude.ai/artifact/CtQyX8qfYAF822bgHJHHE3",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-22T23:12:10+00:00",
+            "collected_at": "2026-11-23T04:59:33.357121+00:00"
+        },
+        {
+            "id": "ed521b837e0aa86cc234a86a6345d3c8ecf750b252f34f7a44f99e61974b9184",
+            "title": "GL.iNet Security Notice 2026-11-20",
+            "description": "Comments",
+            "url": "https://www.gl-inet.com/en-us/blogs/blog/glinet-security-notice-2026-11-20",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-22T23:06:37+00:00",
+            "collected_at": "2026-11-23T04:59:33.356714+00:00"
+        },
         {
             "id": "6fd1876c32f5077405d6d01e84a4d80b72227a3d2c651c1a2ca818193be91b5e",
             "title": "The DevOps Engineer Left. Can We Trust Our Linux Fleet? An AppSec Incident-Response Playbook",
@@ -218,6 +719,21 @@
             ],
             "published_at": "2026-11-22T22:48:05+00:00",
             "collected_at": "2026-11-22T23:02:13.528822+00:00"
+        },
+        {
+            "id": "7435df697c669a75d307dac6bd00e3a2c5a7c064fe5da10e25785473eedc71b6",
+            "title": "Localcode, open source agentic coding on your Mac with one command",
+            "description": "Comments",
+            "url": "https://github.com/mjwsolo/localcode",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-22T22:18:48+00:00",
+            "collected_at": "2026-11-23T04:59:33.357484+00:00"
         },
         {
             "id": "27c3608cf84a2714aa4d4862ada4b84bcc6b23c08cf22d1f5b6f993d84352de5",
@@ -1533,6 +2049,21 @@
             "collected_at": "2026-11-22T13:51:29.193103+00:00"
         },
         {
+            "id": "94c610bf6ad92fcdca91574c268632d759c8c24329f8384d8f3d54188c3558c8",
+            "title": "Masullo on the Riemann Hypothesis",
+            "description": "Comments",
+            "url": "https://johncarlosbaez.wordpress.com/2026/11/22/masullo-on-the-riemann-hypothesis/",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-22T10:59:56+00:00",
+            "collected_at": "2026-11-23T04:59:33.356449+00:00"
+        },
+        {
             "id": "34c79c619eda85c82e8b49fdc8950425b5eeaaa5970536cdcbf8433861bd40e3",
             "title": "How I got Samsung’s best multitasking feature on my Pixel for free",
             "description": "It keeps my muscle memory intact when I switch to my Pixel.",
@@ -2074,6 +2605,20 @@
             ],
             "published_at": "2026-11-22T04:04:56+00:00",
             "collected_at": "2026-11-22T13:51:26.966012+00:00"
+        },
+        {
+            "id": "cb7dcdac36eab9a7a552d9cdd79719dd5907b7263a0f4b3abada0023388caa50",
+            "title": "Fatal Fury: City Of The Wolves Adds Laocorn From The Motion Picture",
+            "description": "Reminder: The Fatal Fury movie antagonist is now available. : SNK's expansion of the Fatal Fury: City of the Wolves roster will continue with the release of Laocorn next week on 19th November 202 6 . Read the full article on nintendolife.com",
+            "url": "https://www.nintendolife.com/news/2026/11/fatal-fury-city-of-the-wolves-adds-laocorn-from-the-motion-picture",
+            "source": "Nintendo Life",
+            "category": "gaming",
+            "tags": [
+                "gaming",
+                "nintendo"
+            ],
+            "published_at": "2026-11-22T04:00:00+00:00",
+            "collected_at": "2026-11-23T04:59:46.655353+00:00"
         },
         {
             "id": "3f044ca3a0cd7fc04f8e9c20ed76d22f31bad9a86a4ecec4f1ebde0234c104b9",
@@ -4683,6 +5228,20 @@
             ],
             "published_at": "2026-11-21T02:16:11+00:00",
             "collected_at": "2026-11-21T05:01:59.659284+00:00"
+        },
+        {
+            "id": "b9f3799614e1976e09da761ee0b958f42d2c31d99be422b9cc0cd5e4005df715",
+            "title": "How Security Vendors Are Tackling Access-Control Challenges for AI Agents",
+            "description": "Identity, runtime and development controls are converging as enterprises are tasked with keeping agents within their assigned tasks. But vendors' approaches vary, so CISOs face a choice.",
+            "url": "https://www.darkreading.com/identity-access-management-security/ai-agents-bring-enterprises-new-access-control-challenges",
+            "source": "Dark Reading",
+            "category": "cybersecurite",
+            "tags": [
+                "cybersecurite",
+                "enterprise-security"
+            ],
+            "published_at": "2026-11-21T01:31:23+00:00",
+            "collected_at": "2026-11-23T04:59:31.224294+00:00"
         },
         {
             "id": "a1b1363daeb6610dce92c8b5b84787fd49d36fce5c6f9bd842f0c0e6e10e034b",
@@ -7810,6 +8369,22 @@
             "collected_at": "2026-11-20T14:41:42.238226+00:00"
         },
         {
+            "id": "de19e86bf87e6dc757b44918977334a7071f118b0c0af65b32316b475eb6b0ca",
+            "title": "How the World Draws the World",
+            "description": "Comments",
+            "url": "https://googlemapsmania.blogspot.com/2026/10/how-world-draws-world.html",
+            "source": "Hacker News",
+            "category": "cloud",
+            "tags": [
+                "aws",
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-20T14:20:15+00:00",
+            "collected_at": "2026-11-23T04:59:33.357363+00:00"
+        },
+        {
             "id": "3b3270b0917323ae879a1f5a2e2db2f4dea36313e995fa2b3fa90521189cc310",
             "title": "Anthropic employee claims general proof of the Riemann Hypothesis [pdf]",
             "description": "Comments",
@@ -10559,6 +11134,21 @@
             ],
             "published_at": "2026-11-20T02:44:13+00:00",
             "collected_at": "2026-11-20T14:41:31.930749+00:00"
+        },
+        {
+            "id": "5f4af74399adfedd25b65b1c76939c8a549e059a4b6f34c7d6953156d29377e1",
+            "title": "LittleBit: Ultra Low-Bit Quantization via Latent Factorization",
+            "description": "Comments",
+            "url": "https://arxiv.org/abs/2506.13771",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-20T02:40:48+00:00",
+            "collected_at": "2026-11-23T04:59:33.356756+00:00"
         },
         {
             "id": "3038e7c4acbe7440b724d020c8a77ced7f48e2844a2cc57e38b5aebfb7014ac2",
@@ -14070,6 +14660,21 @@
             ],
             "published_at": "2026-11-19T14:29:49+00:00",
             "collected_at": "2026-11-20T14:41:31.930217+00:00"
+        },
+        {
+            "id": "83cdb48cc84da82da2640a60866ea3e06f64660f05f9c84301bfd6556baa83fd",
+            "title": "The Unlicensed Gospel: Wisdom Tree's Bible Games on the Game Boy",
+            "description": "Comments",
+            "url": "https://www.gameboymuseum.com/single-post/the-unlicensed-gospel-wisdom-tree-s-bible-games-on-the-game-boy",
+            "source": "Hacker News",
+            "category": "developpement",
+            "tags": [
+                "open-source",
+                "programmation",
+                "startup"
+            ],
+            "published_at": "2026-11-19T14:27:07+00:00",
+            "collected_at": "2026-11-23T04:59:33.356905+00:00"
         },
         {
             "id": "99484983430e63d2a03ce22cd8a4b31c3003da3934a7b27fc8d1f5722f5a270a",
@@ -490971,6 +491576,22 @@
             ],
             "published_at": null,
             "collected_at": "2026-11-22T23:02:11.722507+00:00"
+        },
+        {
+            "id": "587386f956d0e5457b0e1ece11dbf88d7d01672e458f11e90d482e9489d9dec1",
+            "title": "Kodak’s next collectible is a tiny digital photo frame that doubles as a tracker",
+            "description": "After expanding its Charmera collection with a Millennium Edition featuring Y2K-inspired designs earlier this year, Reto's follow-up to its tiny Kodak camera is an equally small digital photo frame you can use to display your shots. But while the Charmera's usefulness stopped at snapping grainy photos and terrible videos, the Kodak SlideTag goes one step […]",
+            "url": "https://www.theverge.com/tech/1038650/kodak-slidetag-keychain-photo-display-tracker-find-my-hub-google-apple-e-ink",
+            "source": "The Verge",
+            "category": "technologie",
+            "tags": [
+                "gadgets",
+                "git",
+                "internet",
+                "technologie"
+            ],
+            "published_at": null,
+            "collected_at": "2026-11-23T04:59:31.857770+00:00"
         }
     ]
 }
